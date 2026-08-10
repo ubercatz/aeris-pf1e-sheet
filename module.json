@@ -1,0 +1,31 @@
+{
+  "id": "aeris-pf1e-sheet",
+  "title": "Aeris PF1e React Sheet",
+  "description": "Custom PF1e character sheet with a 10x granularity engine.",
+  "version": "1.0.0",
+  "compatibility": {
+    "minimum": "11",
+    "verified": "12"
+  },
+  "relationships": {
+    "systems": [
+      {
+        "id": "pf1",
+        "type": "system",
+        "manifest": "https://gitlab.com/foundryvtt-pathfinder1/foundryvtt-pathfinder1/-/raw/master/system.json"
+      }
+    ],
+    "requires": [
+      {
+        "id": "aeris-core",
+        "type": "module"
+      }
+    ]
+  },
+  "esmodules": [
+    "dist/aeris-pf1e-sheet.js"
+  ],
+  "styles": [
+    "style.css"
+  ]
+}
