@@ -19,8 +19,10 @@ export default defineConfig({
       external: ['aeris-core'],
       plugins: [
         replace({
+          preventAssignment: true,
           'process.env.NODE_ENV': JSON.stringify('production'),
-          preventAssignment: true
+          'process.env': JSON.stringify({ NODE_ENV: 'production' }),
+          'process': JSON.stringify({ env: { NODE_ENV: 'production' } })
         })
       ]
     }
