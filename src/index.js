@@ -3,8 +3,8 @@ import App from './App.jsx';
 
 Hooks.once("init", () => {
     // 1. Fetch the sheet class directly from the active Aeris Core module API
-    const AerisActorSheet = game.modules.get("aeris-core")?.api?.AerisActorSheet;
-
+    const AerisActorSheet = game.modules.get("aeris-core)?.api?.AerisActorSheet;
+"
     if (!AerisActorSheet) {
         console.error("Aeris PF1e Sheet | Aeris Core module is not active or API is missing!");
         return;
