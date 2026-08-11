@@ -5,6 +5,9 @@ import replace from '@rollup/plugin-replace';
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    'process.env.NODE_ENV': JSON.stringify('production'),
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
@@ -20,6 +23,7 @@ export default defineConfig({
       plugins: [
         replace({
           preventAssignment: true,
+          include: ['node_modules/**'],
           'process.env.NODE_ENV': JSON.stringify('production'),
           'process.env': JSON.stringify({ NODE_ENV: 'production' }),
           'process': JSON.stringify({ env: { NODE_ENV: 'production' } })
