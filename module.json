@@ -2,8 +2,8 @@
   "id": "aeris-pf1e-sheet",
   "title": "Aeris PF1e React Sheet",
   "description": "Custom PF1e character sheet with a 10x granularity engine.",
-  "version": "1.0.12",
-"download": "https://github.com/ubercatz/aeris-pf1e-sheet/releases/download/v1.0.12/module-v1.0.12.zip",
+  "version": "1.0.13",
+"download": "https://github.com/ubercatz/aeris-pf1e-sheet/releases/download/v1.0.13/module-v1.0.13.zip",
   "compatibility": {
     "minimum": "11",
     "verified": "12"
@@ -27,6 +27,6 @@
     "dist/aeris-pf1e-sheet.js"
   ],
   "styles": [
-    
-  ]
+  "dist/style.css"
+]
 }
