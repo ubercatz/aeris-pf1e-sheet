@@ -1,12 +1,11 @@
 import { defineConfig } from 'vite';
 import path from 'path';
 import react from '@vitejs/plugin-react';
+import replace from '@rollup/plugin-replace';
 
 export default defineConfig({
   plugins: [react()],
   build: {
-    // ... all your existing build settings remain untouched down here
-    // ... keep all your existing build and rollupOptions settings down here!
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: true,
@@ -18,6 +17,12 @@ export default defineConfig({
     },
     rollupOptions: {
       external: ['aeris-core'],
+      plugins: [
+        replace({
+          'process.env.NODE_ENV': JSON.stringify('production'),
+          preventAssignment: true
+        })
+      ]
     }
   }
 });

@@ -1,18 +1,10 @@
-import './polyfill.js';
-import './style.css';
+import React from 'react';
+import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
+import './style.css';
 
 Hooks.once("init", () => {
-    // ... the rest of your code
-    // 1. Fetch the sheet class directly from the active Aeris Core module API
-    const AerisActorSheet = game.modules.get("aeris-core")?.api?.AerisActorSheet;
-    if (!AerisActorSheet) {
-        console.error("Aeris PF1e Sheet | Aeris Core module is not active or API is missing!");
-        return;
-    }
-
-    // 2. Define your custom sheet using the Aeris Core base class
-    class CustomPF1eReactSheet extends AerisActorSheet {
+    class CustomPF1eReactSheet extends ActorSheet {
         static get defaultOptions() {
             return foundry.utils.mergeObject(super.defaultOptions, {
                 id: "aeris-pf1e-react-sheet",
@@ -22,15 +14,40 @@ Hooks.once("init", () => {
             });
         }
 
-        get reactComponent() {
-            return App;
+        // Generate an empty container for React to live inside
+        async _renderInner(data) {
+            const div = document.createElement("div");
+            div.className = "react-sheet-container";
+            div.style.height = "100%";
+            return $(div);
+        }
+
+        // Once the window exists on the screen, inject the React App
+        activateListeners(html) {
+            super.activateListeners(html);
+            const target = html[0];
+
+            if (!this._reactRoot) {
+                this._reactRoot = ReactDOM.createRoot(target);
+            }
+
+            // Mount the UI and pass the Foundry actor data into it
+            this._reactRoot.render(React.createElement(App, { actor: this.actor }));
+        }
+
+        // Destroy the React instance when the window closes to prevent memory leaks
+        async close(options = {}) {
+            if (this._reactRoot) {
+                this._reactRoot.unmount();
+                this._reactRoot = null;
+            }
+            return super.close(options);
         }
     }
 
-    // 3. Register the sheet with Foundry's Pathfinder 1e system
     Actors.registerSheet("pf1", CustomPF1eReactSheet, {
         types: ["character"],
         makeDefault: false,
-        label: "Aeris React Sheet"
+        label: "React Character Sheet"
     });
 });
