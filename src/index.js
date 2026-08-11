@@ -1,7 +1,9 @@
+import './polyfill.js';
 import './style.css';
 import App from './App.jsx';
 
 Hooks.once("init", () => {
+    // ... the rest of your code
     // 1. Fetch the sheet class directly from the active Aeris Core module API
     const AerisActorSheet = game.modules.get("aeris-core")?.api?.AerisActorSheet;
     if (!AerisActorSheet) {

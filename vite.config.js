@@ -4,12 +4,8 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  define: {
-    'process.env.NODE_ENV': JSON.stringify('production'),
-    'process.env': JSON.stringify({ NODE_ENV: 'production' }),
-    'process': JSON.stringify({ env: { NODE_ENV: 'production' } })
-  },
   build: {
+    // ... all your existing build settings remain untouched down here
     // ... keep all your existing build and rollupOptions settings down here!
     outDir: 'dist',
     emptyOutDir: true,
