@@ -1,5 +1,4 @@
 import './style.css';
-import { AerisActorSheet } from 'aeris-core';
 import App from './App.jsx';
 
 class CustomPF1eReactSheet extends AerisActorSheet {

@@ -1,5 +1,4 @@
-import { AerisActorSheet as $r } from "aeris-core";
-function Fr(O) {
+function $r(O) {
   return O && O.__esModule && Object.prototype.hasOwnProperty.call(O, "default") ? O.default : O;
 }
 var We = { exports: {} }, d = {};
@@ -13,7 +12,7 @@ var We = { exports: {} }, d = {};
  * LICENSE file in the root directory of this source tree.
  */
 var Ot;
-function xr() {
+function Fr() {
   if (Ot) return d;
   Ot = 1;
   var O = Symbol.for("react.element"), l = Symbol.for("react.portal"), Te = Symbol.for("react.fragment"), z = Symbol.for("react.strict_mode"), fe = Symbol.for("react.profiler"), B = Symbol.for("react.provider"), ee = Symbol.for("react.context"), te = Symbol.for("react.forward_ref"), re = Symbol.for("react.suspense"), H = Symbol.for("react.memo"), M = Symbol.for("react.lazy"), V = Symbol.iterator;
@@ -219,7 +218,7 @@ var ce = { exports: {} };
  */
 ce.exports;
 var Tt;
-function Lr() {
+function xr() {
   return Tt || (Tt = 1, function(O, l) {
     process.env.NODE_ENV !== "production" && function() {
       typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ < "u" && typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart == "function" && __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(new Error());
@@ -1477,13 +1476,13 @@ Check the top-level render call using <` + n + ">.");
     }();
   }(ce, ce.exports)), ce.exports;
 }
-process.env.NODE_ENV === "production" ? We.exports = xr() : We.exports = Lr();
-var Nr = We.exports;
-const Ue = /* @__PURE__ */ Fr(Nr);
-function Mr({ actor: O }) {
+process.env.NODE_ENV === "production" ? We.exports = Fr() : We.exports = xr();
+var Lr = We.exports;
+const Ue = /* @__PURE__ */ $r(Lr);
+function Nr({ actor: O }) {
   return /* @__PURE__ */ Ue.createElement("div", { className: "p-4 bg-slate-900 text-slate-100 min-h-full" }, /* @__PURE__ */ Ue.createElement("h1", { className: "text-2xl font-bold text-amber-500" }, "React Sheet Connected: ", O.name), /* @__PURE__ */ Ue.createElement("p", { className: "mt-2 text-slate-300" }, "If you are seeing this, Aeris Core successfully mounted the React interface."));
 }
-class Vr extends $r {
+class Mr extends AerisActorSheet {
   static get defaultOptions() {
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: "aeris-pf1e-react-sheet",
@@ -1493,11 +1492,11 @@ class Vr extends $r {
     });
   }
   get reactComponent() {
-    return Mr;
+    return Nr;
   }
 }
 Hooks.once("init", () => {
-  Actors.registerSheet("pf1", Vr, {
+  Actors.registerSheet("pf1", Mr, {
     types: ["character"],
     makeDefault: !1,
     label: "Aeris Core React Sheet"
