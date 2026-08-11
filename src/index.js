@@ -37,7 +37,7 @@ class AerisReactSheet extends ActorSheet {
     }
     
     // Render the React application
-    this.reactRoot.render(<App actor={this.actor} sheet={this} />);
+    this.reactRoot.render(React.createElement(App, { actor: this.actor, sheet: this }));
   }
 
   async close(options = {}) {
