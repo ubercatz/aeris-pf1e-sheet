@@ -1,0 +1,336 @@
+{{!-- ABA: Summary --}}
+<div class="pf1ar-summary-grid">
+
+  {{!-- ═══════════════════════════ COLUNA ESQUERDA: Atributos + Detalhes ══ --}}
+  <div class="pf1ar-left-col">
+
+    {{!-- Atributos --}}
+    <h3 class="pf1ar-panel-title"><i class="fa-solid fa-dumbbell" inert></i><span>{{localize "PF1AR.Sections.Abilities"}}</span></h3>
+    <div class="pf1ar-abilities">
+      {{#each system.abilities as |ability id|}}
+        <div class="pf1ar-ability {{#if (pf1ar_abilityDamaged this)}}pf1ar-damaged{{/if}}"
+             data-ability="{{id}}"
+             data-action="rollAbility"
+             data-tooltip-extended="abilityScore.{{id}}">
+          <span class="pf1ar-ability-name" title="{{ability.label}}">{{ability.label}}</span>
+          <span class="pf1ar-ability-score">{{ability.totalLabel}}</span>
+          <span class="pf1ar-ability-mod {{#if (pf1ar_isNegative ability.mod)}}pf1ar-negative{{/if}}">
+            {{pf1ar_signedNum ability.mod}}
+          </span>
+        </div>
+      {{/each}}
+    </div>
+
+    {{!-- Detalhes do personagem --}}
+    <h3 class="pf1ar-panel-title pf1ar-title-spaced"><i class="fa-solid fa-address-card" inert></i><span>{{localize "PF1.Details"}}</span></h3>
+    <div class="pf1ar-detail-row">
+      <span class="pf1ar-detail-label">{{localize "PF1.Gender"}}</span>
+      <span class="pf1ar-detail-value">{{system.details.gender}}</span>
+    </div>
+    <div class="pf1ar-detail-row">
+      <span class="pf1ar-detail-label">{{localize "PF1.Age"}}</span>
+      <span class="pf1ar-detail-value">{{system.details.age}}</span>
+    </div>
+    <div class="pf1ar-detail-row">
+      <span class="pf1ar-detail-label">{{localize "PF1.Height"}}</span>
+      <span class="pf1ar-detail-value">{{system.details.height}}</span>
+    </div>
+    <div class="pf1ar-detail-row">
+      <span class="pf1ar-detail-label">{{localize "PF1.Weight"}}</span>
+      <span class="pf1ar-detail-value">{{system.details.weight}}</span>
+    </div>
+    {{#if labels.alignment}}
+    <div class="pf1ar-detail-row">
+      <span class="pf1ar-detail-label">{{localize "PF1.Alignment"}}</span>
+      <span class="pf1ar-detail-value">{{labels.alignment}}</span>
+    </div>
+    {{/if}}
+  </div>
+
+  {{!-- ══════════════════════════════════════ COLUNA CENTRAL: Combate ══ --}}
+  <div class="pf1ar-combat-panel">
+
+    {{!-- HP --}}
+    <div class="pf1ar-health-row">
+      <div class="pf1ar-stat-block pf1ar-hp" data-tooltip-extended="hit-points">
+        <h3 class="pf1ar-panel-title"><i class="fa-solid fa-heart-pulse" inert></i><span>{{localize "PF1.HitPoints"}}</span></h3>
+        {{#if useWoundsAndVigor}}
+          <div class="pf1ar-hp-row">
+            <span class="pf1ar-hp-current text-box direct allow-relative" name="system.attributes.vigor.value" data-dtype="Number">{{system.attributes.vigor.value}}</span>
+            <span class="pf1ar-hp-sep">/</span>
+            <span class="pf1ar-hp-max">{{system.attributes.vigor.max}}</span>
+            <span class="pf1ar-hp-label-sm">{{localize "PF1.Vigor"}}</span>
+          </div>
+        {{else}}
+          <div class="pf1ar-hp-row">
+            <span class="pf1ar-hp-current text-box direct allow-relative" name="system.attributes.hp.value" data-dtype="Number">{{system.attributes.hp.value}}</span>
+            <span class="pf1ar-hp-sep">/</span>
+            <span class="pf1ar-hp-max">{{system.attributes.hp.max}}</span>
+          </div>
+          <div class="pf1ar-hp-extra">
+            <span class="pf1ar-hp-label-sm">{{localize "PF1.TempShort"}}</span>
+            <span class="text-box direct allow-relative" name="system.attributes.hp.temp" data-dtype="Number">{{#if system.attributes.hp.temp}}{{system.attributes.hp.temp}}{{/if}}</span>
+            <span class="pf1ar-hp-label-sm">{{localize "PF1.Nonlethal"}}</span>
+            <span class="text-box direct allow-relative" name="system.attributes.hp.nonlethal" data-dtype="Number">{{#if system.attributes.hp.nonlethal}}{{system.attributes.hp.nonlethal}}{{/if}}</span>
+          </div>
+        {{/if}}
+      </div>
+
+      <button type="button" class="rest pf1ar-rest-button" data-tooltip="PF1.Rest">
+        <i class="fa-solid fa-bed" inert></i>
+        <span>{{localize "PF1.Rest"}}</span>
+      </button>
+    </div>
+
+    {{!-- Iniciativa, BAB, CMB, CMD --}}
+    <div class="pf1ar-stat-block">
+      <h3 class="pf1ar-panel-title"><i class="fa-solid fa-dice-d20" inert></i><span>{{localize "PF1.Combat"}}</span></h3>
+      <div class="pf1ar-stat-row">
+        <div class="pf1ar-stat-box pf1ar-rollable" data-action="rollInit" data-tooltip-extended="init">
+          <span class="pf1ar-stat-label">{{localize "PF1.Initiative"}}</span>
+          <span class="pf1ar-stat-value">{{pf1ar_signedNum system.attributes.init.total}}</span>
+        </div>
+        <div class="pf1ar-stat-box pf1ar-rollable" data-action="rollBAB" data-tooltip-extended="bab">
+          <span class="pf1ar-stat-label">{{localize "PF1.BABAbbr"}}</span>
+          <span class="pf1ar-stat-value">{{pf1ar_signedNum system.attributes.bab.total}}</span>
+        </div>
+        <div class="pf1ar-stat-box" data-tooltip-extended="cmb">
+          <span class="pf1ar-stat-label">{{localize "PF1.CMBAbbr"}}</span>
+          <span class="pf1ar-stat-value">{{pf1ar_signedNum system.attributes.cmb.total}}</span>
+        </div>
+        <div class="pf1ar-stat-box" data-tooltip-extended="cmd.total">
+          <span class="pf1ar-stat-label">{{localize "PF1.CMDAbbr"}}</span>
+          <span class="pf1ar-stat-value">{{system.attributes.cmd.total}}</span>
+        </div>
+      </div>
+    </div>
+
+    {{!-- CA --}}
+    <div class="pf1ar-stat-block">
+      <h3 class="pf1ar-panel-title"><i class="fa-solid fa-shield" inert></i><span>{{localize "PF1.ArmorClass"}}</span></h3>
+      <div class="pf1ar-stat-row">
+        {{#each system.attributes.ac as |ac id|}}
+          <div class="pf1ar-stat-box" data-armorclass="{{id}}" data-tooltip-extended="ac.{{id}}">
+            <span class="pf1ar-stat-label">{{ac.label}}</span>
+            <span class="pf1ar-stat-value">{{ac.total}}</span>
+          </div>
+        {{/each}}
+      </div>
+    </div>
+
+    {{!-- Saves + SR --}}
+    <div class="pf1ar-stat-block">
+      <h3 class="pf1ar-panel-title"><i class="fa-solid fa-shield-heart" inert></i><span>{{localize "PF1AR.Sections.SavingThrows"}}</span></h3>
+      <div class="pf1ar-stat-row">
+        {{#each system.attributes.savingThrows as |st id|}}
+          <div class="pf1ar-stat-box pf1ar-rollable"
+               data-savingthrow="{{id}}"
+               data-action="rollSave"
+               data-tooltip-extended="save.{{id}}">
+            <span class="pf1ar-stat-label">{{st.label}}</span>
+            <span class="pf1ar-stat-value {{#if (pf1ar_isNegative st.total)}}pf1ar-negative{{/if}}">
+              {{pf1ar_signedNum st.total}}
+            </span>
+          </div>
+        {{/each}}
+        <div class="pf1ar-stat-box" data-tooltip-extended="sr">
+          <span class="pf1ar-stat-label">{{localize "PF1.SpellResistance"}}</span>
+          <span class="pf1ar-stat-value">{{#if system.attributes.sr.total}}{{system.attributes.sr.total}}{{else}}—{{/if}}</span>
+        </div>
+      </div>
+    </div>
+
+    {{!-- Velocidade --}}
+    <div class="pf1ar-stat-block">
+      <h3 class="pf1ar-panel-title"><i class="fa-solid fa-person-running" inert></i><span>{{localize "PF1.Movement.Speed"}}</span></h3>
+      <div class="pf1ar-stat-row">
+        {{#if system.attributes.speed.land.total}}
+        <div class="pf1ar-stat-box" data-tooltip-extended="speed.land">
+          <span class="pf1ar-stat-label">{{localize "PF1.Movement.Mode.land"}}</span>
+          <span class="pf1ar-stat-value pf1ar-stat-value-sm">{{convertDistance system.attributes.speed.land.total}}{{units.distance.tactical}}</span>
+        </div>
+        {{/if}}
+        {{#if system.attributes.speed.fly.total}}
+        <div class="pf1ar-stat-box" data-tooltip-extended="speed.fly">
+          <span class="pf1ar-stat-label">{{localize "PF1.Movement.Mode.fly"}}</span>
+          <span class="pf1ar-stat-value pf1ar-stat-value-sm">{{convertDistance system.attributes.speed.fly.total}}{{units.distance.tactical}}</span>
+        </div>
+        {{/if}}
+        {{#if system.attributes.speed.swim.total}}
+        <div class="pf1ar-stat-box" data-tooltip-extended="speed.swim">
+          <span class="pf1ar-stat-label">{{localize "PF1.Movement.Mode.swim"}}</span>
+          <span class="pf1ar-stat-value pf1ar-stat-value-sm">{{convertDistance system.attributes.speed.swim.total}}{{units.distance.tactical}}</span>
+        </div>
+        {{/if}}
+        {{#if system.attributes.speed.climb.total}}
+        <div class="pf1ar-stat-box" data-tooltip-extended="speed.climb">
+          <span class="pf1ar-stat-label">{{localize "PF1.Movement.Mode.climb"}}</span>
+          <span class="pf1ar-stat-value pf1ar-stat-value-sm">{{convertDistance system.attributes.speed.climb.total}}{{units.distance.tactical}}</span>
+        </div>
+        {{/if}}
+        {{#if system.attributes.speed.burrow.total}}
+        <div class="pf1ar-stat-box" data-tooltip-extended="speed.burrow">
+          <span class="pf1ar-stat-label">{{localize "PF1.Movement.Mode.burrow"}}</span>
+          <span class="pf1ar-stat-value pf1ar-stat-value-sm">{{convertDistance system.attributes.speed.burrow.total}}{{units.distance.tactical}}</span>
+        </div>
+        {{/if}}
+      </div>
+    </div>
+
+  </div>{{!-- /.pf1ar-combat-panel --}}
+
+  {{!-- ══════════════════════════════════════ COLUNA DIREITA: Perícias ══ --}}
+  <div class="pf1ar-skills-panel">
+    <h3 class="pf1ar-panel-title"><i class="fa-solid fa-list-check" inert></i><span>{{localize "PF1.Skills"}}</span>
+      <small>
+        {{#if (eq summarySkillsMode "all")}}{{localize "PF1AR.Labels.SkillsAll"}}
+        {{else if (eq summarySkillsMode "class")}}{{localize "PF1AR.Labels.SkillsClass"}}
+        {{else}}{{localize "PF1AR.Labels.Ranked"}}{{/if}}
+      </small>
+    </h3>
+    <ul class="pf1ar-skills-list">
+      {{#each skillsets.adventure.skills as |skill id|}}
+        {{#if skill.arbitrary}}
+          {{#each skill.subSkills as |sub subId|}}
+            {{#if (or (eq @root.summarySkillsMode "all") sub.rank (and (eq @root.summarySkillsMode "class") skill.cs))}}
+              <li class="pf1ar-skill pf1ar-sub-skill{{#unless sub.rank}} pf1ar-skill-unranked{{/unless}}"
+                  data-skill="{{id}}" data-sub-skill="{{subId}}"
+                  data-action="rollSkill">
+                <span class="pf1ar-skill-name">{{skill.label}} ({{sub.name}})</span>
+                <span class="pf1ar-skill-mod {{#if (pf1ar_isNegative sub.mod)}}pf1ar-negative{{/if}}">
+                  {{pf1ar_signedNum sub.mod}}
+                </span>
+              </li>
+            {{/if}}
+          {{/each}}
+        {{else if (or (eq @root.summarySkillsMode "all") skill.rank (and (eq @root.summarySkillsMode "class") skill.cs))}}
+          <li class="pf1ar-skill{{#unless skill.rank}} pf1ar-skill-unranked{{/unless}}" data-skill="{{id}}" data-action="rollSkill">
+            <span class="pf1ar-skill-name">
+              {{#if skill.custom}}{{skill.name}}{{else}}{{skill.label}}{{/if}}
+              {{#if skill.cs}}<abbr class="pf1ar-skill-flag" title="{{localize "PF1.CSTooltip"}}">*</abbr>{{/if}}
+            </span>
+            <span class="pf1ar-skill-mod {{#if (pf1ar_isNegative skill.mod)}}pf1ar-negative{{/if}}">
+              {{pf1ar_signedNum skill.mod}}
+            </span>
+          </li>
+        {{/if}}
+      {{/each}}
+      {{#if useBGSkills}}
+        {{#each skillsets.background.skills as |skill id|}}
+          {{#if (or (eq @root.summarySkillsMode "all") skill.rank (and (eq @root.summarySkillsMode "class") skill.cs))}}
+            <li class="pf1ar-skill pf1ar-bg-skill{{#unless skill.rank}} pf1ar-skill-unranked{{/unless}}" data-skill="{{id}}" data-action="rollSkill">
+              <span class="pf1ar-skill-name">
+                {{#if skill.custom}}{{skill.name}}{{else}}{{skill.label}}{{/if}}
+              </span>
+              <span class="pf1ar-skill-mod {{#if (pf1ar_isNegative skill.mod)}}pf1ar-negative{{/if}}">
+                {{pf1ar_signedNum skill.mod}}
+              </span>
+            </li>
+          {{/if}}
+        {{/each}}
+      {{/if}}
+    </ul>
+    {{#if quickActions.length}}
+      <h3 class="pf1ar-panel-title pf1ar-title-spaced"><i class="fa-solid fa-bolt" inert></i><span>{{localize "PF1.QuickActions"}}</span></h3>
+      <ol class="quick-actions pf1ar-quick-actions">
+        {{#each quickActions}}
+        <li class="item" data-item-id="{{id}}" data-type="{{type}}" data-tooltip="{{name}}">
+          <img src="{{img}}" alt="{{name}}">
+          {{#if isCharged}}
+          <span class="pf1ar-qa-charges">
+            {{#if recharging}}<span class="pf1ar-qa-recharge">+{{uses}}</span>
+            {{else}}<span class="pf1ar-qa-remaining">{{uses}}</span>{{#if max}}<span class="pf1ar-qa-sep">/</span><span class="pf1ar-qa-max">{{max}}</span>{{/if}}
+            {{/if}}
+          </span>
+          {{/if}}
+        </li>
+        {{/each}}
+      </ol>
+    {{/if}}
+  </div>
+
+  {{!-- Classes --}}
+  <section class="pf1ar-classes-panel">
+    <h3 class="pf1ar-panel-title">
+      <i class="fa-solid fa-graduation-cap" inert></i>
+      <span>{{localize "PF1.Classes"}}</span>
+    </h3>
+
+    {{#each classes as |section|}}
+      {{!-- .item-list (no ancestral, não no pai direto) faz o Koboldworks Item
+            Hints achar os cards via ".item-list .item" sem ativar as regras
+            ".item-list > .item" de linha de inventário (que usam filho direto). --}}
+      <div class="pf1ar-class-group item-list">
+        <header class="pf1ar-class-group-header">
+          <span>{{pf1ar_localize section.label}}</span>
+          {{#if @root.owner}}
+            <div class="pf1ar-class-group-controls">
+              <a class="item-control item-create"
+                 data-create="{{section.path}}"
+                 data-tooltip="PF1.CreateItem">
+                <i class="fa-solid fa-plus" inert></i>
+              </a>
+              <a data-action="browse"
+                 data-source="classes.class"
+                 data-tooltip="PF1.BrowseClasses">
+                <i class="fa-solid fa-folder-plus" inert></i>
+              </a>
+            </div>
+          {{/if}}
+        </header>
+
+        {{#if section.items.length}}
+          <div class="pf1ar-class-list">
+            {{#each section.items as |item|}}
+              <article class="item pf1ar-class-card {{#unless item.isCharged}}uncharged{{/unless}}"
+                       data-item-id="{{item.id}}">
+                <div class="item-name rollable pf1ar-class-identity">
+                  <div class="item-image pf1ar-class-image"
+                       style='background-image: url("{{item.img}}")'
+                       data-tooltip="PF1.DisplayInChat"></div>
+                  <div class="pf1ar-class-name">
+                    <h4>{{item.name}}</h4>
+                    <div class="pf1ar-class-meta">
+                      {{#if item.typeLabel}}<span>{{item.typeLabel}}</span>{{/if}}
+                      {{#if item.hd}}<span>{{localize "PF1.HitDieShort"}} d{{item.hd}}</span>{{/if}}
+                    </div>
+                  </div>
+                </div>
+
+                <div class="pf1ar-class-level" data-tooltip-extended="item.{{item.id}}.level">
+                  <span>{{localize "PF1.Level"}}</span>
+                  <strong>{{item.level}}</strong>
+                </div>
+
+                {{#if @root.owner}}
+                  <div class="item-controls pf1ar-class-controls">
+                    {{#if (or @root.levelUp item.xpUnbound)}}
+                      <button type="button" class="level-up"
+                              data-item-id="{{item.id}}"
+                              data-tooltip="PF1.LevelUp.Action">
+                        <i class="fa-solid fa-arrow-up" inert></i>
+                        <span>{{localize "PF1.LevelUp.Action"}}</span>
+                      </button>
+                    {{/if}}
+                    <a class="item-control item-edit" data-tooltip="PF1.EditItem">
+                      <i class="fa-solid fa-edit" inert></i>
+                    </a>
+                    <a class="item-control item-duplicate" data-tooltip="PF1.DuplicateItem">
+                      <i class="fa-solid fa-copy" inert></i>
+                    </a>
+                    <a class="item-control item-delete" data-tooltip="PF1.DeleteItem">
+                      <i class="fa-solid fa-trash" inert></i>
+                    </a>
+                  </div>
+                {{/if}}
+              </article>
+            {{/each}}
+          </div>
+        {{else}}
+          <div class="pf1ar-class-empty">{{{@root.labels.firstClass}}}</div>
+        {{/if}}
+      </div>
+    {{/each}}
+  </section>
+
+</div>{{!-- /.pf1ar-summary-grid --}}

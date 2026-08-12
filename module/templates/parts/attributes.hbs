@@ -1,0 +1,121 @@
+{{!-- ABA: Attributes --}}
+<div class="pf1ar-tab-content pf1ar-attributes">
+
+  {{!-- Cartões de atributos --}}
+  <div class="pf1ar-section-heading-row">
+    <h3 class="pf1ar-panel-title"><i class="fa-solid fa-dumbbell" inert></i><span>{{localize "PF1AR.Sections.Abilities"}}</span></h3>
+    <button type="button" class="pointbuy-calculator pf1ar-pointbuy-button">
+      <i class="fa-solid fa-calculator" inert></i>
+      <span>{{localize "PF1.Application.PointBuy.Title"}}</span>
+    </button>
+  </div>
+  <div class="pf1ar-ability-cards">
+    {{#each system.abilities as |ability id|}}
+      <article class="pf1ar-ability-card {{#if (pf1ar_abilityDamaged ability)}}pf1ar-damaged{{/if}}"
+               data-ability="{{id}}" data-tooltip-extended="abilityScore.{{id}}">
+        <a class="pf1ar-ability-card-title" data-action="rollAbility" data-ability="{{id}}">
+          <span>{{ability.label}}</span>
+          <i class="fa-solid fa-dice-d20" inert></i>
+        </a>
+        <div class="pf1ar-ability-card-main">
+          <span class="text-box direct pf1ar-ability-card-score"
+                name="system.abilities.{{id}}.value" data-dtype="String">{{ability.totalLabel}}</span>
+          <span class="pf1ar-ability-card-mod">{{pf1ar_signedNum ability.mod}}</span>
+        </div>
+        {{#if ability.enabled}}
+          <div class="pf1ar-ability-card-adjustments">
+            <label data-tooltip="PF1.Damage">
+              <span>{{localize "PF1AR.Abbr.Damage"}}</span>
+              <span class="text-box direct allow-relative" name="system.abilities.{{id}}.damage" data-dtype="Number">{{#if ability.damage}}{{ability.damage}}{{else}}0{{/if}}</span>
+            </label>
+            <label data-tooltip="PF1.Penalty">
+              <span>{{localize "PF1AR.Abbr.Penalty"}}</span>
+              <span class="text-box direct allow-relative" name="system.abilities.{{id}}.userPenalty" data-dtype="Number">{{#if ability.userPenalty}}{{ability.userPenalty}}{{else}}0{{/if}}</span>
+            </label>
+            <label data-tooltip="PF1.Drain">
+              <span>{{localize "PF1AR.Abbr.Drain"}}</span>
+              <span class="text-box direct allow-relative" name="system.abilities.{{id}}.drain" data-dtype="Number">{{#if ability.drain}}{{ability.drain}}{{else}}0{{/if}}</span>
+            </label>
+          </div>
+        {{/if}}
+      </article>
+    {{/each}}
+  </div>
+
+  {{!-- Velocidade --}}
+  <h3 class="pf1ar-panel-title"><i class="fa-solid fa-person-running" inert></i><span>{{localize "PF1.Movement.Speed"}}</span></h3>
+  <div class="pf1ar-stat-row">
+    <div class="pf1ar-stat-box" data-tooltip-extended="speed.land">
+      <span class="pf1ar-stat-label">{{localize "PF1.Movement.Mode.land"}}</span>
+      <span class="pf1ar-stat-value pf1ar-stat-value-sm">
+        <span class="text-box direct" name="system.attributes.speed.land.base" data-dtype="Number">
+          {{#if system.attributes.speed.land.total}}{{convertDistance system.attributes.speed.land.total}}{{/if}}
+        </span>{{units.distance.tactical}}
+      </span>
+    </div>
+    <div class="pf1ar-stat-box" data-tooltip-extended="speed.fly">
+      <span class="pf1ar-stat-label">{{localize "PF1.Movement.Mode.fly"}}</span>
+      <span class="pf1ar-stat-value pf1ar-stat-value-sm">
+        <span class="text-box direct" name="system.attributes.speed.fly.base" data-dtype="Number">
+          {{#if system.attributes.speed.fly.total}}{{convertDistance system.attributes.speed.fly.total}}{{/if}}
+        </span>{{units.distance.tactical}}
+      </span>
+    </div>
+    <div class="pf1ar-stat-box" data-tooltip-extended="speed.swim">
+      <span class="pf1ar-stat-label">{{localize "PF1.Movement.Mode.swim"}}</span>
+      <span class="pf1ar-stat-value pf1ar-stat-value-sm">
+        <span class="text-box direct" name="system.attributes.speed.swim.base" data-dtype="Number">
+          {{#if system.attributes.speed.swim.total}}{{convertDistance system.attributes.speed.swim.total}}{{/if}}
+        </span>{{units.distance.tactical}}
+      </span>
+    </div>
+    <div class="pf1ar-stat-box" data-tooltip-extended="speed.climb">
+      <span class="pf1ar-stat-label">{{localize "PF1.Movement.Mode.climb"}}</span>
+      <span class="pf1ar-stat-value pf1ar-stat-value-sm">
+        <span class="text-box direct" name="system.attributes.speed.climb.base" data-dtype="Number">
+          {{#if system.attributes.speed.climb.total}}{{convertDistance system.attributes.speed.climb.total}}{{/if}}
+        </span>{{units.distance.tactical}}
+      </span>
+    </div>
+    <div class="pf1ar-stat-box" data-tooltip-extended="speed.burrow">
+      <span class="pf1ar-stat-label">{{localize "PF1.Movement.Mode.burrow"}}</span>
+      <span class="pf1ar-stat-value pf1ar-stat-value-sm">
+        <span class="text-box direct" name="system.attributes.speed.burrow.base" data-dtype="Number">
+          {{#if system.attributes.speed.burrow.total}}{{convertDistance system.attributes.speed.burrow.total}}{{/if}}
+        </span>{{units.distance.tactical}}
+      </span>
+    </div>
+  </div>
+
+  {{!-- Saves --}}
+  <h3 class="pf1ar-panel-title"><i class="fa-solid fa-shield-heart" inert></i><span>{{localize "PF1AR.Sections.SavingThrows"}}</span></h3>
+  <div class="pf1ar-stat-row">
+    {{#each system.attributes.savingThrows as |st id|}}
+      <div class="pf1ar-stat-box pf1ar-rollable" data-savingthrow="{{id}}" data-action="rollSave" data-tooltip-extended="save.{{id}}">
+        <span class="pf1ar-stat-label">{{st.label}}</span>
+        <span class="pf1ar-stat-value">{{pf1ar_signedNum st.total}}</span>
+      </div>
+    {{/each}}
+  </div>
+
+  {{!-- Traits and secondary attributes --}}
+  <h3 class="pf1ar-panel-title pf1ar-title-spaced"><i class="fa-solid fa-fingerprint" inert></i><span>{{localize "PF1AR.Sections.TraitsAttributes"}}</span></h3>
+  <div class="pf1ar-armor-attr">
+    <div class="pf1ar-stat-box" data-tooltip-extended="acp">
+      <span class="pf1ar-stat-label">{{localize "PF1.ACP"}}</span>
+      <span class="pf1ar-stat-value">{{system.attributes.acp.total}}</span>
+    </div>
+    <div class="pf1ar-stat-box" data-tooltip-extended="max-dex">
+      <span class="pf1ar-stat-label">{{localize "PF1.MaxDexShort"}}</span>
+      <span class="pf1ar-stat-value">{{#if (ne system.attributes.maxDexBonus null)}}{{system.attributes.maxDexBonus}}{{else}}{{localize "PF1.Unlimited"}}{{/if}}</span>
+    </div>
+    {{#with asf}}
+      <div class="pf1ar-stat-box pf1ar-armor-wide" data-tooltip-extended="asf">
+        <span class="pf1ar-stat-label">{{localize "PF1.ArcaneSpellFailureAbbr"}}</span>
+        <span class="pf1ar-stat-value">{{total}}%</span>
+      </div>
+    {{/with}}
+  </div>
+  {{> "systems/pf1/templates/actors/parts/actor-traits.hbs"}}
+
+</div>

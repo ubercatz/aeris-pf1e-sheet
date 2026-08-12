@@ -1,0 +1,142 @@
+{{!-- PF1E Alt Sheet Reworked — NPC Sheet (FormApplication) --}}
+
+<form class="pf1ar-root pf1ar-npc sheet actor {{cssClass}}" data-tooltip-class="pf1" autocomplete="off">
+
+  {{!-- ═══════════════════════════════════════════════════════════ HEADER ══ --}}
+  <header class="pf1ar-header">
+    <button type="button" class="pf1ar-theme-toggle" data-action="pf1arToggleTheme"
+            data-tooltip="PF1AR.Labels.ToggleTheme" aria-label="{{localize "PF1AR.Labels.ToggleTheme"}}">
+      <i class="fa-solid {{#if pf1arDark}}fa-sun{{else}}fa-moon{{/if}}" inert></i>
+    </button>
+    <button type="button" class="pf1ar-theme-cycle" data-action="pf1arCycleTheme"
+            data-tooltip="PF1AR.Labels.CycleTheme" aria-label="{{localize "PF1AR.Labels.CycleTheme"}}">
+      <i class="fa-solid fa-palette" inert></i>
+    </button>
+    <div class="pf1ar-portrait-wrap">
+      <img class="pf1ar-portrait" src="{{actor.img}}" data-edit="img" alt="{{actor.name}}">
+    </div>
+
+    <div class="pf1ar-identity">
+      <h1 class="pf1ar-name-row">
+        <input class="pf1ar-charname" name="name" type="text" value="{{actor.name}}"
+               placeholder="{{localize "PF1.CharacterName"}}">
+      </h1>
+      <div class="pf1ar-archetype-row">
+        <div class="controls alignment pf1ar-alignment-control" data-tooltip="PF1.Alignment">
+          <span class="pf1ar-alignment-badge">
+            {{#if labels.alignment}}{{labels.alignment}}{{else}}{{localize "PF1.Alignment"}}{{/if}}
+          </span>
+          <a class="control alignment" data-tooltip="PF1.Alignment">
+            <i class="fa-solid fa-pen-to-square" inert></i>
+          </a>
+        </div>
+        {{#if system.traits.size}}<span class="pf1ar-lineage"><i class="fa-solid fa-expand" inert></i>{{lookup config.actorSizes system.traits.size.base}}</span>{{/if}}
+      </div>
+      <div class="pf1ar-bio-row">
+        <label class="pf1ar-mini-field" data-tooltip="PF1.Gender">
+          <i class="fa-solid fa-user" inert></i>
+          <input type="text" name="system.details.gender" value="{{system.details.gender}}"
+                 placeholder="{{localize "PF1.Gender"}}">
+        </label>
+        <label class="pf1ar-mini-field pf1ar-mini-field-short" data-tooltip="PF1.Age">
+          <i class="fa-solid fa-hourglass-half" inert></i>
+          <input type="text" name="system.details.age" value="{{system.details.age}}"
+                 placeholder="{{localize "PF1.Age"}}">
+        </label>
+        <label class="pf1ar-mini-field pf1ar-mini-field-short" data-tooltip="PF1.Height">
+          <i class="fa-solid fa-ruler-vertical" inert></i>
+          <input type="text" name="system.details.height" value="{{system.details.height}}"
+                 placeholder="{{localize "PF1.Height"}}">
+        </label>
+        <label class="pf1ar-mini-field pf1ar-mini-field-short" data-tooltip="PF1.Weight">
+          <i class="fa-solid fa-weight-scale" inert></i>
+          <input type="text" name="system.details.weight" value="{{system.details.weight}}"
+                 placeholder="{{localize "PF1.Weight"}}">
+        </label>
+      </div>
+    </div>
+
+    <aside class="pf1ar-level-panel pf1ar-cr-panel">
+      <div class="pf1ar-level-heading">
+        <span>{{localize "PF1.ChallengeRatingShort"}}</span>
+        <strong class="text-box cr-input" name="system.details.cr.base">{{labels.cr}}</strong>
+      </div>
+      <div class="pf1ar-xp pf1ar-npc-xp">
+        <span>{{localize "PF1.Experience"}}</span>
+        <b>{{system.details.xp.value}}</b>
+      </div>
+    </aside>
+  </header>
+
+  {{!-- ═══════════════════════════════════════════════════════ TAB NAV ══ --}}
+  <nav class="tabs pf1ar-primary-tabs" data-group="primary" aria-label="{{localize "PF1AR.SheetNavigation"}}">
+    <a class="item active" data-tab="summary" data-group="primary"><i class="fa-solid fa-chart-simple" inert></i><span>{{localize "PF1.Summary"}}</span></a>
+    <a class="item" data-tab="attributes" data-group="primary"><i class="fa-solid fa-dumbbell" inert></i><span>{{localize "PF1.Attributes"}}</span></a>
+    <a class="item" data-tab="combat" data-group="primary"><i class="fa-solid fa-shield-halved" inert></i><span>{{localize "PF1.Combat"}}</span></a>
+    <a class="item" data-tab="inventory" data-group="primary"><i class="fa-solid fa-box-open" inert></i><span>{{localize "PF1.Inventory"}}</span></a>
+    <a class="item" data-tab="feats" data-group="primary"><i class="fa-solid fa-star" inert></i><span>{{localize "PF1.Features"}}</span></a>
+    <a class="item" data-tab="skills" data-group="primary"><i class="fa-solid fa-list-check" inert></i><span>{{localize "PF1.Skills"}}</span></a>
+    {{#if usesAnySpellbook}}
+      <a class="item" data-tab="spellbook" data-group="primary"><i class="fa-solid fa-book-open" inert></i><span>{{localize "PF1.Spells"}}</span></a>
+    {{/if}}
+    <a class="item" data-tab="buffs" data-group="primary"><i class="fa-solid fa-wand-magic-sparkles" inert></i><span>{{localize "PF1.Buffs"}}</span></a>
+    <a class="item" data-tab="biography" data-group="primary"><i class="fa-solid fa-scroll" inert></i><span>{{localize "PF1.Biography"}}</span></a>
+    <a class="item" data-tab="notes" data-group="primary"><i class="fa-solid fa-note-sticky" inert></i><span>{{localize "PF1.Notes"}}</span></a>
+    <a class="item" data-tab="settings" data-group="primary"><i class="fa-solid fa-gear" inert></i><span>{{localize "PF1.Settings"}}</span></a>
+  </nav>
+
+  {{!-- ══════════════════════════════════════════════════════ TAB BODY ══ --}}
+  <section class="primary-body">
+
+    <div class="tab flexcol" data-group="primary" data-tab="summary">
+      {{> "modules/pf1-altsheet-reworked/templates/parts/summary.hbs"}}
+    </div>
+
+    <div class="tab flexcol" data-group="primary" data-tab="attributes">
+      {{> "modules/pf1-altsheet-reworked/templates/parts/attributes.hbs"}}
+    </div>
+
+    <div class="tab flexcol" data-group="primary" data-tab="combat">
+      {{> "modules/pf1-altsheet-reworked/templates/parts/combat.hbs"}}
+    </div>
+
+    <div class="tab flexcol" data-group="primary" data-tab="inventory">
+      {{> "modules/pf1-altsheet-reworked/templates/parts/inventory.hbs"}}
+    </div>
+
+    <div class="tab flexcol" data-group="primary" data-tab="feats">
+      {{> "modules/pf1-altsheet-reworked/templates/parts/features.hbs"}}
+    </div>
+
+    <div class="tab flexcol skills" data-group="primary" data-tab="skills">
+      {{> "modules/pf1-altsheet-reworked/templates/parts/skills.hbs"}}
+    </div>
+
+    {{#if usesAnySpellbook}}
+      <div class="tab flexcol" data-group="primary" data-tab="spellbook">
+        {{> "modules/pf1-altsheet-reworked/templates/parts/spells.hbs"}}
+      </div>
+    {{/if}}
+
+    <div class="tab flexcol" data-group="primary" data-tab="buffs">
+      {{> "modules/pf1-altsheet-reworked/templates/parts/buffs.hbs"}}
+    </div>
+
+    <div class="tab flexcol" data-group="primary" data-tab="biography">
+      {{editor biographyHTML target="system.details.biography.value" button=true editable=editable engine="prosemirror" collaborate=false}}
+    </div>
+
+    <div class="tab flexcol" data-group="primary" data-tab="notes">
+      {{editor notesHTML target="system.details.notes.value" button=true editable=editable engine="prosemirror" collaborate=false}}
+    </div>
+
+    <div class="tab flexcol" data-group="primary" data-tab="settings">
+      <div class="pf1ar-settings-shell">
+        <h3 class="pf1ar-panel-title"><i class="fa-solid fa-gears" inert></i><span>{{localize "PF1.Settings"}}</span></h3>
+        {{> "systems/pf1/templates/actors/parts/actor-settings.hbs"}}
+      </div>
+    </div>
+
+  </section>
+
+</form>

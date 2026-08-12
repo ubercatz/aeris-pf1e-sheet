@@ -1,0 +1,51 @@
+{
+  "PF1AR": {
+    "CharacterSheetLabel": "Alt PC Sheet (Reworked)",
+    "NPCSheetLabel": "Alt NPC Sheet (Reworked)",
+    "ModuleTitle": "PF1E Alt Sheet Reworked",
+    "SheetNavigation": "Character sheet navigation",
+    "Sections": {
+      "Abilities": "Ability Scores",
+      "SavingThrows": "Saving Throws",
+      "CombatStats": "Combat Statistics",
+      "Conditions": "Conditions",
+      "TraitsAttributes": "Traits & Attributes"
+    },
+    "Labels": {
+      "Ranked": "ranked",
+      "SelectRace": "Select or create a race",
+      "Attribute": "Attribute",
+      "Rank": "Rank",
+      "ModifierAbbr": "Mod.",
+      "Roll": "Roll",
+      "Actions": "Actions",
+      "ToggleTheme": "Toggle dark mode",
+      "CycleTheme": "Cycle theme",
+      "SkillsAll": "all",
+      "SkillsClass": "class",
+      "DragHint": "Drag to reorder"
+    },
+    "Abbr": {
+      "Damage": "DMG",
+      "Penalty": "PEN",
+      "Drain": "DRN"
+    },
+    "Settings": {
+      "DarkMode": "Dark mode",
+      "Theme": "Sheet theme",
+      "ThemeHint": "Visual palette for the alternative sheet. Combines with dark mode.",
+      "Compact": "Compact mode",
+      "CompactHint": "Denser inventory and container rows for advanced users.",
+      "SummarySkills": "Summary skill list",
+      "SummarySkillsHint": "Which skills appear in the Summary tab's quick skill list."
+    },
+    "Theme": {
+      "Parchment": "Refined Parchment",
+      "Hybrid": "Hybrid (native-like)",
+      "Slate": "Neutral Slate"
+    },
+    "Containers": {
+      "Empty": "Drag items here"
+    }
+  }
+}

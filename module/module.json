@@ -1,0 +1,48 @@
+{
+  "id": "pf1-altsheet-reworked",
+  "title": "PF1E Alt Sheet Reworked",
+  "description": "Ficha alternativa modernizada para Pathfinder 1e no Foundry VTT v13. Modernização do módulo pf1-alt-sheet original.",
+  "version": "0.2.4",
+  "authors": [
+    {
+      "name": "Chandriano131",
+      "url": "https://github.com/Chandriano131"
+    }
+  ],
+  "url": "https://github.com/Chandriano131/pf1-altsheet-reworked",
+  "manifest": "https://github.com/Chandriano131/pf1-altsheet-reworked/releases/latest/download/module.json",
+  "download": "https://github.com/Chandriano131/pf1-altsheet-reworked/releases/download/v0.2.4/module.zip",
+  "readme": "https://github.com/Chandriano131/pf1-altsheet-reworked/blob/main/README.md",
+  "bugs": "https://github.com/Chandriano131/pf1-altsheet-reworked/issues",
+  "compatibility": {
+    "minimum": "13",
+    "verified": "13",
+    "maximum": "13"
+  },
+  "esmodules": ["./scripts/main.mjs"],
+  "styles": ["./styles/pf1-altsheet-reworked.css"],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    },
+    {
+      "lang": "pt-BR",
+      "name": "Português (Brasil)",
+      "path": "lang/pt-BR.json"
+    }
+  ],
+  "relationships": {
+    "systems": [
+      {
+        "id": "pf1",
+        "type": "system",
+        "compatibility": {
+          "minimum": "11.11",
+          "verified": "11.11"
+        }
+      }
+    ]
+  }
+}

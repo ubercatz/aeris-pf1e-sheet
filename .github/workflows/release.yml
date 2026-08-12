@@ -15,22 +15,13 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Dependencies
-        run: npm install
-
-      - name: Build Project
-        run: npm run build
-
+      # Reads the version directly from your module.json
       - name: Read Version from module.json
         run: echo "VERSION=$(node -p "require('./module.json').version")" >> $GITHUB_ENV
 
+      # Zips the new folder structure instead of the old dist/ folder
       - name: Zip Files
-        run: zip -r module-v${{ env.VERSION }}.zip module.json dist/
+        run: zip -r module-v${{ env.VERSION }}.zip module.json lang/ scripts/ styles/ templates/ README.md
 
       - name: Publish to GitHub Releases
         uses: ncipollo/release-action@v1
