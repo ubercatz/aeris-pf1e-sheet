@@ -152,13 +152,12 @@ Hooks.once("init", () => {
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
-      // NEW: Core Ability Score Interception
-      // This calculates the 10x modifier directly from the raw score (e.g., 18 Dex -> +40 Mod)
-      // Because this runs early, AC, Saves, and Skills will naturally inherit this massive bonus!
+     // NEW: Core Ability Score Interception (Preserving the 1-to-2 ratio)
       if (this.system?.abilities) {
         for (let ability of Object.values(this.system.abilities)) {
           if (ability.total !== undefined) {
-            ability.mod = Math.floor((ability.total - 10) * 5);
+            // Shift base 10 to 100, divide by 2
+            ability.mod = Math.floor((ability.total - 100) / 2);
           }
         }
       }
