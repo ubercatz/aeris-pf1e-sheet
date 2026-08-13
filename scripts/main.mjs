@@ -145,22 +145,22 @@ Hooks.once("init", () => {
       }
     }
   }, "WRAPPER");
-
+// 3. System-Wide Ability Modifier Interception
+  // Overriding the root utility function ensures Attack Rolls, AC, Skills, and Spell DCs
+  // pull the correct granular mod natively during the system's own data preparation.
+  libWrapper.register(MODULE_ID, "pf1.utils.getAbilityModifier", function (wrapped, score, ...args) {
+    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+       // Shift base 10 to 100, divide by 2 for the 1-to-2 scaling ratio
+       return Math.floor((score - 100) / 2);
+    }
+    return wrapped(score, ...args);
+  }, "MIXED");
   // 3. Actor Derived Data: Natively Scale Ability Mods and dependent stats
   libWrapper.register(MODULE_ID, "CONFIG.Actor.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args); 
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
-     // NEW: Core Ability Score Interception (Preserving the 1-to-2 ratio)
-      if (this.system?.abilities) {
-        for (let ability of Object.values(this.system.abilities)) {
-          if (ability.total !== undefined) {
-            // Shift base 10 to 100, divide by 2
-            ability.mod = Math.floor((ability.total - 100) / 2);
-          }
-        }
-      }
 
       // Base AC Adjustment (Abilities handle the Dex part, this handles the base 10 -> 100)
       if (this.system.attributes?.ac) {
@@ -173,7 +173,7 @@ Hooks.once("init", () => {
       }
 
       // BAB (Fractional or standard 10x)
-      if (game.settings.get(MODULE_ID, "enableFractionalProgression")) {
+      if (game.settings.get(MODULE_ID, "enableFractionalProgression")) {s
         let granularBab = 0;
         for (const item of this.items) {
           if (item.type === "class") {
