@@ -78,46 +78,20 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Roll Parts Interceptor: Mutates strings BEFORE Roll generation to prevent Anti-Cheat Tamper Flags
-  const scaleRollParts = function(wrapped, ...args) {
+  // 1. Core Dice Evaluator: Safely scales dice terms right before they roll to prevent Anti-Cheat tampering.
+  libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      const scaleStr = (f) => {
-        if (typeof f !== "string") return f;
-        let res = f;
-        // Scale the d20 safely
-        res = res.replace(/\b(\d*)d20\b/gi, (m, c) => `${c || 1}d200`);
-        
-        // Scale specific unscaled conditions and penalties based on their flavor tags
-        const unscaledFlavors = "Shaken|Sickened|Dazzled|Entangled|Grappled|Prone|Deaf|Proficiency Penalty|Fatigued|Exhausted|Frightened|Panicked|Cowering|Stunned|Paralyzed|Pinned|Bleed|Blinded|Nonproficient";
-        const flavorRegex = new RegExp(`(^|[\\s+-])\\b(\\d+)\\b(\\s*\\[(?:${unscaledFlavors})\\])`, "gi");
-        res = res.replace(flavorRegex, (m, prefix, num, flavor) => `${prefix}${Number(num) * 10}${flavor}`);
-        
-        return res;
-      };
-
-      for (let i = 0; i < args.length; i++) {
-        if (args[i] && typeof args[i] === "object") {
-          if (Array.isArray(args[i].parts)) args[i].parts = args[i].parts.map(p => scaleStr(String(p)));
-          if (typeof args[i].formula === "string") args[i].formula = scaleStr(args[i].formula);
+      for (let term of this.terms) {
+        if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
+          term.faces *= 10;
+          term._pf1arScaled = true; 
         }
       }
     }
     return wrapped(...args);
-  };
+  }, "WRAPPER");
 
-  const rollMethods = [
-    "pf1.documents.actor.ActorPF.prototype.rollSkill",
-    "pf1.documents.actor.ActorPF.prototype.rollSavingThrow",
-    "pf1.documents.actor.ActorPF.prototype.rollAbilityTest",
-    "pf1.documents.actor.ActorPF.prototype.rollInitiative",
-    "pf1.documents.actor.ActorPF.prototype.rollAttack",
-    "pf1.documents.actor.ActorPF.prototype.rollConcentration",
-    "pf1.documents.item.ItemAction.prototype.rollAttack",
-    "pf1.documents.item.ItemSpellPF.prototype.rollSpellResistance"
-  ];
-  rollMethods.forEach(m => libWrapper.register(MODULE_ID, m, scaleRollParts, "WRAPPER"));
-
-  // 2. Item Base Data: Armor, ACP, Enhancements, and Smart Formula Scaling
+  // 2. Item Base Data: Safely scales Enhancements, Buffs, Conditions, and Damage via Ephemeral Flags
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareBaseData", function (wrapped, ...args) {
     wrapped(...args); 
     
@@ -126,43 +100,49 @@ Hooks.once("init", () => {
       const scaleCL = (f) => {
         if (typeof f !== "string") return f;
         let res = f;
-        
-        // Scale Caster Level Caps without messing up dice counts (Fireball Fix)
+        // Scale Caps (but ignore them if they are multiplying dice, e.g., min(10,@cl)d6)
         res = res.replace(/min\((\d+),\s*@cl\)(?!\s*d)/gi, (m, cap) => `min(${Number(cap)*10}, (@cl * 10))`);
         res = res.replace(/max\((\d+),\s*@cl\)(?!\s*d)/gi, (m, cap) => `max(${Number(cap)*10}, (@cl * 10))`);
-        
-        // Scale flat CL modifiers
+        // Scale flat CL bonuses
         res = res.replace(/\+\s*@cl\b(?!\s*d)/gi, "+ (@cl * 10)");
         res = res.replace(/-\s*@cl\b(?!\s*d)/gi, "- (@cl * 10)");
-        
-        // Scale standard damage/healing dice faces. Ignores d100s.
+        // Scale standard damage/healing dice faces (ignoring d100s)
         res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, c, fcs) => Number(fcs) <= 20 ? `${c || 1}d${Number(fcs) * 10}` : m);
-        
-        // Safely targets ONLY flat numbers strictly starting with + or -
+        // Safely targets ONLY flat numbers strictly starting with + or - (Catches Shaken -2, Sickened -2)
         res = res.replace(/(^|[+-])\s*\b(\d+)\b(?!\s*d)/gi, (m, sign, num) => `${sign} ${Number(num) * 10}`);
         return res;
       };
 
       if (this.system?.armor) {
-        if (this._source?.system?.armor?.value !== undefined) this.system.armor.value = Number(this._source.system.armor.value) * 10;
-        if (this._source?.system?.armor?.acp !== undefined) this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
+        if (this.system.armor.value !== undefined && !this.system.armor._pf1arScaled) {
+           this.system.armor.value *= 10;
+           this.system.armor.acp *= 10;
+           this.system.armor._pf1arScaled = true;
+        }
       }
-      if (this.system?.enh !== undefined && this._source?.system?.enh !== undefined) this.system.enh = Number(this._source.system.enh) * 10;
 
-      // Scale Item Buffs/Debuffs
-      if (this.system?.changes && this._source?.system?.changes) {
-        this.system.changes.forEach((change, i) => {
-          if (this._source.system.changes[i]?.formula) change.formula = scaleCL(String(this._source.system.changes[i].formula));
+      if (this.system?.enh !== undefined && this.system.enh !== null && !this.system._pf1arEnhScaled) {
+        this.system.enh *= 10;
+        this.system._pf1arEnhScaled = true;
+      }
+
+      if (this.system?.changes) {
+        this.system.changes.forEach(change => {
+          if (change.formula && !change._pf1arScaled) {
+            change.formula = scaleCL(String(change.formula));
+            change._pf1arScaled = true;
+          }
         });
       }
 
-      // Scale Spell/Action Damage & Healing
-      if (this.system?.actions && this._source?.system?.actions) {
-        this.system.actions.forEach((action, i) => {
-          const srcAction = this._source.system.actions[i];
-          if (srcAction && action.damage?.parts) {
-            action.damage.parts.forEach((part, j) => {
-              if (srcAction.damage.parts[j]?.formula) part.formula = scaleCL(String(srcAction.damage.parts[j].formula));
+      if (this.system?.actions) {
+        this.system.actions.forEach(action => {
+          if (action.damage?.parts) {
+            action.damage.parts.forEach(part => {
+              if (part.formula && !part._pf1arScaled) {
+                part.formula = scaleCL(String(part.formula));
+                part._pf1arScaled = true;
+              }
             });
           }
         });
@@ -184,14 +164,13 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
 
-  // 4. Actor Derived Data: Skills, FCB, BAB, Saves, AC, SR, and Encumbrance Fix
+  // 4. Actor Derived Data: Skills, FCB, BAB, Saves, AC, SR, and Encumbrance
   libWrapper.register(MODULE_ID, "CONFIG.Actor.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args); 
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
-      // Skills
-      if (this.system?.skills) {
+      if (this.system?.skills && !this.system._pf1arSkillsScaled) {
         for (const skill of Object.values(this.system.skills)) {
           if (skill.rank) skill.mod += (skill.rank * 9);
           if (skill.subSkills) {
@@ -200,50 +179,57 @@ Hooks.once("init", () => {
             }
           }
         }
+        this.system._pf1arSkillsScaled = true;
       }
 
-      // FCB HP
-      let totalFcbHp = 0;
-      for (const item of this.items) {
-        if (item.type === "class" && item.system?.fc?.hp?.value) totalFcbHp += item.system.fc.hp.value;
-      }
-      if (totalFcbHp > 0 && this.system.attributes?.hp) this.system.attributes.hp.max += (totalFcbHp * 9);
-
-      // BAB
-      if (game.settings.get(MODULE_ID, "enableFractionalProgression")) {
-        let granularBab = 0;
+      if (!this.system._pf1arFcbScaled) {
+        let totalFcbHp = 0;
         for (const item of this.items) {
-          if (item.type === "class") {
-            const lvl = item.system.level || 0, btype = item.system.bab;
-            if (btype === "high") granularBab += lvl * 10;
-            else if (btype === "medium") granularBab += lvl * 7.5;
-            else if (btype === "low") granularBab += lvl * 5;
-          }
+          if (item.type === "class" && item.system?.fc?.hp?.value) totalFcbHp += item.system.fc.hp.value;
         }
-        if (this.system.attributes?.bab) this.system.attributes.bab.total = Math.floor(granularBab);
-      } else {
-        if (this.system.attributes?.bab?.total !== undefined) this.system.attributes.bab.total += (this.system.attributes.bab.total * 9);
+        if (totalFcbHp > 0 && this.system.attributes?.hp) this.system.attributes.hp.max += (totalFcbHp * 9);
+        this.system._pf1arFcbScaled = true;
       }
 
-      // Saves
-      if (this.system.attributes?.savingThrows) {
+      if (!this.system._pf1arBabScaled) {
+        if (game.settings.get(MODULE_ID, "enableFractionalProgression")) {
+          let granularBab = 0;
+          for (const item of this.items) {
+            if (item.type === "class") {
+              const lvl = item.system.level || 0, btype = item.system.bab;
+              if (btype === "high") granularBab += lvl * 10;
+              else if (btype === "medium") granularBab += lvl * 7.5;
+              else if (btype === "low") granularBab += lvl * 5;
+            }
+          }
+          if (this.system.attributes?.bab) this.system.attributes.bab.total = Math.floor(granularBab);
+        } else {
+          if (this.system.attributes?.bab?.total !== undefined) this.system.attributes.bab.total += (this.system.attributes.bab.total * 9);
+        }
+        this.system._pf1arBabScaled = true;
+      }
+
+      if (this.system.attributes?.savingThrows && !this.system._pf1arSavesScaled) {
         for (let save of Object.values(this.system.attributes.savingThrows)) {
           if (save.base !== undefined && save.total !== undefined) save.total += (save.base * 9);
         }
+        this.system._pf1arSavesScaled = true;
       }
 
-      // Base AC
-      if (this.system.attributes?.ac) {
+      if (this.system.attributes?.ac && !this.system._pf1arAcScaled) {
         ["normal", "touch", "flatFooted"].forEach(type => {
           if (this.system.attributes.ac[type]?.total !== undefined) this.system.attributes.ac[type].total += 90;
         });
+        this.system._pf1arAcScaled = true;
       }
 
-      // Spell Resistance
-      if (this.system.attributes?.sr?.total !== undefined) this.system.attributes.sr.total *= 10;
+      if (this.system.attributes?.sr?.total !== undefined && !this.system._pf1arSrScaled) {
+        this.system.attributes.sr.total *= 10;
+        this.system._pf1arSrScaled = true;
+      }
 
-      // Encumbrance Manual Override (Avoids PF1e V13 crash entirely)
-      if (this.system.attributes?.encumbrance && this.system.abilities?.str?.total) {
+      // Native Encumbrance Scaling (Bypasses the V13 PF1e crash)
+      if (this.system.attributes?.encumbrance && this.system.abilities?.str?.total && !this.system._pf1arEncScaled) {
         const str = Math.floor(this.system.abilities.str.total / 10);
         let heavy = 0;
         if (str <= 10) heavy = str * 10;
@@ -254,7 +240,27 @@ Hooks.once("init", () => {
         this.system.attributes.encumbrance.light = Math.floor(heavy / 3) * 10;
         this.system.attributes.encumbrance.medium = Math.floor((heavy * 2) / 3) * 10;
         this.system.attributes.encumbrance.heavy = heavy * 10;
+        this.system._pf1arEncScaled = true;
       }
     }
+  }, "WRAPPER");
+
+  // 5. Bolster Caster Level for SR and Concentration System Checks
+  libWrapper.register(MODULE_ID, "pf1.documents.actor.ActorPF.prototype.rollConcentration", function (wrapped, spell, options = {}) {
+    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+      const bonus = `(@cl * 9)`;
+      if (Array.isArray(options.parts)) options.parts.push(bonus);
+      else options.parts = [bonus];
+    }
+    return wrapped(spell, options);
+  }, "WRAPPER");
+
+  libWrapper.register(MODULE_ID, "pf1.documents.item.ItemSpellPF.prototype.rollSpellResistance", function (wrapped, options = {}) {
+    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+      const bonus = `(@cl * 9)`;
+      if (Array.isArray(options.parts)) options.parts.push(bonus);
+      else options.parts = [bonus];
+    }
+    return wrapped(options);
   }, "WRAPPER");
 });
