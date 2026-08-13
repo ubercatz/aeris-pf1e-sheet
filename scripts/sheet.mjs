@@ -677,42 +677,64 @@ function _apply10xVisuals(sheet, data) {
 
   const scaleFormula = (formula) => {
     if (typeof formula !== "string") return formula;
-    // Visually scale dice faces (1d6 -> 1d60) for the UI
-    return formula.replace(/\b(\d*)d(\d+)\b/g, (match, count, faces) => {
+    let res = formula.replace(/\b(\d*)d(\d+)\b/g, (match, count, faces) => {
       return `${count || 1}d${Number(faces) * 10}`;
+    });
+    return res.replace(/(?<![d@\w\.])\b(\d+)\b(?!\s*[d\.])/g, (match, num) => {
+      return `${Number(num) * 10}`;
     });
   };
 
-  // Helper to safely clone and scale labels without mutating the database item
   const scaleSectionItems = (sectionArr) => {
     if (!Array.isArray(sectionArr)) return sectionArr;
     return sectionArr.map(section => {
       const newSection = { ...section };
       
-      if (Array.isArray(newSection.items)) {
-        newSection.items = newSection.items.map(item => {
+      const processItems = (itemsArray) => {
+        return itemsArray.map(item => {
           const newItem = { ...item };
+          
           if (newItem.labels) {
             newItem.labels = { ...newItem.labels };
             if (newItem.labels.damage) newItem.labels.damage = scaleFormula(newItem.labels.damage);
           }
+          
+          if (newItem.system && Array.isArray(newItem.system.actions)) {
+            newItem.system = { ...newItem.system };
+            newItem.system.actions = newItem.system.actions.map(action => {
+              const newAction = { ...action };
+              if (newAction.damage && Array.isArray(newAction.damage.parts)) {
+                newAction.damage = { ...newAction.damage };
+                newAction.damage.parts = newAction.damage.parts.map(part => {
+                  const newPart = { ...part };
+                  if (newPart.formula) newPart.formula = scaleFormula(newPart.formula);
+                  return newPart;
+                });
+              }
+              return newAction;
+            });
+          }
           return newItem;
         });
-      }
+      };
+
+      if (Array.isArray(newSection.items)) newSection.items = processItems(newSection.items);
+      if (Array.isArray(newSection.spells)) newSection.spells = processItems(newSection.spells);
       
-      if (Array.isArray(newSection.spells)) {
-        newSection.spells = newSection.spells.map(spell => {
-          const newSpell = { ...spell };
-          if (newSpell.labels) {
-            newSpell.labels = { ...newSpell.labels };
-            if (newSpell.labels.damage) newSpell.labels.damage = scaleFormula(newSpell.labels.damage);
-          }
-          return newSpell;
-        });
-      }
       return newSection;
     });
   };
+
+  data.inventory = scaleSectionItems(data.inventory);
+  data.attacks = scaleSectionItems(data.attacks);
+  
+  if (data.spellbooks) {
+    data.spellbooks = { ...data.spellbooks };
+    for (let book of Object.keys(data.spellbooks)) {
+      data.spellbooks[book] = scaleSectionItems(data.spellbooks[book]);
+    }
+  }
+}
 
   // Apply visual clones to the sheet data
   data.inventory = scaleSectionItems(data.inventory);
