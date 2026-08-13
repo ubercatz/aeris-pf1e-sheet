@@ -59,7 +59,7 @@ Hooks.once("init", () => {
   ]);
 });
 
-// ─── READY: SYSTEM OVERRIDES & CONDITIONS ─────────────────────────────────
+// ─── READY: SYSTEM OVERRIDES ──────────────────────────────────────────────
 
 Hooks.once("ready", () => {
   if (game.system?.id !== "pf1") return;
@@ -68,20 +68,11 @@ Hooks.once("ready", () => {
   DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltNPCSheetPF, { label: game.i18n.localize("PF1AR.NPCSheetLabel"), types: ["npc"], makeDefault: false });
   DocumentSheetConfig.updateDefaultSheets();
 
-  // Override static configs & scale conditions (Shaken, Sickened, Deaf, etc.)
   if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-    pf1.config.classSkillBonus = 30;
-    pf1.config.nonProficiencyPenalty = -40;
-
-    for (const condition of Object.values(pf1.config.conditions)) {
-      for (const prop in condition) {
-        if (typeof condition[prop] === "number") {
-          condition[prop] *= 10;
-        }
-      }
+    if (pf1.config) {
+      pf1.config.classSkillBonus = 30;
+      pf1.config.nonProficiencyPenalty = -40;
     }
-    // Force actors to recalculate immediately with the new -20 conditions
-    for (const actor of game.actors) actor.reset();
   }
 });
 
@@ -90,15 +81,20 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Safe Dice Parser: Modifies strings BEFORE anti-cheat terms are generated. Ignores d100s.
-  libWrapper.register(MODULE_ID, "Roll.parse", function (wrapped, formula, data) {
-    if (game.settings.get(MODULE_ID, "enable10xGranularity") && typeof formula === "string") {
-      formula = formula.replace(/\b(\d*)d(\d+)\b/gi, (match, count, faces) => {
-        if (Number(faces) <= 20) return `${count || 1}d${Number(faces) * 10}`;
-        return match;
-      });
+  // 1. Core Dice Evaluator: Safely scales dice terms right before they roll.
+  // This completely bypasses String parsing errors, leaves old chat messages alone,
+  // and prevents Foundry's anti-cheat from flagging tampered formulas!
+  libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
+    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+      for (let term of this.terms) {
+        // Only scale standard dice (d4, d6, d8, d10, d12, d20). Protects d100s for percentiles!
+        if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
+          term.faces *= 10;
+          term._pf1arScaled = true; 
+        }
+      }
     }
-    return wrapped(formula, data);
+    return wrapped(...args);
   }, "WRAPPER");
 
   // 2. Item Base Data: Armor, ACP, Enhancements, and Formula Scaling
@@ -114,8 +110,8 @@ Hooks.once("init", () => {
         res = res.replace(/max\((\d+),\s*@cl\)/gi, (m, cap) => `max(${Number(cap)*10}, (@cl * 10))`);
         res = res.replace(/\+\s*@cl\b/gi, "+ (@cl * 10)");
         res = res.replace(/-\s*@cl\b/gi, "- (@cl * 10)");
-        res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, c, fcs) => Number(fcs) <= 20 ? `${c || 1}d${Number(fcs) * 10}` : m);
-        // Safely targets ONLY flat numbers strictly starting with + or -
+        
+        // Only target flat numbers strictly starting with + or -
         res = res.replace(/(^|[+-])\s*\b(\d+)\b(?!\s*d)/gi, (m, sign, num) => `${sign} ${Number(num) * 10}`);
         return res;
       };
@@ -126,7 +122,7 @@ Hooks.once("init", () => {
       }
       if (this.system?.enh !== undefined && this._source?.system?.enh !== undefined) this.system.enh = Number(this._source.system.enh) * 10;
 
-      // Scale Buffs/Debuffs
+      // Scale Buffs/Debuffs (This automatically catches Conditions in V10+)
       if (this.system?.changes && this._source?.system?.changes) {
         this.system.changes.forEach((change, i) => {
           if (this._source.system.changes[i]?.formula) change.formula = scaleCL(String(this._source.system.changes[i].formula));
@@ -215,7 +211,7 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
 
-  // 5. Encumbrance Override: Intercepts core utility to bypass the strength exponential crash
+  // 5. Encumbrance Override
   libWrapper.register(MODULE_ID, "pf1.utils.getEncumbrance", function (wrapped, strength, ...args) {
     if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return wrapped(strength, ...args);
     const normalStr = Math.floor(strength / 10);
