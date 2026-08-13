@@ -146,34 +146,32 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
 // 3. System-Wide Ability Modifier Interception
-  // Overriding the root utility function ensures Attack Rolls, AC, Skills, and Spell DCs
-  // pull the correct granular mod natively during the system's own data preparation.
   libWrapper.register(MODULE_ID, "pf1.utils.getAbilityModifier", function (wrapped, score, ...args) {
-    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+    // We ensure score is a number so we don't accidentally break system checks passing undefined
+    if (game.settings.get(MODULE_ID, "enable10xGranularity") && typeof score === "number") {
        // Shift base 10 to 100, divide by 2 for the 1-to-2 scaling ratio
        return Math.floor((score - 100) / 2);
     }
     return wrapped(score, ...args);
   }, "MIXED");
-  // 3. Actor Derived Data: Natively Scale Ability Mods and dependent stats
+
+  // 4. Actor Derived Data: Natively Scale BAB, AC, and Encumbrance
   libWrapper.register(MODULE_ID, "CONFIG.Actor.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args); 
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
-
-      // Base AC Adjustment (Abilities handle the Dex part, this handles the base 10 -> 100)
+      // Base AC Adjustment
       if (this.system.attributes?.ac) {
         ["normal", "touch", "flatFooted"].forEach(type => {
           if (this.system.attributes.ac[type]?.total !== undefined) {
-             // System calculates 10 + Modifiers. We add 90 to make the base 10 into 100.
              this.system.attributes.ac[type].total += 90; 
           }
         });
       }
 
       // BAB (Fractional or standard 10x)
-      if (game.settings.get(MODULE_ID, "enableFractionalProgression")) {s
+      if (game.settings.get(MODULE_ID, "enableFractionalProgression")) {
         let granularBab = 0;
         for (const item of this.items) {
           if (item.type === "class") {
@@ -186,6 +184,21 @@ Hooks.once("init", () => {
         if (this.system.attributes?.bab) this.system.attributes.bab.total = Math.floor(granularBab);
       } else {
         if (this.system.attributes?.bab?.total !== undefined) this.system.attributes.bab.total *= 10;
+      }
+
+      // Encumbrance Manual Override
+      // Prevents the system from using raw 223 STR to calculate trillions of pounds
+      if (this.system.attributes?.encumbrance && this.system.abilities?.str?.total) {
+        const str = Math.floor(this.system.abilities.str.total / 10); // Treat 223 as 22
+        let heavy = 0;
+        if (str <= 10) heavy = str * 10;
+        else {
+           const base = [100, 115, 130, 150, 175, 200, 230, 260, 300, 350][str % 10];
+           heavy = base * Math.pow(4, Math.floor(str / 10) - 1);
+        }
+        this.system.attributes.encumbrance.light = Math.floor(heavy / 3) * 10;
+        this.system.attributes.encumbrance.medium = Math.floor((heavy * 2) / 3) * 10;
+        this.system.attributes.encumbrance.heavy = heavy * 10;
       }
     }
   }, "WRAPPER");
