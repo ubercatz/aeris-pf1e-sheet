@@ -672,6 +672,8 @@ function _bindThemeCycle(sheet, html) {
 }
 // ─── 10X GRANULARITY VISUAL INTERCEPTOR ─────────────────────────────────────
 
+// ─── 10X GRANULARITY VISUAL INTERCEPTOR ─────────────────────────────────────
+
 function _apply10xVisuals(sheet, data) {
   if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return;
 
@@ -725,18 +727,6 @@ function _apply10xVisuals(sheet, data) {
     });
   };
 
-  data.inventory = scaleSectionItems(data.inventory);
-  data.attacks = scaleSectionItems(data.attacks);
-  
-  if (data.spellbooks) {
-    data.spellbooks = { ...data.spellbooks };
-    for (let book of Object.keys(data.spellbooks)) {
-      data.spellbooks[book] = scaleSectionItems(data.spellbooks[book]);
-    }
-  }
-}
-
-  // Apply visual clones to the sheet data
   data.inventory = scaleSectionItems(data.inventory);
   data.attacks = scaleSectionItems(data.attacks);
   
