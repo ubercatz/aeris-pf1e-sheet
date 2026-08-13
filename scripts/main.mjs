@@ -79,7 +79,7 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Core Dice Evaluator: Safely scales dice right before they roll (Bypasses Anti-Cheat flags)
+  // 1. Core Dice Evaluator: Safely scales dice right before they roll (Faces: 1d20 -> 1d200)
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
@@ -102,25 +102,19 @@ Hooks.once("init", () => {
         if (typeof f !== "string") return f;
         let res = f;
         
-        // 1. ONLY scale Caster Level if it is a flat addition/subtraction (e.g., "1d8 + min(5, @cl)")
-        res = res.replace(/([+-]\s*)min\((\d+),\s*@cl\)/gi, (m, sign, cap) => `${sign}min(${Number(cap)*10}, (@cl * 10))`);
-        res = res.replace(/([+-]\s*)max\((\d+),\s*@cl\)/gi, (m, sign, cap) => `${sign}max(${Number(cap)*10}, (@cl * 10))`);
-        res = res.replace(/([+-]\s*)@cl\b/gi, "$1(@cl * 10)");
-        
-        // 2. If the entire formula is ONLY a flat @cl with absolutely no dice in it
-        if (!res.toLowerCase().includes("d")) {
-            res = res.replace(/min\((\d+),\s*@cl\)/gi, (m, cap) => `min(${Number(cap)*10}, (@cl * 10))`);
-            res = res.replace(/max\((\d+),\s*@cl\)/gi, (m, cap) => `max(${Number(cap)*10}, (@cl * 10))`);
-            res = res.replace(/@cl\b/gi, "(@cl * 10)");
-        }
-
-        // 3. Scale standard dice faces (d6 -> d60). Preserves empty prefixes so "()d6" becomes "()d60", NOT "()1d60"
+        // Scale standard dice faces (d6 -> d60). Preserves empty prefixes.
         res = res.replace(/(\d*)d(\d+)/gi, (m, c, fcs) => {
             return Number(fcs) <= 20 ? `${c || ""}d${Number(fcs) * 10}` : m;
         });
         
-        // 4. Scale plain flat integers preceded by + or - (Catches Shaken, generic +1s)
-        res = res.replace(/(^|[+-])\s*\b(\d+)\b(?!\s*d)/gi, (m, sign, num) => `${sign} ${Number(num) * 10}`);
+        // Safer flat integer scaling: only hits isolated numbers preceded by + or -
+        // Avoids breaking complex Foundry @formulas or function calls
+        res = res.replace(/(?:^|[+-])\s*(?<![@a-zA-Z])\b(\d+)\b(?!\s*[a-zA-Z])/gi, (m) => {
+            // Reconstruct the sign and the multiplied number cleanly
+            const isNegative = m.includes("-");
+            const num = parseInt(m.replace(/[^\d]/g, ''), 10);
+            return isNegative ? `- ${num * 10}` : `+ ${num * 10}`;
+        });
         
         return res;
       };
@@ -131,15 +125,13 @@ Hooks.once("init", () => {
       }
       if (this.system?.enh !== undefined && this._source?.system?.enh !== undefined) this.system.enh = Number(this._source.system.enh) * 10;
 
-      // Scale Item Buffs/Debuffs (This scales Shaken, Sickened, etc.)
+      // Scale Item Buffs/Debuffs & Damage formulas safely
       if (this.system?.changes && this._source?.system?.changes) {
         this.system.changes.forEach((change, i) => {
           const srcFormula = this._source.system.changes[i]?.formula;
           if (srcFormula) change.formula = scaleCL(String(srcFormula));
         });
       }
-
-      // Scale Spell/Action Damage & Healing
       if (this.system?.actions && this._source?.system?.actions) {
         this.system.actions.forEach((action, i) => {
           const srcAction = this._source.system.actions[i];
@@ -154,45 +146,34 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
 
-  // 3. Item Derived Data: Save DCs
-  libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
-    wrapped(...args);
-    if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity") && this.system?.actions) {
-      const sl = this.system.spellLevel || this.spellLevel || 0;
-      this.system.actions.forEach(action => {
-        if (action.save?.dc !== undefined && action.save.dc > 0) {
-          action.save.dc += 90 + (sl * 9);
-        }
-      });
-    }
-  }, "WRAPPER");
-
-  // 4. Actor Derived Data: Skills, FCB, BAB, Saves, AC, SR, and Encumbrance
+  // 3. Actor Derived Data: Natively Scale Ability Mods and dependent stats
   libWrapper.register(MODULE_ID, "CONFIG.Actor.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args); 
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
-      // Skills
-      if (this.system?.skills) {
-        for (const skill of Object.values(this.system.skills)) {
-          if (skill.rank) skill.mod += (skill.rank * 9);
-          if (skill.subSkills) {
-            for (const subSkill of Object.values(skill.subSkills)) {
-              if (subSkill.rank) subSkill.mod += (subSkill.rank * 9);
-            }
+      // NEW: Core Ability Score Interception
+      // This calculates the 10x modifier directly from the raw score (e.g., 18 Dex -> +40 Mod)
+      // Because this runs early, AC, Saves, and Skills will naturally inherit this massive bonus!
+      if (this.system?.abilities) {
+        for (let ability of Object.values(this.system.abilities)) {
+          if (ability.total !== undefined) {
+            ability.mod = Math.floor((ability.total - 10) * 5);
           }
         }
       }
 
-      // FCB HP
-      let totalFcbHp = 0;
-      for (const item of this.items) {
-        if (item.type === "class" && item.system?.fc?.hp?.value) totalFcbHp += item.system.fc.hp.value;
+      // Base AC Adjustment (Abilities handle the Dex part, this handles the base 10 -> 100)
+      if (this.system.attributes?.ac) {
+        ["normal", "touch", "flatFooted"].forEach(type => {
+          if (this.system.attributes.ac[type]?.total !== undefined) {
+             // System calculates 10 + Modifiers. We add 90 to make the base 10 into 100.
+             this.system.attributes.ac[type].total += 90; 
+          }
+        });
       }
-      if (totalFcbHp > 0 && this.system.attributes?.hp) this.system.attributes.hp.max += (totalFcbHp * 9);
 
-      // BAB
+      // BAB (Fractional or standard 10x)
       if (game.settings.get(MODULE_ID, "enableFractionalProgression")) {
         let granularBab = 0;
         for (const item of this.items) {
@@ -205,38 +186,7 @@ Hooks.once("init", () => {
         }
         if (this.system.attributes?.bab) this.system.attributes.bab.total = Math.floor(granularBab);
       } else {
-        if (this.system.attributes?.bab?.total !== undefined) this.system.attributes.bab.total += (this.system.attributes.bab.total * 9);
-      }
-
-      // Saves
-      if (this.system.attributes?.savingThrows) {
-        for (let save of Object.values(this.system.attributes.savingThrows)) {
-          if (save.base !== undefined && save.total !== undefined) save.total += (save.base * 9);
-        }
-      }
-
-      // Base AC
-      if (this.system.attributes?.ac) {
-        ["normal", "touch", "flatFooted"].forEach(type => {
-          if (this.system.attributes.ac[type]?.total !== undefined) this.system.attributes.ac[type].total += 90;
-        });
-      }
-
-      // Spell Resistance
-      if (this.system.attributes?.sr?.total !== undefined) this.system.attributes.sr.total *= 10;
-
-      // Encumbrance Manual Override (Calculates cleanly from str/10)
-      if (this.system.attributes?.encumbrance && this.system.abilities?.str?.total) {
-        const str = Math.floor(this.system.abilities.str.total / 10);
-        let heavy = 0;
-        if (str <= 10) heavy = str * 10;
-        else {
-           const base = [100, 115, 130, 150, 175, 200, 230, 260, 300, 350][str % 10];
-           heavy = base * Math.pow(4, Math.floor(str / 10) - 1);
-        }
-        this.system.attributes.encumbrance.light = Math.floor(heavy / 3) * 10;
-        this.system.attributes.encumbrance.medium = Math.floor((heavy * 2) / 3) * 10;
-        this.system.attributes.encumbrance.heavy = heavy * 10;
+        if (this.system.attributes?.bab?.total !== undefined) this.system.attributes.bab.total *= 10;
       }
     }
   }, "WRAPPER");

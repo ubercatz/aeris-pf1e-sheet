@@ -547,74 +547,6 @@ function _bindThemeCycle(sheet, html) {
   });
 }
 
-// ─── 10X GRANULARITY VISUAL INTERCEPTOR ─────────────────────────────────────
-
-function _apply10xVisuals(sheet, data) {
-  if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return;
-
-  const scaleCL = (formula) => {
-    if (typeof formula !== "string") return formula;
-    let res = formula;
-    res = res.replace(/min\((\d+),\s*@cl\)(?!\s*d)/gi, (m, cap) => `min(${Number(cap)*10}, (@cl * 10))`);
-    res = res.replace(/max\((\d+),\s*@cl\)(?!\s*d)/gi, (m, cap) => `max(${Number(cap)*10}, (@cl * 10))`);
-    res = res.replace(/\+\s*@cl\b(?!\s*d)/gi, "+ (@cl * 10)");
-    res = res.replace(/-\s*@cl\b(?!\s*d)/gi, "- (@cl * 10)");
-    res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, c, fcs) => Number(fcs) <= 20 ? `${c || 1}d${Number(fcs) * 10}` : m);
-    res = res.replace(/(^|[+-])\s*\b(\d+)\b(?!\s*d)/gi, (m, sign, num) => `${sign} ${Number(num) * 10}`);
-    return res;
-  };
-
-  const scaleSectionItems = (sectionArr) => {
-    if (!Array.isArray(sectionArr)) return sectionArr;
-    return sectionArr.map(section => {
-      const newSection = { ...section };
-      
-      const processItems = (itemsArray) => {
-        return itemsArray.map(item => {
-          const newItem = { ...item };
-          
-          if (newItem.labels) {
-            newItem.labels = { ...newItem.labels };
-            if (newItem.labels.damage) newItem.labels.damage = scaleCL(newItem.labels.damage);
-          }
-          
-          if (newItem.system && Array.isArray(newItem.system.actions)) {
-            newItem.system = { ...newItem.system };
-            newItem.system.actions = newItem.system.actions.map(action => {
-              const newAction = { ...action };
-              if (newAction.damage && Array.isArray(newAction.damage.parts)) {
-                newAction.damage = { ...newAction.damage };
-                newAction.damage.parts = newAction.damage.parts.map(part => {
-                  const newPart = { ...part };
-                  if (newPart.formula) newPart.formula = scaleCL(newPart.formula);
-                  return newPart;
-                });
-              }
-              return newAction;
-            });
-          }
-          return newItem;
-        });
-      };
-
-      if (Array.isArray(newSection.items)) newSection.items = processItems(newSection.items);
-      if (Array.isArray(newSection.spells)) newSection.spells = processItems(newSection.spells);
-      
-      return newSection;
-    });
-  };
-
-  data.inventory = scaleSectionItems(data.inventory);
-  data.attacks = scaleSectionItems(data.attacks);
-  
-  if (data.spellbooks) {
-    data.spellbooks = { ...data.spellbooks };
-    for (let book of Object.keys(data.spellbooks)) {
-      data.spellbooks[book] = scaleSectionItems(data.spellbooks[book]);
-    }
-  }
-}
-
 // ─── FICHA DE PERSONAGEM ──────────────────────────────────────────────────────
 
 export class AltCharacterSheetPF extends pf1.applications.actor.ActorSheetPFCharacter {
@@ -667,7 +599,6 @@ export class AltCharacterSheetPF extends pf1.applications.actor.ActorSheetPFChar
     data.summarySkillsMode = game.settings.get(MODULE_ID, "summarySkills");
     _prepareInventoryContainers(this, data);
     _prepareLinkedFeatChildren(this, data);
-    _apply10xVisuals(this, data);
     return data;
   }
 
@@ -733,7 +664,6 @@ export class AltNPCSheetPF extends pf1.applications.actor.ActorSheetPFNPC {
     data.summarySkillsMode = game.settings.get(MODULE_ID, "summarySkills");
     _prepareInventoryContainers(this, data);
     _prepareLinkedFeatChildren(this, data);
-    _apply10xVisuals(this, data);
     return data;
   }
 
