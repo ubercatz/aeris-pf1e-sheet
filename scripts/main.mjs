@@ -102,19 +102,26 @@ Hooks.once("init", () => {
         if (typeof f !== "string") return f;
         let res = f;
         
-        // Scale Caster Level Caps without messing up dice counts
-        res = res.replace(/min\((\d+),\s*@cl\)(?!\s*d)/gi, (m, cap) => `min(${Number(cap)*10}, (@cl * 10))`);
-        res = res.replace(/max\((\d+),\s*@cl\)(?!\s*d)/gi, (m, cap) => `max(${Number(cap)*10}, (@cl * 10))`);
+        // 1. ONLY scale Caster Level if it is a flat addition/subtraction (e.g., "1d8 + min(5, @cl)")
+        res = res.replace(/([+-]\s*)min\((\d+),\s*@cl\)/gi, (m, sign, cap) => `${sign}min(${Number(cap)*10}, (@cl * 10))`);
+        res = res.replace(/([+-]\s*)max\((\d+),\s*@cl\)/gi, (m, sign, cap) => `${sign}max(${Number(cap)*10}, (@cl * 10))`);
+        res = res.replace(/([+-]\s*)@cl\b/gi, "$1(@cl * 10)");
         
-        // Scale flat CL modifiers
-        res = res.replace(/\+\s*@cl\b(?!\s*d)/gi, "+ (@cl * 10)");
-        res = res.replace(/-\s*@cl\b(?!\s*d)/gi, "- (@cl * 10)");
+        // 2. If the entire formula is ONLY a flat @cl with absolutely no dice in it
+        if (!res.toLowerCase().includes("d")) {
+            res = res.replace(/min\((\d+),\s*@cl\)/gi, (m, cap) => `min(${Number(cap)*10}, (@cl * 10))`);
+            res = res.replace(/max\((\d+),\s*@cl\)/gi, (m, cap) => `max(${Number(cap)*10}, (@cl * 10))`);
+            res = res.replace(/@cl\b/gi, "(@cl * 10)");
+        }
+
+        // 3. Scale standard dice faces (d6 -> d60). Preserves empty prefixes so "()d6" becomes "()d60", NOT "()1d60"
+        res = res.replace(/(\d*)d(\d+)/gi, (m, c, fcs) => {
+            return Number(fcs) <= 20 ? `${c || ""}d${Number(fcs) * 10}` : m;
+        });
         
-        // Scale standard damage/healing dice faces. Ignores d100s.
-        res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, c, fcs) => Number(fcs) <= 20 ? `${c || 1}d${Number(fcs) * 10}` : m);
-        
-        // Safely targets ONLY flat numbers strictly starting with + or - (Catches Shaken, Sickened, etc.)
+        // 4. Scale plain flat integers preceded by + or - (Catches Shaken, generic +1s)
         res = res.replace(/(^|[+-])\s*\b(\d+)\b(?!\s*d)/gi, (m, sign, num) => `${sign} ${Number(num) * 10}`);
+        
         return res;
       };
 
