@@ -80,6 +80,8 @@ Hooks.once("ready", () => {
         }
       }
     }
+    // Force actors to recalculate immediately with the new -20 conditions
+    for (const actor of game.actors) actor.reset();
   }
 });
 
@@ -88,20 +90,18 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Dice Evaluator: Scales dice (d20 -> d200). Ignores d100s to protect % mechanics (ASF).
-  libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
-    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      for (let term of this.terms) {
-        if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
-          term.faces *= 10;
-          term._pf1arScaled = true; 
-        }
-      }
+  // 1. Safe Dice Parser: Modifies strings BEFORE anti-cheat terms are generated. Ignores d100s.
+  libWrapper.register(MODULE_ID, "Roll.parse", function (wrapped, formula, data) {
+    if (game.settings.get(MODULE_ID, "enable10xGranularity") && typeof formula === "string") {
+      formula = formula.replace(/\b(\d*)d(\d+)\b/gi, (match, count, faces) => {
+        if (Number(faces) <= 20) return `${count || 1}d${Number(faces) * 10}`;
+        return match;
+      });
     }
-    return wrapped(...args);
+    return wrapped(formula, data);
   }, "WRAPPER");
 
-  // 2. Item Base Data: Armor, ACP, Enhancements, and Spell Formulae
+  // 2. Item Base Data: Armor, ACP, Enhancements, and Formula Scaling
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareBaseData", function (wrapped, ...args) {
     wrapped(...args); 
     
@@ -109,12 +109,15 @@ Hooks.once("init", () => {
       
       const scaleCL = (f) => {
         if (typeof f !== "string") return f;
-        let res = f.replace(/min\((\d+),\s*@cl\)/gi, (m, cap) => `min(${Number(cap)*10}, (@cl * 10))`);
+        let res = f;
+        res = res.replace(/min\((\d+),\s*@cl\)/gi, (m, cap) => `min(${Number(cap)*10}, (@cl * 10))`);
         res = res.replace(/max\((\d+),\s*@cl\)/gi, (m, cap) => `max(${Number(cap)*10}, (@cl * 10))`);
         res = res.replace(/\+\s*@cl\b/gi, "+ (@cl * 10)");
         res = res.replace(/-\s*@cl\b/gi, "- (@cl * 10)");
-        res = res.replace(/\b(\d*)d(\d+)\b/g, (m, c, fcs) => `${c || 1}d${Number(fcs) * 10}`);
-        return res.replace(/(?<![d@\w\.])\b(\d+)\b(?!\s*[d\.])/g, (m, num) => `${Number(num) * 10}`);
+        res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, c, fcs) => Number(fcs) <= 20 ? `${c || 1}d${Number(fcs) * 10}` : m);
+        // Safely targets ONLY flat numbers strictly starting with + or -
+        res = res.replace(/(^|[+-])\s*\b(\d+)\b(?!\s*d)/gi, (m, sign, num) => `${sign} ${Number(num) * 10}`);
+        return res;
       };
 
       if (this.system?.armor) {
@@ -130,7 +133,7 @@ Hooks.once("init", () => {
         });
       }
 
-      // Scale Spell/Action Damage & Healing (e.g. 1d8 + min(5, @cl))
+      // Scale Spell/Action Damage & Healing
       if (this.system?.actions && this._source?.system?.actions) {
         this.system.actions.forEach((action, i) => {
           const srcAction = this._source.system.actions[i];
@@ -212,21 +215,17 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
 
-  // 5. Encumbrance Protection
-  libWrapper.register(MODULE_ID, "CONFIG.Actor.documentClass.prototype._prepareEncumbrance", function (wrapped, ...args) {
-    if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity") && this.system?.abilities?.str?.total) {
-        const originalStr = this.system.abilities.str.total;
-        this.system.abilities.str.total = Math.floor(originalStr / 10);
-        wrapped(...args); 
-        if (this.system.attributes?.encumbrance) {
-            this.system.attributes.encumbrance.light *= 10;
-            this.system.attributes.encumbrance.medium *= 10;
-            this.system.attributes.encumbrance.heavy *= 10;
-        }
-        this.system.abilities.str.total = originalStr;
-    } else {
-        wrapped(...args);
+  // 5. Encumbrance Override: Intercepts core utility to bypass the strength exponential crash
+  libWrapper.register(MODULE_ID, "pf1.utils.getEncumbrance", function (wrapped, strength, ...args) {
+    if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return wrapped(strength, ...args);
+    const normalStr = Math.floor(strength / 10);
+    const result = wrapped(normalStr, ...args);
+    if (result) {
+      result.light *= 10;
+      result.medium *= 10;
+      result.heavy *= 10;
     }
+    return result;
   }, "WRAPPER");
 
   // 6. Bolster Caster Level for SR and Concentration System Checks
