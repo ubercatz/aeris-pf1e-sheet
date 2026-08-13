@@ -594,11 +594,52 @@ export class AltCharacterSheetPF extends pf1.applications.actor.ActorSheetPFChar
   }
 
   async getData(options) {
+    const is10x = game.settings.get(MODULE_ID, "enable10xGranularity");
+    let originalStr, originalCarryStr;
+    
+    // 1. SPOOF STRENGTH: Temporarily drop 223 down to 22 so the sheet's internal math doesn't explode
+    if (is10x) {
+       if (this.actor.system?.abilities?.str?.total !== undefined) {
+           originalStr = this.actor.system.abilities.str.total;
+           this.actor.system.abilities.str.total = Math.floor(originalStr / 10);
+       }
+       if (this.actor.system?.attributes?.carryStrength !== undefined) {
+           originalCarryStr = this.actor.system.attributes.carryStrength;
+           this.actor.system.attributes.carryStrength = Math.floor(originalCarryStr / 10);
+       }
+    }
+
+    // 2. Let the PF1e system safely run its incredibly complex encumbrance math 
     const data = await super.getData(options);
+
+    // 3. RESTORE STRENGTH & SCALE ENCUMBRANCE
+    if (is10x) {
+       // Put the real stats back into the actor
+       if (originalStr !== undefined) {
+           this.actor.system.abilities.str.total = originalStr;
+           // Ensure the UI still displays the massive 223 score
+           if (data.system?.abilities?.str) data.system.abilities.str.total = originalStr; 
+       }
+       if (originalCarryStr !== undefined) {
+           this.actor.system.attributes.carryStrength = originalCarryStr;
+           if (data.system?.attributes) data.system.attributes.carryStrength = originalCarryStr;
+       }
+       
+       // The sheet just calculated thresholds using the base 22 strength.
+       // We multiply them by 10 here so the UI displays the correct 10x capacity.
+       const enc = data.system?.attributes?.encumbrance;
+       if (enc) {
+          ["light", "medium", "heavy", "lift", "drag"].forEach(key => {
+             if (enc[key] !== undefined) enc[key] *= 10;
+          });
+       }
+    }
+
     data.pf1arDark = game.settings.get(MODULE_ID, "darkMode");
     data.summarySkillsMode = game.settings.get(MODULE_ID, "summarySkills");
     _prepareInventoryContainers(this, data);
     _prepareLinkedFeatChildren(this, data);
+    
     return data;
   }
 
@@ -659,11 +700,52 @@ export class AltNPCSheetPF extends pf1.applications.actor.ActorSheetPFNPC {
   }
 
   async getData(options) {
+    const is10x = game.settings.get(MODULE_ID, "enable10xGranularity");
+    let originalStr, originalCarryStr;
+    
+    // 1. SPOOF STRENGTH: Temporarily drop 223 down to 22 so the sheet's internal math doesn't explode
+    if (is10x) {
+       if (this.actor.system?.abilities?.str?.total !== undefined) {
+           originalStr = this.actor.system.abilities.str.total;
+           this.actor.system.abilities.str.total = Math.floor(originalStr / 10);
+       }
+       if (this.actor.system?.attributes?.carryStrength !== undefined) {
+           originalCarryStr = this.actor.system.attributes.carryStrength;
+           this.actor.system.attributes.carryStrength = Math.floor(originalCarryStr / 10);
+       }
+    }
+
+    // 2. Let the PF1e system safely run its incredibly complex encumbrance math 
     const data = await super.getData(options);
+
+    // 3. RESTORE STRENGTH & SCALE ENCUMBRANCE
+    if (is10x) {
+       // Put the real stats back into the actor
+       if (originalStr !== undefined) {
+           this.actor.system.abilities.str.total = originalStr;
+           // Ensure the UI still displays the massive 223 score
+           if (data.system?.abilities?.str) data.system.abilities.str.total = originalStr; 
+       }
+       if (originalCarryStr !== undefined) {
+           this.actor.system.attributes.carryStrength = originalCarryStr;
+           if (data.system?.attributes) data.system.attributes.carryStrength = originalCarryStr;
+       }
+       
+       // The sheet just calculated thresholds using the base 22 strength.
+       // We multiply them by 10 here so the UI displays the correct 10x capacity.
+       const enc = data.system?.attributes?.encumbrance;
+       if (enc) {
+          ["light", "medium", "heavy", "lift", "drag"].forEach(key => {
+             if (enc[key] !== undefined) enc[key] *= 10;
+          });
+       }
+    }
+
     data.pf1arDark = game.settings.get(MODULE_ID, "darkMode");
     data.summarySkillsMode = game.settings.get(MODULE_ID, "summarySkills");
     _prepareInventoryContainers(this, data);
     _prepareLinkedFeatChildren(this, data);
+    
     return data;
   }
 
