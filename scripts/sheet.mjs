@@ -670,21 +670,21 @@ function _bindThemeCycle(sheet, html) {
     await game.settings.set(MODULE_ID, "theme", next);
   });
 }
-// ─── 10X GRANULARITY VISUAL INTERCEPTOR ─────────────────────────────────────
 
 // ─── 10X GRANULARITY VISUAL INTERCEPTOR ─────────────────────────────────────
 
 function _apply10xVisuals(sheet, data) {
   if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return;
 
-  const scaleFormula = (formula) => {
+  const scaleCL = (formula) => {
     if (typeof formula !== "string") return formula;
-    let res = formula.replace(/\b(\d*)d(\d+)\b/g, (match, count, faces) => {
-      return `${count || 1}d${Number(faces) * 10}`;
-    });
-    return res.replace(/(?<![d@\w\.])\b(\d+)\b(?!\s*[d\.])/g, (match, num) => {
-      return `${Number(num) * 10}`;
-    });
+    let res = formula.replace(/min\((\d+),\s*@cl\)/gi, (m, cap) => `min(${Number(cap)*10}, (@cl * 10))`);
+    res = res.replace(/max\((\d+),\s*@cl\)/gi, (m, cap) => `max(${Number(cap)*10}, (@cl * 10))`);
+    res = res.replace(/\+\s*@cl\b/gi, "+ (@cl * 10)");
+    res = res.replace(/-\s*@cl\b/gi, "- (@cl * 10)");
+    
+    res = res.replace(/\b(\d*)d(\d+)\b/g, (match, count, faces) => `${count || 1}d${Number(faces) * 10}`);
+    return res.replace(/(?<![d@\w\.])\b(\d+)\b(?!\s*[d\.])/g, (match, num) => `${Number(num) * 10}`);
   };
 
   const scaleSectionItems = (sectionArr) => {
@@ -698,7 +698,7 @@ function _apply10xVisuals(sheet, data) {
           
           if (newItem.labels) {
             newItem.labels = { ...newItem.labels };
-            if (newItem.labels.damage) newItem.labels.damage = scaleFormula(newItem.labels.damage);
+            if (newItem.labels.damage) newItem.labels.damage = scaleCL(newItem.labels.damage);
           }
           
           if (newItem.system && Array.isArray(newItem.system.actions)) {
@@ -709,7 +709,7 @@ function _apply10xVisuals(sheet, data) {
                 newAction.damage = { ...newAction.damage };
                 newAction.damage.parts = newAction.damage.parts.map(part => {
                   const newPart = { ...part };
-                  if (newPart.formula) newPart.formula = scaleFormula(newPart.formula);
+                  if (newPart.formula) newPart.formula = scaleCL(newPart.formula);
                   return newPart;
                 });
               }
@@ -737,6 +737,7 @@ function _apply10xVisuals(sheet, data) {
     }
   }
 }
+
 // ─── FICHA DE PERSONAGEM ──────────────────────────────────────────────────────
 
 /**
