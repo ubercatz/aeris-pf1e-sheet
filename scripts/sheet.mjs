@@ -672,64 +672,58 @@ function _bindThemeCycle(sheet, html) {
 }
 // ─── 10X GRANULARITY VISUAL INTERCEPTOR ─────────────────────────────────────
 
-/**
- * Intercepts data passed to the Handlebars template and visually applies the 10x Granularity
- * engine to damage formulas and enhancement bonuses without altering the database.
- */
 function _apply10xVisuals(sheet, data) {
   if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return;
 
   const scaleFormula = (formula) => {
     if (typeof formula !== "string") return formula;
-    // Scale dice faces (e.g., 1d6 -> 1d60)
-    let res = formula.replace(/(\d+)d(\d+)/g, (match, count, faces) => `${count}d${Number(faces) * 10}`);
-    // Scale flat integers not attached to variables or decimals (e.g., + 2 -> + 20)
-    res = res.replace(/(?<![d@\w\.])\b(\d+)\b(?!\s*[d\.])/g, (match, num) => `${Number(num) * 10}`);
-    return res;
+    // Visually scale dice faces (1d6 -> 1d60) for the UI
+    return formula.replace(/\b(\d*)d(\d+)\b/g, (match, count, faces) => {
+      return `${count || 1}d${Number(faces) * 10}`;
+    });
   };
 
-  const processNode = (node, depth = 0) => {
-    // Cap depth to prevent infinite loops in highly nested PF1e objects
-    if (depth > 6 || !node || typeof node !== "object") return;
-
-    // 1. Visual enhancement bonus scaling
-    if (node.system && node.system.enh !== undefined && node.system.enh !== null) {
-       node.system.enh = Number(node.system.enh) * 10;
-    }
-
-    // 2. Damage formula scaling (pre-rendered system labels)
-    if (node.labels && typeof node.labels.damage === "string") {
-      node.labels.damage = scaleFormula(node.labels.damage);
-    }
-
-    // 3. Action damage parts scaling
-    if (node.system && Array.isArray(node.system.actions)) {
-      for (const action of node.system.actions) {
-        if (action.damage && Array.isArray(action.damage.parts)) {
-          for (const part of action.damage.parts) {
-            if (Array.isArray(part) && typeof part[0] === "string") {
-              part[0] = scaleFormula(part[0]);
-            } else if (part.formula && typeof part.formula === "string") {
-              part.formula = scaleFormula(part.formula);
-            }
+  // Helper to safely clone and scale labels without mutating the database item
+  const scaleSectionItems = (sectionArr) => {
+    if (!Array.isArray(sectionArr)) return sectionArr;
+    return sectionArr.map(section => {
+      const newSection = { ...section };
+      
+      if (Array.isArray(newSection.items)) {
+        newSection.items = newSection.items.map(item => {
+          const newItem = { ...item };
+          if (newItem.labels) {
+            newItem.labels = { ...newItem.labels };
+            if (newItem.labels.damage) newItem.labels.damage = scaleFormula(newItem.labels.damage);
           }
-        }
+          return newItem;
+        });
       }
-    }
-
-    // Recursive traversal through the cloned data object
-    if (Array.isArray(node)) {
-      for (const child of node) processNode(child, depth + 1);
-    } else {
-      for (const key of Object.keys(node)) {
-        // Skip root references to prevent circular crawling
-        if (key === "actor" || key === "sheet" || key === "token" || key === "cssClass") continue;
-        processNode(node[key], depth + 1);
+      
+      if (Array.isArray(newSection.spells)) {
+        newSection.spells = newSection.spells.map(spell => {
+          const newSpell = { ...spell };
+          if (newSpell.labels) {
+            newSpell.labels = { ...newSpell.labels };
+            if (newSpell.labels.damage) newSpell.labels.damage = scaleFormula(newSpell.labels.damage);
+          }
+          return newSpell;
+        });
       }
-    }
+      return newSection;
+    });
   };
 
-  processNode(data);
+  // Apply visual clones to the sheet data
+  data.inventory = scaleSectionItems(data.inventory);
+  data.attacks = scaleSectionItems(data.attacks);
+  
+  if (data.spellbooks) {
+    data.spellbooks = { ...data.spellbooks };
+    for (let book of Object.keys(data.spellbooks)) {
+      data.spellbooks[book] = scaleSectionItems(data.spellbooks[book]);
+    }
+  }
 }
 // ─── FICHA DE PERSONAGEM ──────────────────────────────────────────────────────
 

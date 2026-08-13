@@ -120,32 +120,37 @@ Hooks.once("ready", () => {
   console.info(`${MODULE_ID} | sheets registradas`);
 });
 
-// ─── 10X GRANULARITY ROLL INTERCEPTOR HOOK ────────────────────────────────
+// ─── 10X GRANULARITY ENGINE (CORE INTERCEPTION) ───────────────────────────
 
-Hooks.on("pf1PreActorRollAttack", (action, rollData) => {
-  const is10xEnabled = game.settings.get(MODULE_ID, "enable10xGranularity");
-  if (!is10xEnabled) return;
+Hooks.once("init", () => {
+  if (typeof libWrapper === "undefined") {
+    console.error(`${MODULE_ID} | libWrapper is required for the 10x Granularity Engine.`);
+    return;
+  }
 
-  // Transform Damage Formulas dynamically inside the roll pipeline
-  if (action.data?.damage?.parts) {
-    for (const part of action.data.damage.parts) {
-      if (!part.formula) continue;
-
-      // 1. Scale Dice Faces (e.g., 1d6 -> 1d60, 2d10 -> 2d100)
-      part.formula = part.formula.replace(/(\d+)d(\d+)/g, (match, count, faces) => {
-        return `${count}d${Number(faces) * 10}`;
-      });
-
-      // 2. Scale flat integers that aren't tied to @variables (e.g., + 1 -> + 10, - 2 -> - 20)
-      // Excludes @ability modifiers, ranges, or dice expressions
-      part.formula = part.formula.replace(/(?<![d@\w])\b(\d+)\b(?!\s*d)/g, (match, num) => {
-        return `${Number(num) * 10}`;
-      });
+  // 1. Intercept ALL Dice Rolls to multiply faces by 10 (1d20 -> 1d200, 1d6 -> 1d60)
+  // This safely catches spells, sizeRolls, attacks, and skill checks globally.
+  libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
+    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+      for (let term of this.terms) {
+        if (term.faces && !term._pf1arScaled) {
+          term.faces *= 10;
+          term._pf1arScaled = true; // Flag prevents exponential scaling if evaluated twice
+        }
+      }
     }
-  }
+    return wrapped(...args);
+  }, "WRAPPER");
 
-  // Scale Item Enhancement Bonuses (+1 weapon -> +10 enhancement)
-  if (action.item?.system?.enh) {
-    action.item.system.enh *= 10;
-  }
+  // 2. Intercept Item Data Preparation to scale Enhancement bonuses safely.
+  // This injects the 10x multiplier into the system's math pipeline without touching the database.
+  libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
+    wrapped(...args); // Let PF1e prepare data normally first
+    
+    if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
+      if (this.system?.enh) {
+        this.system.enh *= 10;
+      }
+    }
+  }, "WRAPPER");
 });
