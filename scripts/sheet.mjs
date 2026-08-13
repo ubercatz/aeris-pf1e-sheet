@@ -555,12 +555,11 @@ function _apply10xVisuals(sheet, data) {
   const scaleCL = (formula) => {
     if (typeof formula !== "string") return formula;
     let res = formula;
-    res = res.replace(/min\((\d+),\s*@cl\)/gi, (m, cap) => `min(${Number(cap)*10}, (@cl * 10))`);
-    res = res.replace(/max\((\d+),\s*@cl\)/gi, (m, cap) => `max(${Number(cap)*10}, (@cl * 10))`);
-    res = res.replace(/\+\s*@cl\b/gi, "+ (@cl * 10)");
-    res = res.replace(/-\s*@cl\b/gi, "- (@cl * 10)");
+    res = res.replace(/min\((\d+),\s*@cl\)(?!\s*d)/gi, (m, cap) => `min(${Number(cap)*10}, (@cl * 10))`);
+    res = res.replace(/max\((\d+),\s*@cl\)(?!\s*d)/gi, (m, cap) => `max(${Number(cap)*10}, (@cl * 10))`);
+    res = res.replace(/\+\s*@cl\b(?!\s*d)/gi, "+ (@cl * 10)");
+    res = res.replace(/-\s*@cl\b(?!\s*d)/gi, "- (@cl * 10)");
     res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, c, fcs) => Number(fcs) <= 20 ? `${c || 1}d${Number(fcs) * 10}` : m);
-    // Safely targets ONLY flat numbers strictly starting with + or -
     res = res.replace(/(^|[+-])\s*\b(\d+)\b(?!\s*d)/gi, (m, sign, num) => `${sign} ${Number(num) * 10}`);
     return res;
   };

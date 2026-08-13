@@ -68,11 +68,8 @@ Hooks.once("ready", () => {
   DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltNPCSheetPF, { label: game.i18n.localize("PF1AR.NPCSheetLabel"), types: ["npc"], makeDefault: false });
   DocumentSheetConfig.updateDefaultSheets();
 
-  if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-    if (pf1.config) {
-      pf1.config.classSkillBonus = 30;
-      pf1.config.nonProficiencyPenalty = -40;
-    }
+  if (game.settings.get(MODULE_ID, "enable10xGranularity") && pf1.config) {
+    pf1.config.classSkillBonus = 30;
   }
 });
 
@@ -81,23 +78,46 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Core Dice Evaluator: Safely scales dice terms right before they roll.
-  // This completely bypasses String parsing errors, leaves old chat messages alone,
-  // and prevents Foundry's anti-cheat from flagging tampered formulas!
-  libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
+  // 1. Roll Parts Interceptor: Mutates strings BEFORE Roll generation to prevent Anti-Cheat Tamper Flags
+  const scaleRollParts = function(wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      for (let term of this.terms) {
-        // Only scale standard dice (d4, d6, d8, d10, d12, d20). Protects d100s for percentiles!
-        if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
-          term.faces *= 10;
-          term._pf1arScaled = true; 
+      const scaleStr = (f) => {
+        if (typeof f !== "string") return f;
+        let res = f;
+        // Scale the d20 safely
+        res = res.replace(/\b(\d*)d20\b/gi, (m, c) => `${c || 1}d200`);
+        
+        // Scale specific unscaled conditions and penalties based on their flavor tags
+        const unscaledFlavors = "Shaken|Sickened|Dazzled|Entangled|Grappled|Prone|Deaf|Proficiency Penalty|Fatigued|Exhausted|Frightened|Panicked|Cowering|Stunned|Paralyzed|Pinned|Bleed|Blinded|Nonproficient";
+        const flavorRegex = new RegExp(`(^|[\\s+-])\\b(\\d+)\\b(\\s*\\[(?:${unscaledFlavors})\\])`, "gi");
+        res = res.replace(flavorRegex, (m, prefix, num, flavor) => `${prefix}${Number(num) * 10}${flavor}`);
+        
+        return res;
+      };
+
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] && typeof args[i] === "object") {
+          if (Array.isArray(args[i].parts)) args[i].parts = args[i].parts.map(p => scaleStr(String(p)));
+          if (typeof args[i].formula === "string") args[i].formula = scaleStr(args[i].formula);
         }
       }
     }
     return wrapped(...args);
-  }, "WRAPPER");
+  };
 
-  // 2. Item Base Data: Armor, ACP, Enhancements, and Formula Scaling
+  const rollMethods = [
+    "pf1.documents.actor.ActorPF.prototype.rollSkill",
+    "pf1.documents.actor.ActorPF.prototype.rollSavingThrow",
+    "pf1.documents.actor.ActorPF.prototype.rollAbilityTest",
+    "pf1.documents.actor.ActorPF.prototype.rollInitiative",
+    "pf1.documents.actor.ActorPF.prototype.rollAttack",
+    "pf1.documents.actor.ActorPF.prototype.rollConcentration",
+    "pf1.documents.item.ItemAction.prototype.rollAttack",
+    "pf1.documents.item.ItemSpellPF.prototype.rollSpellResistance"
+  ];
+  rollMethods.forEach(m => libWrapper.register(MODULE_ID, m, scaleRollParts, "WRAPPER"));
+
+  // 2. Item Base Data: Armor, ACP, Enhancements, and Smart Formula Scaling
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareBaseData", function (wrapped, ...args) {
     wrapped(...args); 
     
@@ -106,12 +126,19 @@ Hooks.once("init", () => {
       const scaleCL = (f) => {
         if (typeof f !== "string") return f;
         let res = f;
-        res = res.replace(/min\((\d+),\s*@cl\)/gi, (m, cap) => `min(${Number(cap)*10}, (@cl * 10))`);
-        res = res.replace(/max\((\d+),\s*@cl\)/gi, (m, cap) => `max(${Number(cap)*10}, (@cl * 10))`);
-        res = res.replace(/\+\s*@cl\b/gi, "+ (@cl * 10)");
-        res = res.replace(/-\s*@cl\b/gi, "- (@cl * 10)");
         
-        // Only target flat numbers strictly starting with + or -
+        // Scale Caster Level Caps without messing up dice counts (Fireball Fix)
+        res = res.replace(/min\((\d+),\s*@cl\)(?!\s*d)/gi, (m, cap) => `min(${Number(cap)*10}, (@cl * 10))`);
+        res = res.replace(/max\((\d+),\s*@cl\)(?!\s*d)/gi, (m, cap) => `max(${Number(cap)*10}, (@cl * 10))`);
+        
+        // Scale flat CL modifiers
+        res = res.replace(/\+\s*@cl\b(?!\s*d)/gi, "+ (@cl * 10)");
+        res = res.replace(/-\s*@cl\b(?!\s*d)/gi, "- (@cl * 10)");
+        
+        // Scale standard damage/healing dice faces. Ignores d100s.
+        res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, c, fcs) => Number(fcs) <= 20 ? `${c || 1}d${Number(fcs) * 10}` : m);
+        
+        // Safely targets ONLY flat numbers strictly starting with + or -
         res = res.replace(/(^|[+-])\s*\b(\d+)\b(?!\s*d)/gi, (m, sign, num) => `${sign} ${Number(num) * 10}`);
         return res;
       };
@@ -122,7 +149,7 @@ Hooks.once("init", () => {
       }
       if (this.system?.enh !== undefined && this._source?.system?.enh !== undefined) this.system.enh = Number(this._source.system.enh) * 10;
 
-      // Scale Buffs/Debuffs (This automatically catches Conditions in V10+)
+      // Scale Item Buffs/Debuffs
       if (this.system?.changes && this._source?.system?.changes) {
         this.system.changes.forEach((change, i) => {
           if (this._source.system.changes[i]?.formula) change.formula = scaleCL(String(this._source.system.changes[i].formula));
@@ -157,12 +184,13 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
 
-  // 4. Actor Derived Data: Skills, FCB, BAB, Saves, AC, SR
+  // 4. Actor Derived Data: Skills, FCB, BAB, Saves, AC, SR, and Encumbrance Fix
   libWrapper.register(MODULE_ID, "CONFIG.Actor.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args); 
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
+      // Skills
       if (this.system?.skills) {
         for (const skill of Object.values(this.system.skills)) {
           if (skill.rank) skill.mod += (skill.rank * 9);
@@ -174,12 +202,14 @@ Hooks.once("init", () => {
         }
       }
 
+      // FCB HP
       let totalFcbHp = 0;
       for (const item of this.items) {
         if (item.type === "class" && item.system?.fc?.hp?.value) totalFcbHp += item.system.fc.hp.value;
       }
       if (totalFcbHp > 0 && this.system.attributes?.hp) this.system.attributes.hp.max += (totalFcbHp * 9);
 
+      // BAB
       if (game.settings.get(MODULE_ID, "enableFractionalProgression")) {
         let granularBab = 0;
         for (const item of this.items) {
@@ -195,51 +225,36 @@ Hooks.once("init", () => {
         if (this.system.attributes?.bab?.total !== undefined) this.system.attributes.bab.total += (this.system.attributes.bab.total * 9);
       }
 
+      // Saves
       if (this.system.attributes?.savingThrows) {
         for (let save of Object.values(this.system.attributes.savingThrows)) {
           if (save.base !== undefined && save.total !== undefined) save.total += (save.base * 9);
         }
       }
 
+      // Base AC
       if (this.system.attributes?.ac) {
         ["normal", "touch", "flatFooted"].forEach(type => {
           if (this.system.attributes.ac[type]?.total !== undefined) this.system.attributes.ac[type].total += 90;
         });
       }
 
+      // Spell Resistance
       if (this.system.attributes?.sr?.total !== undefined) this.system.attributes.sr.total *= 10;
-    }
-  }, "WRAPPER");
 
-  // 5. Encumbrance Override
-  libWrapper.register(MODULE_ID, "pf1.utils.getEncumbrance", function (wrapped, strength, ...args) {
-    if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return wrapped(strength, ...args);
-    const normalStr = Math.floor(strength / 10);
-    const result = wrapped(normalStr, ...args);
-    if (result) {
-      result.light *= 10;
-      result.medium *= 10;
-      result.heavy *= 10;
+      // Encumbrance Manual Override (Avoids PF1e V13 crash entirely)
+      if (this.system.attributes?.encumbrance && this.system.abilities?.str?.total) {
+        const str = Math.floor(this.system.abilities.str.total / 10);
+        let heavy = 0;
+        if (str <= 10) heavy = str * 10;
+        else {
+           const base = [100, 115, 130, 150, 175, 200, 230, 260, 300, 350][str % 10];
+           heavy = base * Math.pow(4, Math.floor(str / 10) - 1);
+        }
+        this.system.attributes.encumbrance.light = Math.floor(heavy / 3) * 10;
+        this.system.attributes.encumbrance.medium = Math.floor((heavy * 2) / 3) * 10;
+        this.system.attributes.encumbrance.heavy = heavy * 10;
+      }
     }
-    return result;
-  }, "WRAPPER");
-
-  // 6. Bolster Caster Level for SR and Concentration System Checks
-  libWrapper.register(MODULE_ID, "pf1.documents.actor.ActorPF.prototype.rollConcentration", function (wrapped, spell, options = {}) {
-    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      const bonus = `(@cl * 9)`;
-      if (Array.isArray(options.parts)) options.parts.push(bonus);
-      else options.parts = [bonus];
-    }
-    return wrapped(spell, options);
-  }, "WRAPPER");
-
-  libWrapper.register(MODULE_ID, "pf1.documents.item.ItemSpellPF.prototype.rollSpellResistance", function (wrapped, options = {}) {
-    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      const bonus = `(@cl * 9)`;
-      if (Array.isArray(options.parts)) options.parts.push(bonus);
-      else options.parts = [bonus];
-    }
-    return wrapped(options);
   }, "WRAPPER");
 });
