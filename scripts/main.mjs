@@ -91,12 +91,10 @@ Hooks.once("init", () => {
           // ========================================================================
           // UNIVERSAL FUMBLE INJECTOR (Safely forces 1-10 on all d200 rolls)
           // ========================================================================
-          if (term.faces === 200) { // Strictly only affects d20s that scaled up
-              term.modifiers = term.modifiers || []; // Safely ensures array exists
-              
+          if (term.faces === 200 && Array.isArray(term.modifiers)) { 
               let hasCF = false;
               
-              // 1. Catch and scale explicit "cf1" modifiers if the system sent one
+              // 1. Catch and scale explicit "cf1" modifiers IN-PLACE
               for (let i = 0; i < term.modifiers.length; i++) {
                   if (typeof term.modifiers[i] === "string") {
                       if (/^cf[<=]*1$/i.test(term.modifiers[i])) {
@@ -108,14 +106,14 @@ Hooks.once("init", () => {
                   }
               }
               
-              // 2. Spells & Skills often have blank arrays. Force inject if missing!
+              // 2. Spells & Skills often have blank arrays. Safely push if missing!
               if (!hasCF) term.modifiers.push("cf<=10");
 
-              // 3. Force the Chat Card to highlight dark red!
-              term.options = term.options || {};
-              term.options.fumble = 10;
+              // 3. Force the Chat Card to highlight dark red (without destroying the object)!
+              if (term.options) {
+                  term.options.fumble = 10;
+              }
           }
-
           term._pf1arScaled = true;
         }
       }
