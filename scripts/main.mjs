@@ -100,57 +100,33 @@ Hooks.once("init", () => {
       
       const scaleCL = (f) => {
         if (typeof f !== "string") return f;
+        let res = f;
         
-        // 1. Topological Split: Separate the formula by + and - outside of parentheses
-        let segments = [];
-        let currentSegment = "";
-        let depth = 0;
+        // 1. Scale standard dice faces (1d6 -> 1d60, d8 -> d80). 
+        res = res.replace(/(\d*)d(\d+)/gi, (m, count, faces) => {
+            return Number(faces) <= 20 ? `${count || ""}d${Number(faces) * 10}` : m;
+        });
+
+        // 2. Exact Match for Capped Flat Healing/Damage: min(5, @cl) -> min(50, (@cl * 10))
+        // This handles your 5, 10, 15, and 20 maximums perfectly!
+        // CRUCIAL: The (?!\s*d) ensures we DO NOT touch Fireball's min(10, @cl)d60!
+        res = res.replace(/(min|max)\((\d+),\s*(@[a-zA-Z0-9_.]+)\)(?!\s*d)/gi, (m, func, num, variable) => {
+            return `${func}(${Number(num) * 10}, (${variable} * 10))`;
+        });
+
+        // 3. Exact Match for uncapped Flat Variables: + @cl -> + (@cl * 10)
+        // (E.g., for spells or items that just add your raw caster level to damage)
+        res = res.replace(/([-+]\s*)(@[a-zA-Z0-9_.]+)(?!\s*d)/gi, (m, sign, variable) => {
+            return `${sign}(${variable} * 10)`;
+        });
+
+        // 4. Scale flat integer bonuses: + 1 -> + 10, - 2 -> - 20
+        // Only touches standalone numbers preceded by + or -
+        res = res.replace(/([-+]\s*)(\d+)(?!\s*d)/gi, (m, sign, num) => {
+            return `${sign}${Number(num) * 10}`;
+        });
         
-        for (let i = 0; i < f.length; i++) {
-            const char = f[i];
-            if (char === '(') depth++;
-            else if (char === ')') depth--;
-            
-            // Safely split only at the top level of the formula
-            if ((char === '+' || char === '-') && depth === 0) {
-                segments.push(currentSegment);
-                segments.push(char); 
-                currentSegment = "";
-            } else {
-                currentSegment += char;
-            }
-        }
-        segments.push(currentSegment);
-        
-        // 2. Process each segment based on whether it's a Dice Pool or Flat Math
-        for (let i = 0; i < segments.length; i++) {
-            let seg = segments[i];
-            if (seg.trim() === '+' || seg.trim() === '-') continue;
-            
-            // Check if this segment contains a dice roll (e.g., d6, d20)
-            if (/d\d+/i.test(seg)) {
-                // --- DICE SEGMENT ---
-                // E.g., min(10, @cl)d6. We ONLY scale the faces (d6 -> d60). 
-                // We leave the dice count limit (10) and the variable (@cl) completely untouched!
-                seg = seg.replace(/([a-zA-Z0-9_@)\]]*)\s*d(\d+)/gi, (m, prefix, fcs) => {
-                    return Number(fcs) <= 20 ? `${prefix || ""}d${Number(fcs) * 10}` : m;
-                });
-            } else {
-                // --- FLAT SEGMENT ---
-                // E.g., min(5, @cl). Here, both the number and @cl act as flat damage and must scale.
-                // We only scale numbers after +, -, (, or commas. We DO NOT scale divisors/multipliers.
-                seg = seg.replace(/(^|[-+,\(]\s*)\b(\d+)\b(?!\s*[a-zA-Z])/gi, (m, prefix, num) => {
-                    return `${prefix}${Number(num) * 10}`;
-                });
-                
-                // Scale variables natively
-                seg = seg.replace(/@cl\b/gi, '(@cl * 10)');
-                seg = seg.replace(/@classes\.[a-zA-Z0-9_]+\.level\b/gi, '($& * 10)');
-            }
-            segments[i] = seg;
-        }
-        
-        return segments.join("");
+        return res;
       };
       //end scaleCL
 
