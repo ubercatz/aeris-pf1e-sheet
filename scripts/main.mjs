@@ -79,7 +79,7 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Core Dice Evaluator: Safely scales dice and FORCES Critical/Fumble thresholds
+  // 1. Core Dice Evaluator: The Ultimate Sanitizer (Stops duplicate strings natively)
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
@@ -89,39 +89,58 @@ Hooks.once("init", () => {
           let originalFaces = term.faces;
           term.faces *= 10;
 
-          let hasCS = false;
-          let hasCF = false;
-
-          // 1. Scale existing Foundry string modifiers (if PF1e explicitly provided them)
-          if (term.modifiers && term.modifiers.length > 0) {
-            term.modifiers = term.modifiers.map(mod => {
-              if (mod.toLowerCase().startsWith('cs')) hasCS = true;
-              if (mod.toLowerCase().startsWith('cf')) hasCF = true;
-
-              return mod.replace(/(c[sf])([<>=]*)(\d+)/i, (match, type, op, numStr) => {
-                let num = parseInt(numStr, 10);
-                
-                // ONLY convert standard PF1e ranges (1-20). 
-                if (num > 0 && num <= 20) {
-                  if (type.toLowerCase() === 'cs') return `cs${op || ">="}${num * 10 - 9}`;
-                  if (type.toLowerCase() === 'cf') return `cf${op || "<="}${num * 10}`;
-                }
-                return match; 
-              });
-            });
-          } else {
-             // If modifiers is completely empty, initialize it so we can push to it!
-             term.modifiers = [];
-          }
-
-          // 2. THE FORCE INJECT: If it was a d20 and PF1e forgot the modifiers,
-          // force inject our 10x granular Fumbles (<=10) and Crits (>=191)!
           if (originalFaces === 20) {
-             if (!hasCS) term.modifiers.push("cs>=191");
-             if (!hasCF) term.modifiers.push("cf<=10");
+              let newMods = [];
+              let finalCS = 191; // Default 10x Crit
+              let finalCF = 10;  // Default 10x Fumble
+
+              // 1. Strip out ALL existing cs and cf modifiers to prevent duplicates!
+              if (term.modifiers && term.modifiers.length > 0) {
+                  for (let mod of term.modifiers) {
+                      let match = mod.match(/(c[sf])([<>=]*)(\d+)/i);
+                      if (match) {
+                          let type = match[1].toLowerCase();
+                          let num = parseInt(match[3], 10);
+                          
+                          // Capture the intended limits
+                          if (num > 0 && num <= 20) {
+                              if (type === 'cs') finalCS = num * 10 - 9;
+                              if (type === 'cf') finalCF = num * 10;
+                          } else {
+                              // Respect manually entered granular values like 185
+                              if (type === 'cs') finalCS = num;
+                              if (type === 'cf') finalCF = num;
+                          }
+                      } else {
+                          // Keep non-crit/fumble modifiers (like 'kh1' for advantage)
+                          newMods.push(mod);
+                      }
+                  }
+              }
+
+              // 2. Inject exactly ONE pristine Critical and Fumble modifier
+              newMods.push(`cs>=${finalCS}`);
+              newMods.push(`cf<=${finalCF}`);
+
+              // 3. Overwrite the messy Foundry array
+              term.modifiers = newMods;
+          } else {
+              // For non-d20s, scale cleanly without sanitizing
+              if (term.modifiers && term.modifiers.length > 0) {
+                  term.modifiers = term.modifiers.map(mod => {
+                      return mod.replace(/(c[sf])([<>=]*)(\d+)/i, (match, type, op, numStr) => {
+                          let num = parseInt(numStr, 10);
+                          if (num > 0 && num <= 20) {
+                              if (type.toLowerCase() === 'cs') return `cs${op || ">="}${num * 10 - 9}`;
+                              if (type.toLowerCase() === 'cf') return `cf${op || "<="}${num * 10}`;
+                          }
+                          return match;
+                      });
+                  });
+              }
           }
 
-          // Fallback for direct numeric options just in case PF1e bypasses strings
+          // Sync internal numeric options
           if (term.options) {
               if (term.options.critical !== undefined && term.options.critical <= 20) {
                   term.options.critical = (term.options.critical * 10) - 9;
@@ -133,6 +152,13 @@ Hooks.once("init", () => {
 
           term._pf1arScaled = true;
         }
+      }
+      
+      // 4. Force Foundry to erase the duplicate strings from the chat formula UI!
+      if (typeof this.resetFormula === "function") {
+          this.resetFormula();
+      } else {
+          this._formula = this.terms.map(t => t.formula).join(" ");
       }
     }
     return wrapped(...args);
