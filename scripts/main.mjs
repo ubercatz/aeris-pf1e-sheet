@@ -100,89 +100,67 @@ Hooks.once("init", () => {
       
       const scaleCL = (f) => {
         if (typeof f !== "string") return f;
-        let res = f;
-        let pId = 0;
-        let placeholders = {};
-
-        const hide = (str) => {
-            const key = `__PF1AR_${pId++}__`;
-            placeholders[key] = str;
-            return key;
-        };
+        let res = f.trim();
 
         // ========================================================================
-        // PRONG 1: EXPLICIT CAPPED DICE POOLS (e.g., Fireball)
-        // Captures the EXACT prefix, safely shielding complex inner math like (@cl + 2)
+        // RULE 1: STRICT CAPPED DICE POOLS (Fireball, Snowball)
+        // Looks specifically for min/max functions attached to a 'd' (e.g., d6).
+        // Safely scales the dice faces (Z) to 10x, but completely ignores the limits!
         // ========================================================================
-
-        // 1a. Math Functions attached to dice: min(10, @cl+2)d6, floor(@cl/2) * 1d6
-        res = res.replace(/((?:min|max|floor|ceil)\s*\([a-zA-Z0-9_.,\s+/*@-]+\)(?:\s*\*\s*\d*)?\s*d)(\d+)/gi, (m, prefix, faces) => {
+        
+        // Matches standard: min(10, @cl)d6 OR (min(10, @cl))d6
+        res = res.replace(/(\(?)(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)(\)?)\s*d(\d+)/gi, (m, open, fn, cap, v, close, faces) => {
             let fcs = Number(faces);
-            return hide(`${prefix}${fcs <= 20 ? fcs * 10 : fcs}`);
+            return `${open}${fn}(${cap}, ${v})${close}d${fcs <= 20 ? fcs * 10 : fcs}`;
         });
-
-        // 1b. Nested Math Functions: (min(10, @cl))d6
-        res = res.replace(/(\(\s*(?:min|max|floor|ceil)\s*\([a-zA-Z0-9_.,\s+/*@-]+\)\s*\)(?:\s*\*\s*\d*)?\s*d)(\d+)/gi, (m, prefix, faces) => {
+        
+        // Matches reversed: min(@cl, 10)d6
+        res = res.replace(/(\(?)(min|max)\(\s*(@[a-zA-Z0-9_.]+)\s*,\s*(\d+)\s*\)(\)?)\s*d(\d+)/gi, (m, open, fn, v, cap, close, faces) => {
             let fcs = Number(faces);
-            return hide(`${prefix}${fcs <= 20 ? fcs * 10 : fcs}`);
-        });
-
-        // 1c. Parenthetical Math attached to dice: (@cl + 2)d6
-        res = res.replace(/(\([a-zA-Z0-9_.,\s+/*@-]+\)(?:\s*\*\s*\d*)?\s*d)(\d+)/gi, (m, prefix, faces) => {
-            let fcs = Number(faces);
-            return hide(`${prefix}${fcs <= 20 ? fcs * 10 : fcs}`);
-        });
-
-        // 1d. Raw variables attached to dice: @cl d6, @classes.wizard.level * 1d6
-        res = res.replace(/(@[a-zA-Z0-9_.]+(?:\s*\*\s*\d*)?\s*d)(\d+)/gi, (m, prefix, faces) => {
-            let fcs = Number(faces);
-            return hide(`${prefix}${fcs <= 20 ? fcs * 10 : fcs}`);
+            return `${open}${fn}(${v}, ${cap})${close}d${fcs <= 20 ? fcs * 10 : fcs}`;
         });
 
         // ========================================================================
-        // PRONG 2: ISOLATE STANDARD DICE
-        // Temporarily hides generic dice (1d8, 4d6) so flat math ignores them.
+        // RULE 2: STRICT CAPPED FLAT DAMAGE (Cure Light Wounds)
+        // Looks specifically for min/max functions preceded by a + or -.
+        // The (?!\s*d) ensures we NEVER accidentally touch a Fireball formula here!
         // ========================================================================
+        
+        // Matches standard: + min(5, @cl) OR + (min(5, @cl))
+        res = res.replace(/(^|[-+]\s*)(\(?)(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)(\)?)(?!\s*d)/gi, (m, prefix, open, fn, cap, v, close) => {
+            return `${prefix}${open}${fn}(${Number(cap) * 10}, (${v} * 10))${close}`;
+        });
+        
+        // Matches reversed: + min(@cl, 5)
+        res = res.replace(/(^|[-+]\s*)(\(?)(min|max)\(\s*(@[a-zA-Z0-9_.]+)\s*,\s*(\d+)\s*\)(\)?)(?!\s*d)/gi, (m, prefix, open, fn, v, cap, close) => {
+            return `${prefix}${open}${fn}((${v} * 10), ${Number(cap) * 10})${close}`;
+        });
+
+        // ========================================================================
+        // RULE 3: ISOLATED SYSTEM VARIABLES 
+        // Matches uncapped variables like `+ @cl` OR `+ @classes.wizard.level`
+        // ========================================================================
+        res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(?!\s*d)/gi, (m, prefix, v) => {
+            return `${prefix}(${v} * 10)`;
+        });
+
+        // ========================================================================
+        // RULE 4: STANDARD FALLBACK FOR BASIC DICE AND INTEGERS
+        // Safely catches standard 1d8, 4d6, + 2, - 1 without touching variables
+        // ========================================================================
+        
+        // Scale basic dice (1d8 -> 1d80)
         res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, count, faces) => {
             let fcs = Number(faces);
-            return hide(`${count || ""}d${fcs <= 20 ? fcs * 10 : fcs}`);
+            return fcs <= 20 ? `${count || ""}d${fcs * 10}` : m;
         });
 
-        // ========================================================================
-        // PRONG 3: EXPLICIT FLAT CAPS (e.g., min(5, @cl))
-        // Because dice pools are hidden, we safely scale remaining min/max caps!
-        // ========================================================================
-        
-        // Scale the left side of a comma: min(5, ...) -> min(50, ...)
-        res = res.replace(/(min|max)\(\s*(\d+)\s*,/gi, (m, func, num) => {
-            return `${func}(${Number(num) * 10},`;
-        });
-        
-        // Scale the right side of a comma: ..., 5) -> ..., 50)
-        res = res.replace(/,\s*(\d+)\s*\)/gi, (m, num) => {
-            return `, ${Number(num) * 10})`;
-        });
-
-        // ========================================================================
-        // PRONG 4: STANDALONE FLAT VARIABLES AND INTEGERS
-        // ========================================================================
-        
-        // 4a. Variables: + @cl, min(50, @cl) -> min(50, (@cl * 10))
-        res = res.replace(/(^|[-+,\(*\/]\s*)(@[a-zA-Z0-9_.]+)/gi, (m, prefix, variable) => {
-            return `${prefix}(${variable} * 10)`;
-        });
-
-        // 4b. Integers: + 1, - 2 (Specifically ignores multipliers/divisors like / 2)
-        res = res.replace(/(^|[-+,\(]\s*)(\d+)\b/gi, (m, prefix, num) => {
+        // Scale standalone flat numbers. The negative lookahead (?!\s*[,)d]) is a 
+        // bulletproof shield: it completely rejects scaling numbers trapped inside 
+        // a function (like the 10 in `min(10, @cl)`), keeping untested caps safe!
+        res = res.replace(/(^|[-+]\s*)\b(\d+)\b(?!\s*[,)d])/gi, (m, prefix, num) => {
             return `${prefix}${Number(num) * 10}`;
         });
-
-        // ========================================================================
-        // PRONG 5: RESTORE PLACEHOLDERS
-        // ========================================================================
-        for (const [key, val] of Object.entries(placeholders)) {
-            res = res.replace(key, val);
-        }
 
         return res;
       };
