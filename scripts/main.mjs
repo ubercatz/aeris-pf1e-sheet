@@ -79,28 +79,66 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Core Dice Evaluator: Safely scales dice faces and updates Fumbles
+  // 1. Core Dice Evaluator: The Crash-Free Sanitizer
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
         
-        // Only touch standard base dice (d20, d6, d8, etc.)
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
+          let isD20 = (term.faces === 20);
           term.faces *= 10;
 
-          // Phase 2 (prepareBaseData) natively handles all Critical Threats now!
-          // We only need to catch the default Fumble (cf1) and scale it (cf<=10)
-          if (term.modifiers && term.modifiers.length > 0) {
-              for (let i = 0; i < term.modifiers.length; i++) {
-                  if (/^cf[<=]*1$/i.test(term.modifiers[i])) {
-                      term.modifiers[i] = "cf<=10";
+          if (isD20) {
+              let finalCS = 191; // Default 10x Crit
+              let finalCF = 10;  // Default 10x Fumble
+              let newMods = [];
+
+              // 1. Parse and clean existing modifiers to prevent duplicates
+              if (term.modifiers && term.modifiers.length > 0) {
+                  for (let mod of term.modifiers) {
+                      let match = mod.match(/(c[sf])([<>=]*)(\d+)/i);
+                      if (match) {
+                          let type = match[1].toLowerCase();
+                          let num = parseInt(match[3], 10);
+                          
+                          if (num > 0 && num <= 20) {
+                              if (type === 'cs') finalCS = (num * 10) - 9;
+                              if (type === 'cf') finalCF = num * 10;
+                          } else {
+                              // Respect GM custom entries like 185
+                              if (type === 'cs') finalCS = num;
+                              if (type === 'cf') finalCF = num;
+                          }
+                      } else {
+                          newMods.push(mod); // Keep other valid modifiers like 'kh1'
+                      }
                   }
               }
-          }
 
-          // Update the hidden numeric options just in case
-          if (term.options && term.options.fumble === 1) {
-              term.options.fumble = 10;
+              // 2. Inject exactly ONE clean set of 10x modifiers
+              newMods.push(`cs>=${finalCS}`);
+              newMods.push(`cf<=${finalCF}`);
+              term.modifiers = newMods;
+
+              // 3. FORCE the internal Foundry options so the PF1e Chat Cards obey!
+              if (!term.options) term.options = {};
+              term.options.critical = finalCS;
+              term.options.fumble = finalCF;
+
+          } else {
+              // Standard scaling for damage dice modifiers
+              if (term.modifiers && term.modifiers.length > 0) {
+                  term.modifiers = term.modifiers.map(mod => {
+                      return mod.replace(/(c[sf])([<>=]*)(\d+)/i, (match, type, op, numStr) => {
+                          let num = parseInt(numStr, 10);
+                          if (num > 0 && num <= 20) {
+                              if (type.toLowerCase() === 'cs') return `cs${op || ">="}${num * 10 - 9}`;
+                              if (type.toLowerCase() === 'cf') return `cf${op || "<="}${num * 10}`;
+                          }
+                          return match;
+                      });
+                  });
+              }
           }
 
           term._pf1arScaled = true;
