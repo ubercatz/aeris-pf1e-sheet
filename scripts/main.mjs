@@ -88,18 +88,31 @@ Hooks.once("init", () => {
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
 
-          // Phase 2 (prepareBaseData) natively handles all Critical Threats now!
-          // We only need to catch the default Fumble (cf1) and scale it (cf<=10)
-          if (term.modifiers && term.modifiers.length > 0) {
+          // ========================================================================
+          // UNIVERSAL FUMBLE INJECTOR (Safely forces 1-10 on all d200 rolls)
+          // ========================================================================
+          if (term.faces === 200) { // Strictly only affects d20s that scaled up
+              term.modifiers = term.modifiers || []; // Safely ensures array exists
+              
+              let hasCF = false;
+              
+              // 1. Catch and scale explicit "cf1" modifiers if the system sent one
               for (let i = 0; i < term.modifiers.length; i++) {
-                  if (/^cf[<=]*1$/i.test(term.modifiers[i])) {
-                      term.modifiers[i] = "cf<=10";
+                  if (typeof term.modifiers[i] === "string") {
+                      if (/^cf[<=]*1$/i.test(term.modifiers[i])) {
+                          term.modifiers[i] = "cf<=10";
+                          hasCF = true;
+                      } else if (/^cf/i.test(term.modifiers[i])) {
+                          hasCF = true; // Respects custom fumbles if they exist
+                      }
                   }
               }
-          }
+              
+              // 2. Spells & Skills often have blank arrays. Force inject if missing!
+              if (!hasCF) term.modifiers.push("cf<=10");
 
-          // Update the hidden numeric options just in case
-          if (term.options && term.options.fumble === 1) {
+              // 3. Force the Chat Card to highlight dark red!
+              term.options = term.options || {};
               term.options.fumble = 10;
           }
 
