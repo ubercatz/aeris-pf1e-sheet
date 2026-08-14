@@ -79,75 +79,34 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-// 1. Core Dice Evaluator: The Unified Math Engine
+  // 1. Core Dice Evaluator: Safely scales dice faces and updates Fumbles
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
-    if (game.settings.get(MODULE_ID, "enable10xGranularity") && !this._pf1arScaled) {
-        this._pf1arScaled = true;
-
-        // ========================================================================
-        // 1. SCALE THE MASTER ROLL OPTIONS (Fixes Chat Cards & Ghost Crits)
-        // ========================================================================
-        if (!this.options) this.options = {};
+    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+      for (let term of this.terms) {
         
-        // Scale Crits natively (Default to 191 for Spells)
-        if (this.options.critical !== undefined && this.options.critical <= 20) {
-            this.options.critical = (this.options.critical * 10) - 9;
-        } else if (this.options.critical === undefined) {
-            this.options.critical = 191; 
+        // Only touch standard base dice (d20, d6, d8, etc.)
+        if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
+          term.faces *= 10;
+
+          // Phase 2 (prepareBaseData) natively handles all Critical Threats now!
+          // We only need to catch the default Fumble (cf1) and scale it (cf<=10)
+          if (term.modifiers && term.modifiers.length > 0) {
+              for (let i = 0; i < term.modifiers.length; i++) {
+                  if (/^cf[<=]*1$/i.test(term.modifiers[i])) {
+                      term.modifiers[i] = "cf<=10";
+                  }
+              }
+          }
+
+          // Update the hidden numeric options just in case
+          if (term.options && term.options.fumble === 1) {
+              term.options.fumble = 10;
+          }
+
+          term._pf1arScaled = true;
         }
-
-        // Scale Fumbles natively (Default to 10 for Spells)
-        if (this.options.fumble !== undefined && this.options.fumble <= 20) {
-            this.options.fumble = this.options.fumble * 10;
-        } else if (this.options.fumble === undefined) {
-            this.options.fumble = 10; 
-        }
-
-        // ========================================================================
-        // 2. SCALE THE INDIVIDUAL DICE TERMS
-        // ========================================================================
-        for (let term of this.terms) {
-            if (term.faces && term.faces <= 20) {
-                let isD20 = (term.faces === 20);
-                term.faces *= 10;
-
-                if (isD20) {
-                    // Strip out old cs/cf strings to completely prevent duplicates
-                    if (term.modifiers && Array.isArray(term.modifiers)) {
-                        term.modifiers = term.modifiers.filter(m => typeof m === "string" && !/^c[sf]/i.test(m));
-                    } else {
-                        term.modifiers = [];
-                    }
-
-                    // Inject exactly one pristine 10x string
-                    term.modifiers.push(`cs>=${this.options.critical}`);
-                    term.modifiers.push(`cf<=${this.options.fumble}`);
-
-                    // Sync the internal Die options
-                    if (!term.options) term.options = {};
-                    term.options.critical = this.options.critical;
-                    term.options.fumble = this.options.fumble;
-                    term.options.target = this.options.critical;
-                } else {
-                    // Standard scaling for damage dice faces (d6 -> d60)
-                    if (term.modifiers && Array.isArray(term.modifiers)) {
-                        term.modifiers = term.modifiers.map(m => {
-                            if (typeof m !== "string") return m;
-                            return m.replace(/(c[sf])[<>=]*(\d+)/i, (match, p1, n) => {
-                                let v = parseInt(n, 10);
-                                return v <= 20 ? `${p1}${v * 10}` : match;
-                            });
-                        });
-                    }
-                }
-            }
-        }
-
-        // 3. Safely rebuild the formula text for the UI so the dice actually roll!
-        this._formula = this.constructor.getFormula(this.terms);
+      }
     }
-
-    // Always return safely via the async promise chain!
     return wrapped(...args);
   }, "WRAPPER");
   // 2. Item Base Data: Armor, ACP, Enhancements, and Smart Formula Scaling
