@@ -79,61 +79,28 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-// 1. Core Dice Evaluator: Safely scales dice faces and force-injects Crits/Fumbles
+  // 1. Core Dice Evaluator: Safely scales dice faces and updates Fumbles
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
         
         // Only touch standard base dice (d20, d6, d8, etc.)
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
-          let isD20 = (term.faces === 20);
           term.faces *= 10;
-          
-          // Ensure the modifiers array exists so we can safely check it
-          if (!term.modifiers || !Array.isArray(term.modifiers)) {
-              term.modifiers = [];
+
+          // Phase 2 (prepareBaseData) natively handles all Critical Threats now!
+          // We only need to catch the default Fumble (cf1) and scale it (cf<=10)
+          if (term.modifiers && term.modifiers.length > 0) {
+              for (let i = 0; i < term.modifiers.length; i++) {
+                  if (/^cf[<=]*1$/i.test(term.modifiers[i])) {
+                      term.modifiers[i] = "cf<=10";
+                  }
+              }
           }
 
-          let hasCS = false;
-          let hasCF = false;
-
-          // Process existing modifiers (preserves non-crit modifiers like 'kh')
-          term.modifiers = term.modifiers.map(m => {
-              if (typeof m !== "string") return m;
-
-              if (/cs/i.test(m)) hasCS = true;
-              if (/cf/i.test(m)) hasCF = true;
-
-              return m.replace(/(c[sf])[<>=]*(\d+)/i, (match, p1, n) => {
-                  let v = parseInt(n, 10);
-                  
-                  // Fumble conversion: cf1 becomes cf<=10
-                  if (p1.toLowerCase() === "cf" && v === 1) {
-                      return "cf<=10"; 
-                  }
-                  
-                  // Crit conversion: ONLY scale if it's 20 or below. 
-                  // This safely ignores your manual 181s and 191s!
-                  if (v <= 20) {
-                      // Formula: cs20 -> cs>=191, cs19 -> cs>=181
-                      let scaledCrit = (v * 10) - 9;
-                      return `cs>=${scaledCrit}`;
-                  }
-                  return match;
-              });
-          });
-
-          // FORCE INJECT: Spells and default attacks hide their modifiers. 
-          // Since it's a d200 now, we MUST explicitly define them.
-          if (isD20) {
-              if (!hasCS) term.modifiers.push("cs>=191");
-              if (!hasCF) term.modifiers.push("cf<=10");
-          }
-
-          // Update the hidden numeric options for Chat Card highlighting (Green/Red text)
-          if (term.options) {
-              if (term.options.fumble === 1) term.options.fumble = 10;
-              if (term.options.crit === 20) term.options.crit = 191; 
+          // Update the hidden numeric options just in case
+          if (term.options && term.options.fumble === 1) {
+              term.options.fumble = 10;
           }
 
           term._pf1arScaled = true;
@@ -283,6 +250,49 @@ Hooks.once("init", () => {
               const srcFormula = srcAction.damage.parts[j]?.formula;
               if (srcFormula) part.formula = scaleCL(String(srcFormula));
             });
+          }
+          if (action.actionType) {
+              
+              // ========================================================================
+              // 1. STANDARD ATTACKS (Weapons, Features, etc.)
+              // This is your original working code! We leave it completely alone.
+              // ========================================================================
+              if (this.type !== "spell") {
+                  let cRange = action.critRange; 
+                  // (Assuming this was your working logic, adjust if yours looked slightly different)
+                  if (cRange !== undefined && cRange !== null && cRange !== "") {
+                      cRange = Number(cRange);
+                      // Only convert if it's 20 or below, ignoring manual 181+ inputs
+                      if (!isNaN(cRange) && cRange > 0 && cRange <= 20) {
+                          action.critRange = (cRange * 10) - 9;
+                      }
+                  }
+              }
+
+              // ========================================================================
+              // 2. SPELL ATTACKS EXCLUSIVE
+              // Completely isolated. Targets the deeper nested 'ability' object securely.
+              // ========================================================================
+              if (this.type === "spell") {
+                  // Safely ensure the ability object exists without overwriting existing stats
+                  action.ability = action.ability || {};
+                  
+                  let cRange = action.ability.critRange;
+                  
+                  // Spells are usually blank by default in the database (which means 20)
+                  // If it's blank, we force it directly to 191
+                  if (cRange === undefined || cRange === null || cRange === "") {
+                      action.ability.critRange = 191; 
+                  } else {
+                      cRange = Number(cRange);
+                      // If a user manually typed 19, convert to 181. 
+                      // If it is already 191, it safely ignores it.
+                      if (!isNaN(cRange) && cRange > 0 && cRange <= 20) {
+                          action.ability.critRange = (cRange * 10) - 9;
+                      }
+                  }
+              }
+              
           }
 // ========================================================================
           
