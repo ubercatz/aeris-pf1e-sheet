@@ -252,6 +252,43 @@ Hooks.once("init", () => {
             });
           }
           if (action.actionType) {
+              // ========================================================================
+              // UNIVERSAL CRITICAL THREAT CONVERTER (Weapons, Spells, Skills)
+              // ========================================================================
+              
+              // 1. Safely guarantee the nested 'ability' container exists for ALL actions
+              action.ability = action.ability || {};
+              
+              // 2. Look for the crit range in the new V11 location OR the old legacy location
+              let cRange = action.ability.critRange;
+              if (cRange === undefined || cRange === null || cRange === "") {
+                  cRange = action.critRange;
+              }
+              
+              // 3. If it is completely blank, PF1e assumes '20'. We force it to '191'.
+              if (cRange === undefined || cRange === null || cRange === "") {
+                  action.ability.critRange = 191; 
+                  action.critRange = 191; // Legacy fallback sync
+              } else {
+                  cRange = Number(cRange);
+                  
+                  if (!isNaN(cRange)) {
+                      // 4a. If it's a standard PF1e range (20, 19, 18), scale it!
+                      if (cRange > 0 && cRange <= 20) {
+                          let scaled = (cRange * 10) - 9;
+                          action.ability.critRange = scaled;
+                          action.critRange = scaled; 
+                      } 
+                      // 4b. Safely catches your manual granular inputs (like 181 or 175)
+                      // and perfectly syncs them into the modern database location.
+                      else {
+                          action.ability.critRange = cRange;
+                          action.critRange = cRange;
+                      }
+                  }
+              }
+          }
+          /*if (action.actionType) {
               
               // ========================================================================
               // 1. STANDARD ATTACKS (Weapons, Features, etc.)
@@ -293,7 +330,7 @@ Hooks.once("init", () => {
                   }
               }
               
-          }
+          }*/
 // ========================================================================
           
           
