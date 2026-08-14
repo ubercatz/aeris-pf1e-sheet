@@ -107,22 +107,26 @@ Hooks.once("init", () => {
             return Number(faces) <= 20 ? `${count || ""}d${Number(faces) * 10}` : m;
         });
 
-        // 2. Exact Match for Capped Flat Healing/Damage: min(5, @cl) -> min(50, (@cl * 10))
-        // This handles your 5, 10, 15, and 20 maximums perfectly!
-        // CRUCIAL: The (?!\s*d) ensures we DO NOT touch Fireball's min(10, @cl)d60!
-        res = res.replace(/(min|max)\((\d+),\s*(@[a-zA-Z0-9_.]+)\)(?!\s*d)/gi, (m, func, num, variable) => {
+        // 2a. Exact Match for Capped Healing/Damage: min(5, @cl) -> min(50, (@cl * 10))
+        // The lookahead (?![^+-]*\d*d\d+) ensures we NEVER touch variables acting as a dice pool limit!
+        res = res.replace(/(min|max)\((\d+),\s*(@[a-zA-Z0-9_.]+)\)(?![^+-]*\d*d\d+)/gi, (m, func, num, variable) => {
             return `${func}(${Number(num) * 10}, (${variable} * 10))`;
         });
 
+        // 2b. Exact Match for reversed caps: min(@cl, 5) -> min((@cl * 10), 50)
+        // (Just in case a spell is written backward in the system!)
+        res = res.replace(/(min|max)\((@[a-zA-Z0-9_.]+),\s*(\d+)\)(?![^+-]*\d*d\d+)/gi, (m, func, variable, num) => {
+            return `${func}((${variable} * 10), ${Number(num) * 10})`;
+        });
+
         // 3. Exact Match for uncapped Flat Variables: + @cl -> + (@cl * 10)
-        // (E.g., for spells or items that just add your raw caster level to damage)
-        res = res.replace(/([-+]\s*)(@[a-zA-Z0-9_.]+)(?!\s*d)/gi, (m, sign, variable) => {
+        // Includes variables at the very beginning of a string (^)
+        res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(?![^+-]*\d*d\d+)/gi, (m, sign, variable) => {
             return `${sign}(${variable} * 10)`;
         });
 
         // 4. Scale flat integer bonuses: + 1 -> + 10, - 2 -> - 20
-        // Only touches standalone numbers preceded by + or -
-        res = res.replace(/([-+]\s*)(\d+)(?!\s*d)/gi, (m, sign, num) => {
+        res = res.replace(/(^|[-+]\s*)(\d+)(?![^+-]*\d*d\d+)/gi, (m, sign, num) => {
             return `${sign}${Number(num) * 10}`;
         });
         
