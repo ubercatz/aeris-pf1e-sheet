@@ -101,35 +101,100 @@ Hooks.once("init", () => {
       const scaleCL = (f) => {
         if (typeof f !== "string") return f;
         let res = f;
-        
-        // 1. Scale standard dice faces (1d6 -> 1d60, d8 -> d80). 
-        res = res.replace(/(\d*)d(\d+)/gi, (m, count, faces) => {
-            return Number(faces) <= 20 ? `${count || ""}d${Number(faces) * 10}` : m;
+        let pId = 0;
+        let placeholders = {};
+
+        // Helper: Hides successfully scaled dice/pools so later math passes CANNOT touch them
+        const hide = (str) => {
+            const key = `__PF1AR_${pId++}__`;
+            placeholders[key] = str;
+            return key;
+        };
+
+        // ========================================================================
+        // PRONG 1: EXPLICIT CAPPED DICE POOLS (e.g., Fireball, Snowball)
+        // Scales the dice faces to 10x, but KEEPS the limits and variables standard!
+        // ========================================================================
+
+        // 1a. Standard Pool: min(10, @cl)d6 -> min(10, @cl)d60
+        res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)\s*d(\d+)/gi, (m, func, num, variable, faces) => {
+            return hide(`${func}(${num}, ${variable})d${Number(faces) * 10}`);
         });
 
-        // 2a. Exact Match for Capped Healing/Damage: min(5, @cl) -> min(50, (@cl * 10))
-        // The lookahead (?![^+-]*\d*d\d+) ensures we NEVER touch variables acting as a dice pool limit!
-        res = res.replace(/(min|max)\((\d+),\s*(@[a-zA-Z0-9_.]+)\)(?![^+-]*\d*d\d+)/gi, (m, func, num, variable) => {
+        // 1b. Outer Parens: (min(10, @cl))d6 -> (min(10, @cl))d60
+        res = res.replace(/\(\s*(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)\s*\)\s*d(\d+)/gi, (m, func, num, variable, faces) => {
+            return hide(`(${func}(${num}, ${variable}))d${Number(faces) * 10}`);
+        });
+
+        // 1c. Multiplied Pool: (min(10, @cl)) * 1d6 -> (min(10, @cl)) * 1d60
+        res = res.replace(/\(\s*(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)\s*\)\s*\*\s*(\d*)d(\d+)/gi, (m, func, num, variable, count, faces) => {
+            return hide(`(${func}(${num}, ${variable})) * ${count || ""}d${Number(faces) * 10}`);
+        });
+        res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)\s*\*\s*(\d*)d(\d+)/gi, (m, func, num, variable, count, faces) => {
+            return hide(`${func}(${num}, ${variable}) * ${count || ""}d${Number(faces) * 10}`);
+        });
+
+        // 1d. Reversed limits: min(@cl, 10)d6 -> min(@cl, 10)d60
+        res = res.replace(/(min|max)\(\s*(@[a-zA-Z0-9_.]+)\s*,\s*(\d+)\s*\)\s*d(\d+)/gi, (m, func, variable, num, faces) => {
+            return hide(`${func}(${variable}, ${num})d${Number(faces) * 10}`);
+        });
+
+        // 1e. Fractional levels: floor(@cl/2)d6 -> floor(@cl/2)d60
+        res = res.replace(/(floor|ceil)\(\s*(@[a-zA-Z0-9_.]+)\s*\/\s*(\d+)\s*\)\s*d(\d+)/gi, (m, func, variable, div, faces) => {
+            return hide(`${func}(${variable}/${div})d${Number(faces) * 10}`);
+        });
+        res = res.replace(/\(\s*(floor|ceil)\(\s*(@[a-zA-Z0-9_.]+)\s*\/\s*(\d+)\s*\)\s*\)\s*d(\d+)/gi, (m, func, variable, div, faces) => {
+            return hide(`(${func}(${variable}/${div}))d${Number(faces) * 10}`);
+        });
+
+        // 1f. Uncapped variable pools: @cl d6 -> @cl d60
+        res = res.replace(/(@[a-zA-Z0-9_.]+)\s*d(\d+)/gi, (m, variable, faces) => {
+            return hide(`${variable}d${Number(faces) * 10}`);
+        });
+
+        // ========================================================================
+        // PRONG 2: ISOLATE STANDARD DICE
+        // Temporarily hides generic dice (1d8, 4d6) so flat math ignores them.
+        // ========================================================================
+        res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, count, faces) => {
+            let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
+            return hide(`${count || ""}d${scaledFaces}`);
+        });
+
+        // ========================================================================
+        // PRONG 3: EXPLICIT FLAT MATH (e.g., Cure Light Wounds)
+        // Since all dice are safely hidden, we can scale BOTH the cap and variable!
+        // ========================================================================
+        
+        // Matches: min(5, @cl) -> min(50, (@cl * 10))
+        res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)/gi, (m, func, num, variable) => {
             return `${func}(${Number(num) * 10}, (${variable} * 10))`;
         });
-
-        // 2b. Exact Match for reversed caps: min(@cl, 5) -> min((@cl * 10), 50)
-        // (Just in case a spell is written backward in the system!)
-        res = res.replace(/(min|max)\((@[a-zA-Z0-9_.]+),\s*(\d+)\)(?![^+-]*\d*d\d+)/gi, (m, func, variable, num) => {
+        
+        // Matches Reversed: min(@cl, 5) -> min((@cl * 10), 50)
+        res = res.replace(/(min|max)\(\s*(@[a-zA-Z0-9_.]+)\s*,\s*(\d+)\s*\)/gi, (m, func, variable, num) => {
             return `${func}((${variable} * 10), ${Number(num) * 10})`;
         });
 
-        // 3. Exact Match for uncapped Flat Variables: + @cl -> + (@cl * 10)
-        // Includes variables at the very beginning of a string (^)
-        res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(?![^+-]*\d*d\d+)/gi, (m, sign, variable) => {
+        // ========================================================================
+        // PRONG 4: STANDALONE FLAT VARIABLES AND INTEGERS (+ @cl or + 1)
+        // ========================================================================
+        res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)/gi, (m, sign, variable) => {
             return `${sign}(${variable} * 10)`;
         });
 
-        // 4. Scale flat integer bonuses: + 1 -> + 10, - 2 -> - 20
-        res = res.replace(/(^|[-+]\s*)(\d+)(?![^+-]*\d*d\d+)/gi, (m, sign, num) => {
+        res = res.replace(/(^|[-+]\s*)(\d+)\b/gi, (m, sign, num) => {
             return `${sign}${Number(num) * 10}`;
         });
-        
+
+        // ========================================================================
+        // PRONG 5: RESTORE PLACEHOLDERS
+        // Puts the safely scaled Fireball and Standard Dice back into the string!
+        // ========================================================================
+        for (const [key, val] of Object.entries(placeholders)) {
+            res = res.replace(key, val);
+        }
+
         return res;
       };
       //end scaleCL
