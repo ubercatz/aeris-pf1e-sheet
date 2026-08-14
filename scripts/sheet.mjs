@@ -644,7 +644,6 @@ export class AltCharacterSheetPF extends pf1.applications.actor.ActorSheetPFChar
     // NOTE: I see you added this back in your uploaded file! 
     // Keep an eye out for double-dipping (e.g. 1d600 instead of 1d60) 
     // since main.mjs is already scaling the data behind the scenes.
-    _apply10xVisuals(this, data); 
 
     return data;
   }
@@ -756,7 +755,7 @@ export class AltNPCSheetPF extends pf1.applications.actor.ActorSheetPFNPC {
     // NOTE: I see you added this back in your uploaded file! 
     // Keep an eye out for double-dipping (e.g. 1d600 instead of 1d60) 
     // since main.mjs is already scaling the data behind the scenes.
-    _apply10xVisuals(this, data); 
+    
 
     return data;
   }
