@@ -79,44 +79,13 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
- // 1. Core Dice Evaluator: Safely scales dice AND Critical/Fumble thresholds
+  // 1. Core Dice Evaluator: Safely scales dice right before they roll (Faces: 1d20 -> 1d200)
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
-        
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
-
-          // Scale Foundry's string modifiers (e.g., "cs>=19" -> "cs>=181")
-          if (term.modifiers && term.modifiers.length > 0) {
-              for (let i = 0; i < term.modifiers.length; i++) {
-                  term.modifiers[i] = term.modifiers[i].replace(/(c[sf])([<>=]*)(\d+)/i, (match, type, op, numStr) => {
-                      let num = parseInt(numStr, 10);
-                      if (num <= 20) {
-                          if (type.toLowerCase() === 'cs') {
-                              // Math: 20 -> 191 (10 faces), 19 -> 181 (20 faces)
-                              return `${type}${op}${num * 10 - 9}`;
-                          } else if (type.toLowerCase() === 'cf') {
-                              // Fumbles: Nat 1 -> 10 (Rolls 1 through 10 trigger failure)
-                              return `${type}${op}${num * 10}`;
-                          }
-                      }
-                      return match;
-                  });
-              }
-          }
-
-          // Scale Foundry's numeric options just in case PF1e scripts bypass the string modifiers
-          if (term.options) {
-              if (term.options.critical !== undefined && term.options.critical <= 20) {
-                  term.options.critical = (term.options.critical * 10) - 9;
-              }
-              if (term.options.fumble !== undefined && term.options.fumble <= 20) {
-                  term.options.fumble = term.options.fumble * 10;
-              }
-          }
-
-          term._pf1arScaled = true;
+          term._pf1arScaled = true; 
         }
       }
     }
@@ -257,14 +226,27 @@ Hooks.once("init", () => {
       if (this.system?.actions && this._source?.system?.actions) {
         this.system.actions.forEach((action, i) => {
           const srcAction = this._source.system.actions[i];
+          
+          // 1. Scale Damage Formulas safely
           if (srcAction && action.damage?.parts) {
             action.damage.parts.forEach((part, j) => {
               const srcFormula = srcAction.damage.parts[j]?.formula;
               if (srcFormula) part.formula = scaleCL(String(srcFormula));
             });
           }
+
+          // ========================================================================
+          // SMART CRITICAL THREAT CONVERSION
+          // Only touches base PF1e ranges (20, 19, 18). 
+          // If you type "100" or "185", it ignores it completely!
+          // ========================================================================
+          if (action.critRange !== undefined && action.critRange > 0 && action.critRange <= 20) {
+             // Math: 20 -> 191, 19 -> 181, 18 -> 171
+             action.critRange = (action.critRange * 10) - 9;
+          }
         });
       }
+      
     }
   }, "WRAPPER");
 // 3. System-Wide Ability Modifier Interception
