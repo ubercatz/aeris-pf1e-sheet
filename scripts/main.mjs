@@ -79,29 +79,28 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Core Dice Evaluator: The Unified Math Engine
+// 1. Core Dice Evaluator: The Unified Math Engine
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && !this._pf1arScaled) {
         this._pf1arScaled = true;
 
         // ========================================================================
-        // 1. SCALE THE MASTER ROLL OPTIONS
-        // This is the Missing Link! PF1e Chat Cards look here to flag "Ghost Crits".
+        // 1. SCALE THE MASTER ROLL OPTIONS (Fixes Chat Cards & Ghost Crits)
         // ========================================================================
         if (!this.options) this.options = {};
         
-        // Scale Crits: Safely converts <=20, respects GM custom 185s, handles Spell blanks
+        // Scale Crits natively (Default to 191 for Spells)
         if (this.options.critical !== undefined && this.options.critical <= 20) {
             this.options.critical = (this.options.critical * 10) - 9;
         } else if (this.options.critical === undefined) {
-            this.options.critical = 191; // Fallback for Spells
+            this.options.critical = 191; 
         }
 
-        // Scale Fumbles: Safely converts <=20, respects GM custom entries, handles Spell blanks
+        // Scale Fumbles natively (Default to 10 for Spells)
         if (this.options.fumble !== undefined && this.options.fumble <= 20) {
             this.options.fumble = this.options.fumble * 10;
         } else if (this.options.fumble === undefined) {
-            this.options.fumble = 10; // Fallback for Spells
+            this.options.fumble = 10; 
         }
 
         // ========================================================================
@@ -113,10 +112,7 @@ Hooks.once("init", () => {
                 term.faces *= 10;
 
                 if (isD20) {
-                    let cs = this.options.critical;
-                    let cf = this.options.fumble;
-
-                    // Cleanly wipe any old crit/fumble strings so they NEVER duplicate
+                    // Strip out old cs/cf strings to completely prevent duplicates
                     if (term.modifiers && Array.isArray(term.modifiers)) {
                         term.modifiers = term.modifiers.filter(m => typeof m === "string" && !/^c[sf]/i.test(m));
                     } else {
@@ -124,14 +120,14 @@ Hooks.once("init", () => {
                     }
 
                     // Inject exactly one pristine 10x string
-                    term.modifiers.push(`cs>=${cs}`);
-                    term.modifiers.push(`cf<=${cf}`);
+                    term.modifiers.push(`cs>=${this.options.critical}`);
+                    term.modifiers.push(`cf<=${this.options.fumble}`);
 
                     // Sync the internal Die options
                     if (!term.options) term.options = {};
-                    term.options.critical = cs;
-                    term.options.fumble = cf;
-                    term.options.target = cs;
+                    term.options.critical = this.options.critical;
+                    term.options.fumble = this.options.fumble;
+                    term.options.target = this.options.critical;
                 } else {
                     // Standard scaling for damage dice faces (d6 -> d60)
                     if (term.modifiers && Array.isArray(term.modifiers)) {
@@ -144,15 +140,11 @@ Hooks.once("init", () => {
                         });
                     }
                 }
-
-                // Force Foundry to regenerate the visual string for this die
-                delete term.expression;
-                delete term.formula;
             }
         }
 
-        // 3. Rebuild the master formula to safely update the Chat Card UI
-        this._formula = this.terms.map(t => t.formula || t.expression || "").join("");
+        // 3. Safely rebuild the formula text for the UI so the dice actually roll!
+        this._formula = this.constructor.getFormula(this.terms);
     }
 
     // Always return safely via the async promise chain!
