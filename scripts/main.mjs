@@ -236,13 +236,24 @@ Hooks.once("init", () => {
           }
 
           // ========================================================================
-          // SMART CRITICAL THREAT CONVERSION
-          // Only touches base PF1e ranges (20, 19, 18). 
-          // If you type "100" or "185", it ignores it completely!
           // ========================================================================
-          if (action.critRange !== undefined && action.critRange > 0 && action.critRange <= 20) {
+          // SMART CRITICAL THREAT CONVERSION
+          // Ensures default 20s (which are secretly blank in the database) are caught!
+          // ========================================================================
+          
+          // 1. Grab the range. If it's a default weapon, it will be undefined or blank.
+          let cRange = action.critRange;
+          if (cRange === undefined || cRange === null || cRange === "") {
+              cRange = 20;
+          } else {
+              cRange = Number(cRange);
+          }
+
+          // 2. Only convert base PF1e ranges (1 through 20). 
+          // If you gave a custom sword a massive 185 range, it ignores this step!
+          if (!isNaN(cRange) && cRange > 0 && cRange <= 20) {
              // Math: 20 -> 191, 19 -> 181, 18 -> 171
-             action.critRange = (action.critRange * 10) - 9;
+             action.critRange = (cRange * 10) - 9;
           }
         });
       }
