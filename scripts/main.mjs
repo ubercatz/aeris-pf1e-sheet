@@ -88,32 +88,21 @@ Hooks.once("init", () => {
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
 
-          // ========================================================================
-          // UNIVERSAL FUMBLE INJECTOR (Safely forces 1-10 on all d200 rolls)
-          // ========================================================================
-          if (term.faces === 200 && Array.isArray(term.modifiers)) { 
-              let hasCF = false;
-              
-              // 1. Catch and scale explicit "cf1" modifiers IN-PLACE
+          // 1. Catch the default string for weapons and scale it safely
+          if (term.modifiers && term.modifiers.length > 0) {
               for (let i = 0; i < term.modifiers.length; i++) {
-                  if (typeof term.modifiers[i] === "string") {
-                      if (/^cf[<=]*1$/i.test(term.modifiers[i])) {
-                          term.modifiers[i] = "cf<=10";
-                          hasCF = true;
-                      } else if (/^cf/i.test(term.modifiers[i])) {
-                          hasCF = true; // Respects custom fumbles if they exist
-                      }
+                  if (/^cf[<=]*1$/i.test(term.modifiers[i])) {
+                      term.modifiers[i] = "cf<=10";
                   }
               }
-              
-              // 2. Spells & Skills often have blank arrays. Safely push if missing!
-              if (!hasCF) term.modifiers.push("cf<=10");
-
-              // 3. Force the Chat Card to highlight dark red (without destroying the object)!
-              if (term.options) {
-                  term.options.fumble = 10;
-              }
           }
+
+          // 2. THE STEP BACK FIX: Ignore arrays completely. 
+          // If it is a d200, force the internal dictionary to treat 1-10 as a fumble.
+          if (term.options && term.faces === 200) {
+              term.options.fumble = 10;
+          }
+
           term._pf1arScaled = true;
         }
       }
