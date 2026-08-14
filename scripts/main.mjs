@@ -79,13 +79,52 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Core Dice Evaluator: Safely scales dice right before they roll (Faces: 1d20 -> 1d200)
+  // 1. Core Dice Evaluator: Safely scales dice AND dynamically generated Critical/Fumble thresholds
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
+        
+        // Catch standard d20s (and other base dice like d6, d8)
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
-          term._pf1arScaled = true; 
+
+          // Scale Foundry's string modifiers (which ItemAction dynamically generated!)
+          if (term.modifiers && term.modifiers.length > 0) {
+            term.modifiers = term.modifiers.map(mod => {
+              return mod.replace(/(c[sf])([<>=]*)(\d+)/i, (match, type, op, numStr) => {
+                let num = parseInt(numStr, 10);
+                
+                // The Magic Check: ONLY convert standard PF1e ranges (1-20). 
+                // If you give a weapon a granular 185 threat, it naturally ignores this!
+                if (num > 0 && num <= 20) {
+                  if (type.toLowerCase() === 'cs') {
+                     // Critical Success: "cs>=19" -> "cs>=181"
+                     // If the system just sent "cs20", we default to ">=" to ensure safe math
+                     let newOp = op || ">=";
+                     return `cs${newOp}${num * 10 - 9}`;
+                  } else if (type.toLowerCase() === 'cf') {
+                     // Critical Fumble: "cf1" -> "cf<=10"
+                     // Forces the operator to "<=" so rolls of 1 through 10 all fail!
+                     let newOp = op || "<=";
+                     return `cf${newOp}${num * 10}`;
+                  }
+                }
+                return match; // Returns custom 185s completely untouched
+              });
+            });
+          }
+
+          // Fallback for direct numeric options just in case PF1e bypasses strings
+          if (term.options) {
+              if (term.options.critical !== undefined && term.options.critical <= 20) {
+                  term.options.critical = (term.options.critical * 10) - 9;
+              }
+              if (term.options.fumble !== undefined && term.options.fumble <= 20) {
+                  term.options.fumble = term.options.fumble * 10;
+              }
+          }
+
+          term._pf1arScaled = true;
         }
       }
     }
@@ -238,23 +277,8 @@ Hooks.once("init", () => {
           // ========================================================================
           // ========================================================================
           // SMART CRITICAL THREAT CONVERSION
-          // Ensures default 20s (which are secretly blank in the database) are caught!
-          // ========================================================================
           
-          // 1. Grab the range. If it's a default weapon, it will be undefined or blank.
-          let cRange = action.critRange;
-          if (cRange === undefined || cRange === null || cRange === "") {
-              cRange = 20;
-          } else {
-              cRange = Number(cRange);
-          }
-
-          // 2. Only convert base PF1e ranges (1 through 20). 
-          // If you gave a custom sword a massive 185 range, it ignores this step!
-          if (!isNaN(cRange) && cRange > 0 && cRange <= 20) {
-             // Math: 20 -> 191, 19 -> 181, 18 -> 171
-             action.critRange = (cRange * 10) - 9;
-          }
+          
         });
       }
       
