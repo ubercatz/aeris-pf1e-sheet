@@ -79,86 +79,32 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Core Dice Evaluator: The Ultimate Sanitizer (Stops duplicate strings natively)
+  // 1. Core Dice Evaluator: Safely scales dice faces and updates Fumbles
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
         
-        // Catch standard d20s (and other base dice like d6, d8)
+        // Only touch standard base dice (d20, d6, d8, etc.)
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
-          let originalFaces = term.faces;
           term.faces *= 10;
 
-          if (originalFaces === 20) {
-              let newMods = [];
-              let finalCS = 191; // Default 10x Crit
-              let finalCF = 10;  // Default 10x Fumble
-
-              // 1. Strip out ALL existing cs and cf modifiers to prevent duplicates!
-              if (term.modifiers && term.modifiers.length > 0) {
-                  for (let mod of term.modifiers) {
-                      let match = mod.match(/(c[sf])([<>=]*)(\d+)/i);
-                      if (match) {
-                          let type = match[1].toLowerCase();
-                          let num = parseInt(match[3], 10);
-                          
-                          // Capture the intended limits
-                          if (num > 0 && num <= 20) {
-                              if (type === 'cs') finalCS = num * 10 - 9;
-                              if (type === 'cf') finalCF = num * 10;
-                          } else {
-                              // Respect manually entered granular values like 185
-                              if (type === 'cs') finalCS = num;
-                              if (type === 'cf') finalCF = num;
-                          }
-                      } else {
-                          // Keep non-crit/fumble modifiers (like 'kh1' for advantage)
-                          newMods.push(mod);
-                      }
+          // Phase 2 (prepareBaseData) natively handles all Critical Threats now!
+          // We only need to catch the default Fumble (cf1) and scale it (cf<=10)
+          if (term.modifiers && term.modifiers.length > 0) {
+              for (let i = 0; i < term.modifiers.length; i++) {
+                  if (/^cf[<=]*1$/i.test(term.modifiers[i])) {
+                      term.modifiers[i] = "cf<=10";
                   }
-              }
-
-              // 2. Inject exactly ONE pristine Critical and Fumble modifier
-              newMods.push(`cs>=${finalCS}`);
-              newMods.push(`cf<=${finalCF}`);
-
-              // 3. Overwrite the messy Foundry array
-              term.modifiers = newMods;
-          } else {
-              // For non-d20s, scale cleanly without sanitizing
-              if (term.modifiers && term.modifiers.length > 0) {
-                  term.modifiers = term.modifiers.map(mod => {
-                      return mod.replace(/(c[sf])([<>=]*)(\d+)/i, (match, type, op, numStr) => {
-                          let num = parseInt(numStr, 10);
-                          if (num > 0 && num <= 20) {
-                              if (type.toLowerCase() === 'cs') return `cs${op || ">="}${num * 10 - 9}`;
-                              if (type.toLowerCase() === 'cf') return `cf${op || "<="}${num * 10}`;
-                          }
-                          return match;
-                      });
-                  });
               }
           }
 
-          // Sync internal numeric options
-          if (term.options) {
-              if (term.options.critical !== undefined && term.options.critical <= 20) {
-                  term.options.critical = (term.options.critical * 10) - 9;
-              }
-              if (term.options.fumble !== undefined && term.options.fumble <= 20) {
-                  term.options.fumble = term.options.fumble * 10;
-              }
+          // Update the hidden numeric options just in case
+          if (term.options && term.options.fumble === 1) {
+              term.options.fumble = 10;
           }
 
           term._pf1arScaled = true;
         }
-      }
-      
-      // 4. Force Foundry to erase the duplicate strings from the chat formula UI!
-      if (typeof this.resetFormula === "function") {
-          this.resetFormula();
-      } else {
-          this._formula = this.terms.map(t => t.formula).join(" ");
       }
     }
     return wrapped(...args);
