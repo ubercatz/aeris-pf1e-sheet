@@ -79,39 +79,46 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Core Dice Evaluator: Safely scales dice AND dynamically generated Critical/Fumble thresholds
+  // 1. Core Dice Evaluator: Safely scales dice and FORCES Critical/Fumble thresholds
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
         
         // Catch standard d20s (and other base dice like d6, d8)
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
+          let originalFaces = term.faces;
           term.faces *= 10;
 
-          // Scale Foundry's string modifiers (which ItemAction dynamically generated!)
+          let hasCS = false;
+          let hasCF = false;
+
+          // 1. Scale existing Foundry string modifiers (if PF1e explicitly provided them)
           if (term.modifiers && term.modifiers.length > 0) {
             term.modifiers = term.modifiers.map(mod => {
+              if (mod.toLowerCase().startsWith('cs')) hasCS = true;
+              if (mod.toLowerCase().startsWith('cf')) hasCF = true;
+
               return mod.replace(/(c[sf])([<>=]*)(\d+)/i, (match, type, op, numStr) => {
                 let num = parseInt(numStr, 10);
                 
-                // The Magic Check: ONLY convert standard PF1e ranges (1-20). 
-                // If you give a weapon a granular 185 threat, it naturally ignores this!
+                // ONLY convert standard PF1e ranges (1-20). 
                 if (num > 0 && num <= 20) {
-                  if (type.toLowerCase() === 'cs') {
-                     // Critical Success: "cs>=19" -> "cs>=181"
-                     // If the system just sent "cs20", we default to ">=" to ensure safe math
-                     let newOp = op || ">=";
-                     return `cs${newOp}${num * 10 - 9}`;
-                  } else if (type.toLowerCase() === 'cf') {
-                     // Critical Fumble: "cf1" -> "cf<=10"
-                     // Forces the operator to "<=" so rolls of 1 through 10 all fail!
-                     let newOp = op || "<=";
-                     return `cf${newOp}${num * 10}`;
-                  }
+                  if (type.toLowerCase() === 'cs') return `cs${op || ">="}${num * 10 - 9}`;
+                  if (type.toLowerCase() === 'cf') return `cf${op || "<="}${num * 10}`;
                 }
-                return match; // Returns custom 185s completely untouched
+                return match; 
               });
             });
+          } else {
+             // If modifiers is completely empty, initialize it so we can push to it!
+             term.modifiers = [];
+          }
+
+          // 2. THE FORCE INJECT: If it was a d20 and PF1e forgot the modifiers,
+          // force inject our 10x granular Fumbles (<=10) and Crits (>=191)!
+          if (originalFaces === 20) {
+             if (!hasCS) term.modifiers.push("cs>=191");
+             if (!hasCF) term.modifiers.push("cf<=10");
           }
 
           // Fallback for direct numeric options just in case PF1e bypasses strings
@@ -130,7 +137,6 @@ Hooks.once("init", () => {
     }
     return wrapped(...args);
   }, "WRAPPER");
-
   // 2. Item Base Data: Armor, ACP, Enhancements, and Smart Formula Scaling
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareBaseData", function (wrapped, ...args) {
     wrapped(...args); 
@@ -273,7 +279,29 @@ Hooks.once("init", () => {
               if (srcFormula) part.formula = scaleCL(String(srcFormula));
             });
           }
+// ========================================================================
+          // SYSTEM CHAT CARD SYNC (The "Ghost Crit" Fix)
+          // Forces the base system to recognize 191+ as the baseline for all actions
+          // ========================================================================
+          
+          // actionType checks if this action involves attacks, saves, healing, etc.
+          if (action.actionType) {
+              let cRange = action.critRange;
+              
+              // Spells and default weapons are secretly blank in the database!
+              // We catch those blanks and explicitly assign them the default 20.
+              if (cRange === undefined || cRange === null || cRange === "") {
+                  cRange = 20; 
+              } else {
+                  cRange = Number(cRange);
+              }
 
+              // Only convert standard PF1e ranges (1-20). Respects GM's granular buffs!
+              if (!isNaN(cRange) && cRange > 0 && cRange <= 20) {
+                  // Math: 20 -> 191, 19 -> 181
+                  action.critRange = (cRange * 10) - 9;
+              }
+          }
           // ========================================================================
           // ========================================================================
           // SMART CRITICAL THREAT CONVERSION
