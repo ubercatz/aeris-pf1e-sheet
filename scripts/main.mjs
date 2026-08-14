@@ -79,89 +79,84 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-// 1. Core Dice Evaluator: Crash-Proof Universal Scaling
-  libWrapper.register(MODULE_ID, "Roll.prototype.evaluate", function(wrapped, options) {
-    try {
-        if (game.settings.get(MODULE_ID, "enable10xGranularity") && !this._pf1arScaled) {
-            
-            for (let term of this.terms) {
-                // Safely catch standard d20s, d6s, etc.
-                if (term.faces && term.faces <= 20) {
-                    term.faces *= 10;
-                    let isD20 = (term.faces === 200); // We just multiplied it!
-                    
-                    let newMods = [];
-                    let hasCS = false;
-                    let hasCF = false;
-                    
-                    // 1. Safely parse existing modifiers without duplicating or crashing
+  // 1. Core Dice Evaluator: The Unified Math Engine
+  libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
+    if (game.settings.get(MODULE_ID, "enable10xGranularity") && !this._pf1arScaled) {
+        this._pf1arScaled = true;
+
+        // ========================================================================
+        // 1. SCALE THE MASTER ROLL OPTIONS
+        // This is the Missing Link! PF1e Chat Cards look here to flag "Ghost Crits".
+        // ========================================================================
+        if (!this.options) this.options = {};
+        
+        // Scale Crits: Safely converts <=20, respects GM custom 185s, handles Spell blanks
+        if (this.options.critical !== undefined && this.options.critical <= 20) {
+            this.options.critical = (this.options.critical * 10) - 9;
+        } else if (this.options.critical === undefined) {
+            this.options.critical = 191; // Fallback for Spells
+        }
+
+        // Scale Fumbles: Safely converts <=20, respects GM custom entries, handles Spell blanks
+        if (this.options.fumble !== undefined && this.options.fumble <= 20) {
+            this.options.fumble = this.options.fumble * 10;
+        } else if (this.options.fumble === undefined) {
+            this.options.fumble = 10; // Fallback for Spells
+        }
+
+        // ========================================================================
+        // 2. SCALE THE INDIVIDUAL DICE TERMS
+        // ========================================================================
+        for (let term of this.terms) {
+            if (term.faces && term.faces <= 20) {
+                let isD20 = (term.faces === 20);
+                term.faces *= 10;
+
+                if (isD20) {
+                    let cs = this.options.critical;
+                    let cf = this.options.fumble;
+
+                    // Cleanly wipe any old crit/fumble strings so they NEVER duplicate
                     if (term.modifiers && Array.isArray(term.modifiers)) {
-                        for (let mod of term.modifiers) {
-                            if (typeof mod !== "string") {
-                                newMods.push(mod); // Catch weird objects cleanly
-                                continue;
-                            }
-                            
-                            let matchCS = mod.match(/^(cs)([<>=]*)(\d+)$/i);
-                            let matchCF = mod.match(/^(cf)([<>=]*)(\d+)$/i);
-                            
-                            if (matchCS) {
-                                hasCS = true;
-                                let num = parseInt(matchCS[3], 10);
-                                // Scale default ranges (1-20). Respect GM homebrew (185).
-                                if (num > 0 && num <= 20) {
-                                    newMods.push(`cs${matchCS[2] || ">="}${(num * 10) - 9}`);
-                                } else {
-                                    newMods.push(mod);
-                                }
-                            } else if (matchCF) {
-                                hasCF = true;
-                                let num = parseInt(matchCF[3], 10);
-                                if (num > 0 && num <= 20) {
-                                    newMods.push(`cf${matchCF[2] || "<="}${num * 10}`);
-                                } else {
-                                    newMods.push(mod);
-                                }
-                            } else {
-                                newMods.push(mod); // Keep non-crit modifiers (kh1, etc)
-                            }
-                        }
+                        term.modifiers = term.modifiers.filter(m => typeof m === "string" && !/^c[sf]/i.test(m));
+                    } else {
+                        term.modifiers = [];
                     }
-                    
-                    // 2. Force inject for Spells! (Because spells often send blank dice)
-                    if (isD20) {
-                        if (!hasCS) newMods.push("cs>=191");
-                        if (!hasCF) newMods.push("cf<=10");
-                    }
-                    
-                    term.modifiers = newMods;
+
+                    // Inject exactly one pristine 10x string
+                    term.modifiers.push(`cs>=${cs}`);
+                    term.modifiers.push(`cf<=${cf}`);
+
+                    // Sync the internal Die options
                     if (!term.options) term.options = {};
-                    
-                    // 3. Guarantee PF1e Chat Cards read the correct math
-                    for (let mod of newMods) {
-                        let matchCS = mod.match(/^(cs)([<>=]*)(\d+)$/i);
-                        if (matchCS) term.options.critical = parseInt(matchCS[3], 10);
-                        
-                        let matchCF = mod.match(/^(cf)([<>=]*)(\d+)$/i);
-                        if (matchCF) term.options.fumble = parseInt(matchCF[3], 10);
+                    term.options.critical = cs;
+                    term.options.fumble = cf;
+                    term.options.target = cs;
+                } else {
+                    // Standard scaling for damage dice faces (d6 -> d60)
+                    if (term.modifiers && Array.isArray(term.modifiers)) {
+                        term.modifiers = term.modifiers.map(m => {
+                            if (typeof m !== "string") return m;
+                            return m.replace(/(c[sf])[<>=]*(\d+)/i, (match, p1, n) => {
+                                let v = parseInt(n, 10);
+                                return v <= 20 ? `${p1}${v * 10}` : match;
+                            });
+                        });
                     }
                 }
+
+                // Force Foundry to regenerate the visual string for this die
+                delete term.expression;
+                delete term.formula;
             }
-            
-            // 4. Safely rebuild the formula so the UI renders perfectly
-            if (this.terms && this.terms.length > 0) {
-                this._formula = this.constructor.getFormula(this.terms);
-            }
-            
-            this._pf1arScaled = true;
         }
-    } catch(error) {
-        // If anything breaks, log it but DO NOT crash the attack!
-        console.error("PF1AR | Error inside Roll Evaluator:", error);
+
+        // 3. Rebuild the master formula to safely update the Chat Card UI
+        this._formula = this.terms.map(t => t.formula || t.expression || "").join("");
     }
-    
-    // Always return the core Foundry process cleanly
-    return wrapped(options);
+
+    // Always return safely via the async promise chain!
+    return wrapped(...args);
   }, "WRAPPER");
   // 2. Item Base Data: Armor, ACP, Enhancements, and Smart Formula Scaling
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareBaseData", function (wrapped, ...args) {
