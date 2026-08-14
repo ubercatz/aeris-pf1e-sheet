@@ -102,22 +102,25 @@ Hooks.once("init", () => {
         if (typeof f !== "string") return f;
         let res = f;
         
-        // Scale standard dice faces (d6 -> d60). Preserves empty prefixes.
+        // 1. Scale standard dice faces (1d8 -> 1d80). Preserves empty prefixes.
         res = res.replace(/(\d*)d(\d+)/gi, (m, c, fcs) => {
             return Number(fcs) <= 20 ? `${c || ""}d${Number(fcs) * 10}` : m;
         });
         
-        // Safer flat integer scaling: only hits isolated numbers preceded by + or -
-        // Avoids breaking complex Foundry @formulas or function calls
-        res = res.replace(/(?:^|[+-])\s*(?<![@a-zA-Z])\b(\d+)\b(?!\s*[a-zA-Z])/gi, (m) => {
-            // Reconstruct the sign and the multiplied number cleanly
-            const isNegative = m.includes("-");
-            const num = parseInt(m.replace(/[^\d]/g, ''), 10);
-            return isNegative ? `- ${num * 10}` : `+ ${num * 10}`;
+        // 2. Scale Flat Constants (Matches numbers after +, -, *, /, or inside min/max functions)
+        // This natively catches the '5' inside min(5, @cl) and turns it into min(50, @cl)
+        res = res.replace(/(^|[-+,\(*\/]\s*)\b(\d+)\b(?!\s*[a-zA-Z])/gi, (m, prefix, num) => {
+            return `${prefix}${Number(num) * 10}`;
         });
+
+        // 3. Scale System Variables (Caster Level & Class Levels)
+        // Turns @cl into (@cl * 10) so the output natively matches the 10x engine
+        res = res.replace(/@cl\b/gi, '(@cl * 10)');
+        res = res.replace(/@classes\.[a-zA-Z0-9_]+\.level\b/gi, '($& * 10)');
         
         return res;
       };
+      //end scaleCL
 
       if (this.system?.armor) {
         if (this._source?.system?.armor?.value !== undefined) this.system.armor.value = Number(this._source.system.armor.value) * 10;
@@ -154,7 +157,27 @@ Hooks.once("init", () => {
     }
     return wrapped(score, ...args);
   }, "MIXED");
-
+// 5. Action DC Interception: Natively scale Spell and Ability Save DCs
+  libWrapper.register(MODULE_ID, "pf1.components.ItemAction.prototype.getDC", function(wrapped, ...args) {
+    let result = wrapped(...args);
+    
+    if (game.settings.get(MODULE_ID, "enable10xGranularity") && result != null) {
+      // Safely pull the spell level (defaults to 0 for non-spell actions like Ex/Su abilities)
+      const sl = this.spellLevel ?? this.item?.spellLevel ?? 0;
+      
+      // Calculate the difference needed to reach our 10x baseline
+      // Base 10 needs 90. Spell Level 1 needs 9. (Modifier is already 10x).
+      const bonus = 90 + (sl * 9);
+      
+      // The system sometimes returns an object and sometimes a raw number depending on the hook phase
+      if (typeof result === "number") {
+          result += bonus;
+      } else if (result.value !== undefined) {
+          result.value += bonus;
+      }
+    }
+    return result;
+  }, "WRAPPER");
   // 4. Actor Derived Data: Natively Scale BAB, AC, and Encumbrance
   libWrapper.register(MODULE_ID, "CONFIG.Actor.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args); 
