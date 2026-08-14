@@ -79,70 +79,68 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // Universal 10x Dice Evaluator: Handles Faces, Criticals, and Fumbles for ALL Rolls (Weapons & Spells)
+  // 1. Universal 10x Dice Evaluator: Safely handles Faces, Crits, and Fumbles
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
         
-        // Catch standard base d20s (and other base dice like d6, d8)
-        if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
+        // Ensure options exists so we can store our clone-resistant safety flag
+        if (!term.options) term.options = {};
+
+        // Only scale base dice that haven't been scaled yet
+        if (term.faces && term.faces <= 20 && !term.options._pf1arScaled) {
           let originalFaces = term.faces;
           term.faces *= 10;
 
           if (originalFaces === 20) {
-              let finalCS = 191; // Default 10x Crit (5% chance -> 191-200)
-              let finalCF = 10;  // Default 10x Fumble (5% chance -> 1-10)
-              let newMods = [];
+              let hasCS = false;
+              let hasCF = false;
 
-              // 1. Parse existing modifiers to preserve weapon improved crits (e.g., 19-20 -> 181)
+              // 1. Cleanly update existing modifiers (Absolutely NO SPACES allowed!)
               if (term.modifiers && term.modifiers.length > 0) {
-                  for (let mod of term.modifiers) {
-                      let match = mod.match(/(c[sf])([<>=]*)(\d+)/i);
-                      if (match) {
-                          let type = match[1].toLowerCase();
-                          let num = parseInt(match[3], 10);
-                          
-                          if (num > 0 && num <= 20) {
-                              if (type === 'cs') finalCS = (num * 10) - 9;
-                              if (type === 'cf') finalCF = num * 10;
-                          } else {
-                              // Respect custom granular entries
-                              if (type === 'cs') finalCS = num;
-                              if (type === 'cf') finalCF = num;
-                          }
-                      } else {
-                          newMods.push(mod); // Keep non-crit modifiers (like advantage)
+                  for (let i = 0; i < term.modifiers.length; i++) {
+                      let mod = term.modifiers[i];
+                      
+                      if (/^cs/i.test(mod)) {
+                          hasCS = true;
+                          term.modifiers[i] = mod.replace(/(cs)([<>=]*)(\d+)/i, (m, type, op, numStr) => {
+                              let num = parseInt(numStr, 10);
+                              return num <= 20 ? `cs${op || ">="}${(num * 10) - 9}` : m;
+                          });
+                      }
+                      
+                      if (/^cf/i.test(mod)) {
+                          hasCF = true;
+                          term.modifiers[i] = mod.replace(/(cf)([<>=]*)(\d+)/i, (m, type, op, numStr) => {
+                              let num = parseInt(numStr, 10);
+                              return num <= 20 ? `cf<=${num * 10}` : m;
+                          });
                       }
                   }
+              } else {
+                  term.modifiers = [];
               }
 
-              // 2. Inject pristine 10x modifiers for both spells and weapons uniformly
-              newMods.push(`cs>=${finalCS}`);
-              newMods.push(`cf<=${finalCF}`);
-              term.modifiers = newMods;
+              // 2. Force inject missing modifiers (Crucial for Spells!)
+              if (!hasCS) term.modifiers.push("cs>=191");
+              if (!hasCF) term.modifiers.push("cf<=10");
 
-              // 3. Force internal options so chat cards and UI badges obey the math
-              if (!term.options) term.options = {};
-              term.options.critical = finalCS;
-              term.options.fumble = finalCF;
+              // 3. Sync internal options so PF1e Chat Cards correctly confirm crits
+              if (term.options.critical !== undefined && term.options.critical <= 20) {
+                  term.options.critical = (term.options.critical * 10) - 9;
+              } else if (!hasCS) {
+                  term.options.critical = 191;
+              }
 
-          } else {
-              // Scale modifiers for damage dice (d6 -> d60, etc.)
-              if (term.modifiers && term.modifiers.length > 0) {
-                  term.modifiers = term.modifiers.map(mod => {
-                      return mod.replace(/(c[sf])([<>=]*)(\d+)/i, (match, type, op, numStr) => {
-                          let num = parseInt(numStr, 10);
-                          if (num > 0 && num <= 20) {
-                              if (type.toLowerCase() === 'cs') return `cs${op || " >= "}${num * 10 - 9}`;
-                              if (type.toLowerCase() === 'cf') return `cf${op || "<="}${num * 10}`;
-                          }
-                          return match;
-                      });
-                  });
+              if (term.options.fumble !== undefined && term.options.fumble <= 20) {
+                  term.options.fumble = term.options.fumble * 10;
+              } else if (!hasCF) {
+                  term.options.fumble = 10;
               }
           }
 
-          term._pf1arScaled = true;
+          // Lock this term! Storing it here allows it to survive Foundry's clone() method!
+          term.options._pf1arScaled = true;
         }
       }
     }
