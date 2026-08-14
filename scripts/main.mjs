@@ -423,47 +423,36 @@ Hooks.once("init", () => {
 // CHAT CARD INTERCEPTOR: The Visual Fumble Fix (1-10 on d200)
 // ========================================================================
 Hooks.on("renderChatMessage", (message, html, data) => {
-  // 1. Only run if our 10x Granularity Engine is turned on
   if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
-
-  // 2. Ensure the message actually contains dice rolls
   if (!message.rolls || message.rolls.length === 0) return;
 
-  let isFumble = false;
+  // 1. Safely wrap html to guarantee compatibility across Foundry V11 and V12
+  const $html = $(html); 
+  let fumbleColor = "#aa0200"; // Deep red
 
-  // 3. Scan the rolls. If we see a d200, check if it rolled a 10 or lower.
-  for (let roll of message.rolls) {
-      for (let term of roll.terms) {
-          if (term.faces === 200 && term.results) {
-              for (let res of term.results) {
-                  if (res.result <= 10) {
-                      isFumble = true;
-                  }
-              }
-          }
-      }
-  }
+  // 2. Target ONLY d200s inside the chat card tooltips
+  $html.find('li.roll.die.d200').each(function() {
+      let dieValue = parseInt($(this).text());
+      
+      // 3. If it rolled 1-10, it is definitively a Fumble
+      if (!isNaN(dieValue) && dieValue <= 10) {
+          
+          // A. Paint the tiny die inside the tooltip dropdown red
+          $(this).css({
+              'color': fumbleColor,
+              'font-weight': 'bold'
+          });
 
-  // 4. If a fumble was detected, force the HTML to highlight red!
-  if (isFumble) {
-      // Standard Foundry dice total
-      let diceTotal = html.find('.dice-total');
-      if (diceTotal.length > 0) {
-          diceTotal.addClass('fumble').removeClass('critical');
+          // B. Traverse up to find the container for THIS specific roll only.
+          // This ensures full-attacks don't accidentally paint successful hits red!
+          let $rollContainer = $(this).closest('.dice-roll, .pf1-roll, .attack-roll, .item-card');
+
+          // C. Force the main total box to turn red with a slight glow
+          $rollContainer.find('.dice-total, .roll-total, h4.total').css({
+              'color': fumbleColor,
+              'text-shadow': '0 0 4px rgba(170, 2, 0, 0.3)',
+              'font-weight': 'bold'
+          });
       }
-      
-      // PF1e specific attack roll totals
-      let pf1Total = html.find('.roll-total');
-      if (pf1Total.length > 0) {
-          pf1Total.addClass('fumble').removeClass('critical');
-      }
-      
-      // Paint the specific die inside the tooltip dropdown dark red
-      html.find('li.roll.die.d200').each(function() {
-          let dieValue = parseInt($(this).text());
-          if (!isNaN(dieValue) && dieValue <= 10) {
-              $(this).addClass('fumble').removeClass('max');
-          }
-      });
-  }
+  });
 });
