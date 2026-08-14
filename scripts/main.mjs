@@ -88,7 +88,8 @@ Hooks.once("init", () => {
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
 
-          // 1. Catch the default string for weapons and scale it safely
+          // Phase 2 (prepareBaseData) natively handles all Critical Threats now!
+          // We only need to catch the default Fumble (cf1) and scale it (cf<=10)
           if (term.modifiers && term.modifiers.length > 0) {
               for (let i = 0; i < term.modifiers.length; i++) {
                   if (/^cf[<=]*1$/i.test(term.modifiers[i])) {
@@ -97,9 +98,8 @@ Hooks.once("init", () => {
               }
           }
 
-          // 2. THE STEP BACK FIX: Ignore arrays completely. 
-          // If it is a d200, force the internal dictionary to treat 1-10 as a fumble.
-          if (term.options && term.faces === 200) {
+          // Update the hidden numeric options just in case
+          if (term.options && term.options.fumble === 1) {
               term.options.fumble = 10;
           }
 
