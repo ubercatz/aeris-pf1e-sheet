@@ -79,28 +79,41 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Core Dice Evaluator: Safely scales dice faces and updates Fumbles
+// 1. Core Dice Evaluator: Safely scales dice faces and updates Fumbles
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
         
         // Only touch standard base dice (d20, d6, d8, etc.)
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
+          let isD20 = (term.faces === 20);
           term.faces *= 10;
+          
+          let hasCF = false;
 
-          // Phase 2 (prepareBaseData) natively handles all Critical Threats now!
+          // Phase 2 natively handles all Critical Threats now!
           // We only need to catch the default Fumble (cf1) and scale it (cf<=10)
           if (term.modifiers && term.modifiers.length > 0) {
               for (let i = 0; i < term.modifiers.length; i++) {
                   if (/^cf[<=]*1$/i.test(term.modifiers[i])) {
                       term.modifiers[i] = "cf<=10";
+                      hasCF = true;
+                  } else if (/^cf/i.test(term.modifiers[i])) {
+                      hasCF = true; // Respects custom fumbles if they exist
                   }
               }
+          } else {
+              term.modifiers = [];
+          }
+
+          // FORCE INJECT: Spells often send blank arrays. Force the 10x Fumble!
+          if (isD20 && !hasCF) {
+              term.modifiers.push("cf<=10");
           }
 
           // Update the hidden numeric options just in case
-          if (term.options && term.options.fumble === 1) {
-              term.options.fumble = 10;
+          if (term.options) {
+              if (term.options.fumble === 1) term.options.fumble = 10;
           }
 
           term._pf1arScaled = true;
@@ -252,15 +265,18 @@ Hooks.once("init", () => {
             });
           }
 // ========================================================================
+          // ========================================================================
           // SYSTEM CHAT CARD SYNC (The "Ghost Crit" Fix)
           // Forces the base system to recognize 191+ as the baseline for all actions
           // ========================================================================
           
-          // actionType checks if this action involves attacks, saves, healing, etc.
           if (action.actionType) {
-              let cRange = action.critRange;
+              // 1. PF1e strictly stores criticals inside the nested 'ability' object!
+              if (!action.ability) action.ability = {};
               
-              // Spells and default weapons are secretly blank in the database!
+              let cRange = action.ability.critRange;
+              
+              // 2. Spells and default weapons are secretly blank in the database!
               // We catch those blanks and explicitly assign them the default 20.
               if (cRange === undefined || cRange === null || cRange === "") {
                   cRange = 20; 
@@ -268,17 +284,12 @@ Hooks.once("init", () => {
                   cRange = Number(cRange);
               }
 
-              // Only convert standard PF1e ranges (1-20). Respects GM's granular buffs!
+              // 3. Only convert standard PF1e ranges (1-20). Respects GM's granular buffs!
               if (!isNaN(cRange) && cRange > 0 && cRange <= 20) {
                   // Math: 20 -> 191, 19 -> 181
-                  action.critRange = (cRange * 10) - 9;
+                  action.ability.critRange = (cRange * 10) - 9;
               }
           }
-          // ========================================================================
-          // ========================================================================
-          // SMART CRITICAL THREAT CONVERSION
-          
-          
         });
       }
       
