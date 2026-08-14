@@ -595,17 +595,8 @@ export class AltCharacterSheetPF extends pf1.applications.actor.ActorSheetPFChar
 
   async getData(options) {
     const data = await super.getData(options);
-    data.pf1arDark = game.settings.get(MODULE_ID, "darkMode");
-    data.summarySkillsMode = game.settings.get(MODULE_ID, "summarySkills");
-    _prepareInventoryContainers(this, data);
-    _prepareLinkedFeatChildren(this, data);
-    return data;
-  }
-_computeEncumbrance(sheetData) {
-    // 1. Let the system calculate the actual carried weight of your items normally
-    super._computeEncumbrance(sheetData);
-
-    // 2. Fully replace the carrying capacity limits with our custom 10x granular math
+    
+    // --- 10X GRANULAR ENCUMBRANCE INJECTION ---
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       const strScore = this.actor.system.abilities?.str?.total || 100;
       const carryBonus = this.actor.system.attributes?.carryStrength || 0;
@@ -626,8 +617,8 @@ _computeEncumbrance(sheetData) {
       // Re-apply multipliers and scale up by 10x to match your granular item weights
       heavy = heavy * carryMult * 10;
 
-      // Overwrite the sheet's display thresholds
-      const enc = sheetData.system.attributes.encumbrance;
+      // Safely overwrite the sheet's display thresholds
+      const enc = data.system?.attributes?.encumbrance;
       if (enc) {
           enc.heavy = heavy;
           enc.medium = Math.floor((heavy * 2) / 3);
@@ -644,7 +635,20 @@ _computeEncumbrance(sheetData) {
           else enc.level = 1; // Light
       }
     }
+
+    data.pf1arDark = game.settings.get(MODULE_ID, "darkMode");
+    data.summarySkillsMode = game.settings.get(MODULE_ID, "summarySkills");
+    _prepareInventoryContainers(this, data);
+    _prepareLinkedFeatChildren(this, data);
+    
+    // NOTE: I see you added this back in your uploaded file! 
+    // Keep an eye out for double-dipping (e.g. 1d600 instead of 1d60) 
+    // since main.mjs is already scaling the data behind the scenes.
+    _apply10xVisuals(this, data); 
+
+    return data;
   }
+
   activateListeners(html) {
     super.activateListeners(html);
     _applyTheme(this);
@@ -703,17 +707,8 @@ export class AltNPCSheetPF extends pf1.applications.actor.ActorSheetPFNPC {
 
   async getData(options) {
     const data = await super.getData(options);
-    data.pf1arDark = game.settings.get(MODULE_ID, "darkMode");
-    data.summarySkillsMode = game.settings.get(MODULE_ID, "summarySkills");
-    _prepareInventoryContainers(this, data);
-    _prepareLinkedFeatChildren(this, data);
-    return data;
-  }
-  _computeEncumbrance(sheetData) {
-    // 1. Let the system calculate the actual carried weight of your items normally
-    super._computeEncumbrance(sheetData);
-
-    // 2. Fully replace the carrying capacity limits with our custom 10x granular math
+    
+    // --- 10X GRANULAR ENCUMBRANCE INJECTION ---
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       const strScore = this.actor.system.abilities?.str?.total || 100;
       const carryBonus = this.actor.system.attributes?.carryStrength || 0;
@@ -734,8 +729,8 @@ export class AltNPCSheetPF extends pf1.applications.actor.ActorSheetPFNPC {
       // Re-apply multipliers and scale up by 10x to match your granular item weights
       heavy = heavy * carryMult * 10;
 
-      // Overwrite the sheet's display thresholds
-      const enc = sheetData.system.attributes.encumbrance;
+      // Safely overwrite the sheet's display thresholds
+      const enc = data.system?.attributes?.encumbrance;
       if (enc) {
           enc.heavy = heavy;
           enc.medium = Math.floor((heavy * 2) / 3);
@@ -752,7 +747,20 @@ export class AltNPCSheetPF extends pf1.applications.actor.ActorSheetPFNPC {
           else enc.level = 1; // Light
       }
     }
+
+    data.pf1arDark = game.settings.get(MODULE_ID, "darkMode");
+    data.summarySkillsMode = game.settings.get(MODULE_ID, "summarySkills");
+    _prepareInventoryContainers(this, data);
+    _prepareLinkedFeatChildren(this, data);
+    
+    // NOTE: I see you added this back in your uploaded file! 
+    // Keep an eye out for double-dipping (e.g. 1d600 instead of 1d60) 
+    // since main.mjs is already scaling the data behind the scenes.
+    _apply10xVisuals(this, data); 
+
+    return data;
   }
+  
 
   activateListeners(html) {
     super.activateListeners(html);
