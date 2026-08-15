@@ -2,7 +2,7 @@
   "id": "pf1-altsheet-reworked",
   "title": "Aeris PF1E Alt Sheet (10x Engine)",
   "description": "Customized PF1e Alt Sheet featuring the Aeris 10x Granularity Engine.",
-  "version": "1.0.75",
+  "version": "1.0.76",
   "authors": [
     {
       "name": "ubercatz"
@@ -10,7 +10,7 @@
   ],
   "url": "https://github.com/ubercatz/aeris-pf1e-sheet",
   "manifest": "https://raw.githubusercontent.com/ubercatz/aeris-pf1e-sheet/main/module.json",
-  "download": "https://github.com/ubercatz/aeris-pf1e-sheet/releases/download/v1.0.75/module-v1.0.75.zip",
+  "download": "https://github.com/ubercatz/aeris-pf1e-sheet/releases/download/v1.0.76/module-v1.0.76.zip",
   "readme": "https://github.com/ubercatz/aeris-pf1e-sheet/blob/main/README.md",
   "bugs": "https://github.com/ubercatz/aeris-pf1e-sheet/issues",
   "compatibility": {
