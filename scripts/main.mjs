@@ -472,40 +472,26 @@ Hooks.once("init", () => {
   }, "WRAPPER");
   
 });
-// ========================================================================
-// SYNCHRONOUS PAINTER: Forces Fumbles red BEFORE the browser draws the card
-// ========================================================================
 Hooks.on("renderChatMessage", (message, html, data) => {
-    // 1. Only run if 10x Granularity is enabled and there are dice rolls
-    if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
-    if (!message.rolls || message.rolls.length === 0) return;
+    // Only run this if 10x Granularity is enabled in the settings
+    if (!game.settings.get("aeris-pf1e-sheet", "enable10xGranularity")) return;
 
-    // Safely wrap the html object 
     const $html = html instanceof jQuery ? html : $(html);
 
-    // 2. Hunt down the specific d200 die that the backend flagged as a fumble
+    // Hunt down the specific d200 die that the backend flagged as a fumble
     $html.find('li.die.d200.fumble, li.die.d200.failure').each(function() {
         
-        // A. Paint the tiny tooltip die (Forces it just to be absolutely safe)
-        this.style.setProperty('color', '#aa0200', 'important');
-        this.style.setProperty('font-weight', 'bold', 'important');
+        $(this).addClass('aeris-fumble-die');
 
-        // B. Walk UP the HTML tree to find the closest wrapper containing a Total Box.
-        // This guarantees we only paint the specific attack that fumbled!
         let $container = $(this).parents().filter(function() {
             return $(this).find('.dice-total, .roll-total, .total').length > 0;
         }).first();
 
-        // Fallback: If PF1e hid the total weirdly, target the whole chat card
         if ($container.length === 0) $container = $html;
 
-        // C. Inject inline CSS directly into the Total Box BEFORE it renders on screen
         $container.find('.dice-total, .roll-total, .total').each(function() {
-            this.style.setProperty('color', '#aa0200', 'important');
-            this.style.setProperty('text-shadow', '0 0 4px rgba(170, 2, 0, 0.3)', 'important');
-            
-            // Remove any accidental green colors the base system might have tried to apply
-            $(this).removeClass('critical success');
+            $(this).removeClass('critical success'); 
+            $(this).addClass('aeris-fumble-total');  
         });
     });
 });

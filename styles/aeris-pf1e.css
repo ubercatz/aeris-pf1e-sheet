@@ -1,0 +1,12 @@
+/* Forces the tooltip die to be red */
+.aeris-fumble-die {
+    color: #aa0200 !important;
+    font-weight: bold !important;
+}
+
+/* Forces the chat card total box to be red */
+.aeris-fumble-total {
+    color: #aa0200 !important;
+    text-shadow: 0 0 4px rgba(170, 2, 0, 0.3) !important;
+    border-color: #aa0200 !important; /* Optional: Tints the box border too! */
+}
