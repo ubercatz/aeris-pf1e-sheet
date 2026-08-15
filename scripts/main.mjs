@@ -58,7 +58,6 @@ Hooks.once("init", () => {
     `modules/${MODULE_ID}/templates/parts/settings.hbs`,
   ]);
 });
-/*
 // ========================================================================
 // CUSTOM UI INJECTOR: Adds the "Fumble Range" field to Weapons and Spells
 // ========================================================================
@@ -92,7 +91,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
         // Safe fallback just in case the item sheet is structured differently
         html.find('.sheet-body').append(fumbleHtml);
     }
-});*/
+});
 // ─── READY: SYSTEM OVERRIDES ──────────────────────────────────────────────
 
 Hooks.once("ready", () => {
@@ -137,7 +136,7 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
- // 1. Core Dice Evaluator: Safely scales dice faces and natively flags fumbles POST-roll
+ // 1. Core Dice Evaluator: Scales dice and reads the Custom UI Fumble Range
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
@@ -149,17 +148,33 @@ Hooks.once("init", () => {
       }
     }
 
-    // Let Foundry execute the roll natively without crashing
+    // Let Foundry execute the math natively
     let evaluatedRoll = await wrapped(...args);
 
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+      // A. Hunt for the custom UI Fumble Range you typed in (Defaults to 10)
+      let customFumble = 10;
+      try {
+          // Check standard PF1e item data locations attached to the roll
+          let itemData = this.data?.item || this.options?.item;
+          if (!itemData && this.data?.flags) itemData = this.data; 
+          
+          if (itemData?.flags && itemData.flags["pf1-altsheet-reworked"]?.fumbleRange !== undefined) {
+              customFumble = Number(itemData.flags["pf1-altsheet-reworked"].fumbleRange);
+          }
+      } catch (e) {}
+
+      // B. Flag any d200 that rolls equal to or below your custom threshold
       for (let term of this.terms) {
         if (term.faces === 200 && term.results) {
           for (let res of term.results) {
-            // NATIVE FLAG: Force Foundry to recognize 1-10 as a fumble AFTER the roll
-            if (res.result <= 10) {
+            if (res.result <= customFumble) {
               res.fumble = true;
               res.failure = true; 
+            } else {
+              // Prevents PF1e from falsely keeping native 20 fumbles 
+              res.fumble = false;
+              res.failure = false;
             }
           }
         }
@@ -477,40 +492,4 @@ Hooks.once("init", () => {
   }, "WRAPPER");
   
 });
-// ========================================================================
-// CHAT CARD INTERCEPTOR: The "Tree Walker" Fumble Painter
-// ========================================================================
-Hooks.on("renderChatMessage", (message, html, data) => {
-    // 1. Only run if 10x Granularity is enabled
-    if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
 
-    // Safely wrap html for V11/V12 compatibility
-    const $html = html instanceof jQuery ? html : $(html);
-
-    // 2. Hunt down every individual d200 die in the chat card
-    $html.find('li.roll.die.d200').each(function() {
-        let dieValue = parseInt($(this).text(), 10);
-
-        // 3. Did this specific die roll a 1-10?
-        if (!isNaN(dieValue) && dieValue <= 10) {
-            
-            // A. Force the die itself to be red using un-overrideable !important styles
-            this.style.setProperty('color', '#aa0200', 'important');
-            this.style.setProperty('font-weight', 'bold', 'important');
-
-            // B. Walk UP the HTML tree to find the closest wrapper containing a Total Box.
-            // This isolates the exact attack so we don't accidentally paint full-attacks entirely red!
-            let $container = $(this).parents().filter(function() {
-                return $(this).find('.roll-total, .dice-total, h4.total').length > 0;
-            }).first();
-
-            // C. Find the total box inside that specific container and paint it red
-            if ($container.length > 0) {
-                $container.find('.roll-total, .dice-total, h4.total').each(function() {
-                    this.style.setProperty('color', '#aa0200', 'important');
-                    this.style.setProperty('text-shadow', '0 0 4px rgba(170, 2, 0, 0.3)', 'important');
-                });
-            }
-        }
-    });
-});
