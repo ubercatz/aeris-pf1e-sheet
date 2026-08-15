@@ -472,10 +472,13 @@ Hooks.once("init", () => {
   }, "WRAPPER");
   
 });
-Hooks.on("renderChatMessage", (message, html, data) => {
-    // Only run this if 10x Granularity is enabled in the settings
-    if (!game.settings.get("aeris-pf1e-sheet", "enable10xGranularity")) return;
+// ─── CHAT CARD STYLING ────────────────────────────────────────────────────────
 
+Hooks.on("renderChatMessage", (message, html, data) => {
+    // 1. Fixed the module ID here! It now matches your module.json's real ID.
+    if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
+
+    // Safely wrap the html object
     const $html = html instanceof jQuery ? html : $(html);
 
     // Hunt down the specific d200 die that the backend flagged as a fumble
