@@ -97,40 +97,42 @@ Hooks.on("renderItemSheet", (app, html, data) => {
 Hooks.once("ready", () => {
   if (game.system?.id !== "pf1") return;
 
-  DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltCharacterSheetPF, { label: game.i18n.localize("PF1AR.CharacterSheetLabel"), types: ["character"], makeDefault: false });
-  DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltNPCSheetPF, { label: game.i18n.localize("PF1AR.NPCSheetLabel"), types: ["npc"], makeDefault: false });
-  DocumentSheetConfig.updateDefaultSheets();
-  // ─── READY: SYSTEM OVERRIDES ──────────────────────────────────────────────
-
-Hooks.once("ready", () => {
-  if (game.system?.id !== "pf1") return;
-
+  // 1. Register Alternate Sheets
   DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltCharacterSheetPF, { label: game.i18n.localize("PF1AR.CharacterSheetLabel"), types: ["character"], makeDefault: false });
   DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltNPCSheetPF, { label: game.i18n.localize("PF1AR.NPCSheetLabel"), types: ["npc"], makeDefault: false });
   DocumentSheetConfig.updateDefaultSheets();
 
   // ========================================================================
-  // INJECT GLOBAL CSS FOR 10X GRANULARITY HIGHLIGHTS
-  // Foundry core doesn't have CSS for d200 fumbles, so we must supply it!
+  // 2. INJECT GLOBAL CSS FOR 10X GRANULARITY HIGHLIGHTS
   // ========================================================================
-  // ========================================================================
-  // INJECT GLOBAL CSS FOR 10X GRANULARITY HIGHLIGHTS
-  // Foundry core doesn't have CSS for d200 fumbles, so we must supply it!
-  // ========================================================================
-  
+  const pf1arStyles = document.createElement("style");
+  pf1arStyles.innerHTML = `
+      /* Paint the individual die inside the tooltip dropdown */
+      .dice-tooltip li.roll.die.d200.fumble,
+      .dice-tooltip li.roll.die.d200.failure {
+          color: #aa0200 !important;
+          font-weight: bold !important;
+      }
+      
+      /* The Nuke: If ANY wrapper contains a fumble die, paint its Total box red! */
+      .dice-result:has(.d200.fumble) .dice-total,
+      .dice-result:has(.d200.fumble) .roll-total,
+      .attack-roll:has(.d200.fumble) .dice-total,
+      .attack-roll:has(.d200.fumble) .roll-total,
+      .pf1.chat-card:has(.d200.fumble) h4,
+      .pf1.chat-card:has(.d200.fumble) .total {
+          color: #aa0200 !important;
+          text-shadow: 0 0 4px rgba(170, 2, 0, 0.3) !important;
+      }
+  `;
+  document.head.appendChild(pf1arStyles);
 
+  // 3. Apply Base System Config Math Overrides
   if (game.settings.get(MODULE_ID, "enable10xGranularity") && pf1.config) {
     pf1.config.classSkillBonus = 30;
     pf1.config.nonProficiencyPenalty = -40;
   }
 });
-
-  if (game.settings.get(MODULE_ID, "enable10xGranularity") && pf1.config) {
-    pf1.config.classSkillBonus = 30;
-    pf1.config.nonProficiencyPenalty = -40;
-  }
-});
-
 // ─── LIBWRAPPER INTERCEPTIONS (10X ENGINE) ────────────────────────────────
 
 Hooks.once("init", () => {
