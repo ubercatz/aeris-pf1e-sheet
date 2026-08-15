@@ -80,16 +80,26 @@ Hooks.once("ready", () => {
   // INJECT GLOBAL CSS FOR 10X GRANULARITY HIGHLIGHTS
   // Foundry core doesn't have CSS for d200 fumbles, so we must supply it!
   // ========================================================================
+  // ========================================================================
+  // INJECT GLOBAL CSS FOR 10X GRANULARITY HIGHLIGHTS
+  // Foundry core doesn't have CSS for d200 fumbles, so we must supply it!
+  // ========================================================================
   const pf1arStyles = document.createElement("style");
   pf1arStyles.innerHTML = `
+      /* 1. Paint the individual die inside the tooltip dropdown */
       .dice-tooltip li.roll.die.d200.fumble,
       .dice-tooltip li.roll.die.d200.failure {
           color: #aa0200 !important;
           font-weight: bold !important;
       }
-      .pf1.chat-card .roll-total.fumble, 
-      .pf1.chat-card .dice-total.fumble,
-      .pf1.chat-card .card-footer .fumble {
+      
+      /* 2. MAGIC FIX: If a roll container HAS a fumble die inside it, paint the total red! */
+      /* This perfectly isolates individual attacks so full-attacks don't break */
+      .dice-roll:has(.die.d200.fumble) .roll-total,
+      .dice-roll:has(.die.d200.fumble) .dice-total,
+      .dice-roll:has(.die.d200.failure) .roll-total,
+      .dice-roll:has(.die.d200.failure) .dice-total,
+      .pf1.chat-card:has(.die.d200.fumble) .dice-total {
           color: #aa0200 !important;
           text-shadow: 0 0 4px rgba(170, 2, 0, 0.3) !important;
       }
