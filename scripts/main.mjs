@@ -67,6 +67,40 @@ Hooks.once("ready", () => {
   DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltCharacterSheetPF, { label: game.i18n.localize("PF1AR.CharacterSheetLabel"), types: ["character"], makeDefault: false });
   DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltNPCSheetPF, { label: game.i18n.localize("PF1AR.NPCSheetLabel"), types: ["npc"], makeDefault: false });
   DocumentSheetConfig.updateDefaultSheets();
+  // ─── READY: SYSTEM OVERRIDES ──────────────────────────────────────────────
+
+Hooks.once("ready", () => {
+  if (game.system?.id !== "pf1") return;
+
+  DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltCharacterSheetPF, { label: game.i18n.localize("PF1AR.CharacterSheetLabel"), types: ["character"], makeDefault: false });
+  DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltNPCSheetPF, { label: game.i18n.localize("PF1AR.NPCSheetLabel"), types: ["npc"], makeDefault: false });
+  DocumentSheetConfig.updateDefaultSheets();
+
+  // ========================================================================
+  // INJECT GLOBAL CSS FOR 10X GRANULARITY HIGHLIGHTS
+  // Foundry core doesn't have CSS for d200 fumbles, so we must supply it!
+  // ========================================================================
+  const pf1arStyles = document.createElement("style");
+  pf1arStyles.innerHTML = `
+      .dice-tooltip li.roll.die.d200.fumble,
+      .dice-tooltip li.roll.die.d200.failure {
+          color: #aa0200 !important;
+          font-weight: bold !important;
+      }
+      .pf1.chat-card .roll-total.fumble, 
+      .pf1.chat-card .dice-total.fumble,
+      .pf1.chat-card .card-footer .fumble {
+          color: #aa0200 !important;
+          text-shadow: 0 0 4px rgba(170, 2, 0, 0.3) !important;
+      }
+  `;
+  document.head.appendChild(pf1arStyles);
+
+  if (game.settings.get(MODULE_ID, "enable10xGranularity") && pf1.config) {
+    pf1.config.classSkillBonus = 30;
+    pf1.config.nonProficiencyPenalty = -40;
+  }
+});
 
   if (game.settings.get(MODULE_ID, "enable10xGranularity") && pf1.config) {
     pf1.config.classSkillBonus = 30;
@@ -79,35 +113,35 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  // 1. Core Dice Evaluator: Safely scales dice faces and updates Fumbles
+ // 1. Core Dice Evaluator: Safely scales dice faces and natively flags fumbles POST-roll
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
-        
-        // Only touch standard base dice (d20, d6, d8, etc.)
+        // Pre-roll setup: Scale dice up to 200
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
-
-          // Phase 2 (prepareBaseData) natively handles all Critical Threats now!
-          // We only need to catch the default Fumble (cf1) and scale it (cf<=10)
-          if (term.modifiers && term.modifiers.length > 0) {
-              for (let i = 0; i < term.modifiers.length; i++) {
-                  if (/^cf[<=]*1$/i.test(term.modifiers[i])) {
-                      term.modifiers[i] = "cf<=10";
-                  }
-              }
-          }
-
-          // Update the hidden numeric options just in case
-          if (term.options && term.options.fumble === 1) {
-              term.options.fumble = 10;
-          }
-
           term._pf1arScaled = true;
         }
       }
     }
-    return wrapped(...args);
+
+    // Let Foundry execute the roll natively without crashing
+    let evaluatedRoll = await wrapped(...args);
+
+    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+      for (let term of this.terms) {
+        if (term.faces === 200 && term.results) {
+          for (let res of term.results) {
+            // NATIVE FLAG: Force Foundry to recognize 1-10 as a fumble AFTER the roll
+            if (res.result <= 10) {
+              res.fumble = true;
+              res.failure = true; 
+            }
+          }
+        }
+      }
+    }
+    return evaluatedRoll;
   }, "WRAPPER");
   // 2. Item Base Data: Armor, ACP, Enhancements, and Smart Formula Scaling
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareBaseData", function (wrapped, ...args) {
@@ -418,41 +452,4 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
   
-});
-// ========================================================================
-// CHAT CARD INTERCEPTOR: The Visual Fumble Fix (1-10 on d200)
-// ========================================================================
-Hooks.on("renderChatMessage", (message, html, data) => {
-  if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
-  if (!message.rolls || message.rolls.length === 0) return;
-
-  // 1. Safely wrap html to guarantee compatibility across Foundry V11 and V12
-  const $html = $(html); 
-  let fumbleColor = "#aa0200"; // Deep red
-
-  // 2. Target ONLY d200s inside the chat card tooltips
-  $html.find('li.roll.die.d200').each(function() {
-      let dieValue = parseInt($(this).text());
-      
-      // 3. If it rolled 1-10, it is definitively a Fumble
-      if (!isNaN(dieValue) && dieValue <= 10) {
-          
-          // A. Paint the tiny die inside the tooltip dropdown red
-          $(this).css({
-              'color': fumbleColor,
-              'font-weight': 'bold'
-          });
-
-          // B. Traverse up to find the container for THIS specific roll only.
-          // This ensures full-attacks don't accidentally paint successful hits red!
-          let $rollContainer = $(this).closest('.dice-roll, .pf1-roll, .attack-roll, .item-card');
-
-          // C. Force the main total box to turn red with a slight glow
-          $rollContainer.find('.dice-total, .roll-total, h4.total').css({
-              'color': fumbleColor,
-              'text-shadow': '0 0 4px rgba(170, 2, 0, 0.3)',
-              'font-weight': 'bold'
-          });
-      }
-  });
 });
