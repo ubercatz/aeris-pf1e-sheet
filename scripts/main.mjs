@@ -475,26 +475,34 @@ Hooks.once("init", () => {
 // ─── CHAT CARD STYLING ────────────────────────────────────────────────────────
 
 Hooks.on("renderChatMessage", (message, html, data) => {
-    // 1. Fixed the module ID here! It now matches your module.json's real ID.
     if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
 
-    // Safely wrap the html object
     const $html = html instanceof jQuery ? html : $(html);
 
-    // Hunt down the specific d200 die that the backend flagged as a fumble
-    $html.find('li.die.d200.fumble, li.die.d200.failure').each(function() {
+    // 1. Find ALL d200 dice, regardless of whether PF1e flagged them as fumbles
+    $html.find('li.die.d200').each(function() {
         
-        $(this).addClass('aeris-fumble-die');
+        // 2. Actually "read" the number on the die
+        const rollValue = parseInt($(this).text(), 10);
 
-        let $container = $(this).parents().filter(function() {
-            return $(this).find('.dice-total, .roll-total, .total').length > 0;
-        }).first();
+        // 3. If the number is between 1 and 10, execute our red paint protocol!
+        if (!isNaN(rollValue) && rollValue <= 10) {
+            
+            // Add our custom class, plus the native ones just to be safe
+            $(this).addClass('aeris-fumble-die fumble min');
 
-        if ($container.length === 0) $container = $html;
+            // Walk UP the HTML tree to find the closest wrapper containing a Total Box
+            let $container = $(this).parents().filter(function() {
+                return $(this).find('.dice-total, .roll-total, .total').length > 0;
+            }).first();
 
-        $container.find('.dice-total, .roll-total, .total').each(function() {
-            $(this).removeClass('critical success'); 
-            $(this).addClass('aeris-fumble-total');  
-        });
+            if ($container.length === 0) $container = $html;
+
+            // Nuke the system's green text and inject our red class
+            $container.find('.dice-total, .roll-total, .total').each(function() {
+                $(this).removeClass('critical success'); 
+                $(this).addClass('aeris-fumble-total');  
+            });
+        }
     });
 });
