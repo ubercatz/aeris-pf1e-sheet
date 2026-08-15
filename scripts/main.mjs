@@ -102,29 +102,7 @@ Hooks.once("ready", () => {
   DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltNPCSheetPF, { label: game.i18n.localize("PF1AR.NPCSheetLabel"), types: ["npc"], makeDefault: false });
   DocumentSheetConfig.updateDefaultSheets();
 
-  // ========================================================================
-  // 2. INJECT GLOBAL CSS FOR 10X GRANULARITY HIGHLIGHTS
-  // ========================================================================
-  const pf1arStyles = document.createElement("style");
-  pf1arStyles.innerHTML = `
-      /* Paint the individual die inside the tooltip dropdown */
-      .dice-tooltip li.roll.die.d200.fumble,
-      .dice-tooltip li.roll.die.d200.failure {
-          color: #aa0200 !important;
-          font-weight: bold !important;
-      }
-      
-      /* The Nuke: If ANY wrapper contains a fumble die, paint its Total box red! */
-      .dice-result:has(.d200.fumble) .dice-total,
-      .dice-result:has(.d200.fumble) .roll-total,
-      .attack-roll:has(.d200.fumble) .dice-total,
-      .attack-roll:has(.d200.fumble) .roll-total,
-      .pf1.chat-card:has(.d200.fumble) h4,
-      .pf1.chat-card:has(.d200.fumble) .total {
-          color: #aa0200 !important;
-          text-shadow: 0 0 4px rgba(170, 2, 0, 0.3) !important;
-      }
-  `;
+
   document.head.appendChild(pf1arStyles);
 
   // 3. Apply Base System Config Math Overrides
@@ -494,4 +472,40 @@ Hooks.once("init", () => {
   }, "WRAPPER");
   
 });
+// ========================================================================
+// SYNCHRONOUS PAINTER: Forces Fumbles red BEFORE the browser draws the card
+// ========================================================================
+Hooks.on("renderChatMessage", (message, html, data) => {
+    // 1. Only run if 10x Granularity is enabled and there are dice rolls
+    if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
+    if (!message.rolls || message.rolls.length === 0) return;
 
+    // Safely wrap the html object 
+    const $html = html instanceof jQuery ? html : $(html);
+
+    // 2. Hunt down the specific d200 die that the backend flagged as a fumble
+    $html.find('li.die.d200.fumble, li.die.d200.failure').each(function() {
+        
+        // A. Paint the tiny tooltip die (Forces it just to be absolutely safe)
+        this.style.setProperty('color', '#aa0200', 'important');
+        this.style.setProperty('font-weight', 'bold', 'important');
+
+        // B. Walk UP the HTML tree to find the closest wrapper containing a Total Box.
+        // This guarantees we only paint the specific attack that fumbled!
+        let $container = $(this).parents().filter(function() {
+            return $(this).find('.dice-total, .roll-total, .total').length > 0;
+        }).first();
+
+        // Fallback: If PF1e hid the total weirdly, target the whole chat card
+        if ($container.length === 0) $container = $html;
+
+        // C. Inject inline CSS directly into the Total Box BEFORE it renders on screen
+        $container.find('.dice-total, .roll-total, .total').each(function() {
+            this.style.setProperty('color', '#aa0200', 'important');
+            this.style.setProperty('text-shadow', '0 0 4px rgba(170, 2, 0, 0.3)', 'important');
+            
+            // Remove any accidental green colors the base system might have tried to apply
+            $(this).removeClass('critical success');
+        });
+    });
+});
