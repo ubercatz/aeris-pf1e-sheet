@@ -472,12 +472,13 @@ Hooks.once("init", () => {
   }, "WRAPPER");
   
 });
-// ─── CHAT CARD STYLING ────────────────────────────────────────────────────────
+// ─── CHAT CARD STYLING (V13 MODERNIZED) ───────────────────────────────────────
 
-Hooks.on("renderChatMessage", (message, html, data) => {
+Hooks.on("renderChatMessageHTML", (message, html, data) => {
     if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
 
-    const $html = html instanceof jQuery ? html : $(html);
+    // In V13, 'html' is a native HTMLElement. Wrap it in jQuery so our logic works!
+    const $html = $(html);
 
     // 1. Find ALL d200 dice, regardless of whether PF1e flagged them as fumbles
     $html.find('li.die.d200').each(function() {
