@@ -58,6 +58,7 @@ Hooks.once("init", () => {
     `modules/${MODULE_ID}/templates/parts/settings.hbs`,
   ]);
 });
+/*
 // ========================================================================
 // CUSTOM UI INJECTOR: Adds the "Fumble Range" field to Weapons and Spells
 // ========================================================================
@@ -91,7 +92,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
         // Safe fallback just in case the item sheet is structured differently
         html.find('.sheet-body').append(fumbleHtml);
     }
-});
+});*/
 // ─── READY: SYSTEM OVERRIDES ──────────────────────────────────────────────
 
 Hooks.once("ready", () => {
@@ -476,4 +477,40 @@ Hooks.once("init", () => {
   }, "WRAPPER");
   
 });
+// ========================================================================
+// CHAT CARD INTERCEPTOR: The "Tree Walker" Fumble Painter
+// ========================================================================
+Hooks.on("renderChatMessage", (message, html, data) => {
+    // 1. Only run if 10x Granularity is enabled
+    if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
 
+    // Safely wrap html for V11/V12 compatibility
+    const $html = html instanceof jQuery ? html : $(html);
+
+    // 2. Hunt down every individual d200 die in the chat card
+    $html.find('li.roll.die.d200').each(function() {
+        let dieValue = parseInt($(this).text(), 10);
+
+        // 3. Did this specific die roll a 1-10?
+        if (!isNaN(dieValue) && dieValue <= 10) {
+            
+            // A. Force the die itself to be red using un-overrideable !important styles
+            this.style.setProperty('color', '#aa0200', 'important');
+            this.style.setProperty('font-weight', 'bold', 'important');
+
+            // B. Walk UP the HTML tree to find the closest wrapper containing a Total Box.
+            // This isolates the exact attack so we don't accidentally paint full-attacks entirely red!
+            let $container = $(this).parents().filter(function() {
+                return $(this).find('.roll-total, .dice-total, h4.total').length > 0;
+            }).first();
+
+            // C. Find the total box inside that specific container and paint it red
+            if ($container.length > 0) {
+                $container.find('.roll-total, .dice-total, h4.total').each(function() {
+                    this.style.setProperty('color', '#aa0200', 'important');
+                    this.style.setProperty('text-shadow', '0 0 4px rgba(170, 2, 0, 0.3)', 'important');
+                });
+            }
+        }
+    });
+});
