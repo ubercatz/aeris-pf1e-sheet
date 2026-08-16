@@ -472,38 +472,57 @@ Hooks.once("init", () => {
   }, "WRAPPER");
   
 });
-// ─── CHAT CARD STYLING (V13 MODERNIZED) ───────────────────────────────────────
+// ─── CHAT CARD STYLING (V13 MODERNIZED & BULLETPROOF) ──────────────────────────
 
 Hooks.on("renderChatMessageHTML", (message, html, data) => {
+    // 1. Settings Check
     if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
 
-    // In V13, 'html' is a native HTMLElement. Wrap it in jQuery so our logic works!
-    const $html = $(html);
+    // 2. Math Check: Read the pure data of the roll, bypassing the HTML entirely!
+    let hasFumble = false;
 
-    // 1. Find ALL d200 dice, regardless of whether PF1e flagged them as fumbles
-    $html.find('li.die.d200').each(function() {
-        
-        // 2. Actually "read" the number on the die
-        const rollValue = parseInt($(this).text(), 10);
-
-        // 3. If the number is between 1 and 10, execute our red paint protocol!
-        if (!isNaN(rollValue) && rollValue <= 10) {
-            
-            // Add our custom class, plus the native ones just to be safe
-            $(this).addClass('aeris-fumble-die fumble min');
-
-            // Walk UP the HTML tree to find the closest wrapper containing a Total Box
-            let $container = $(this).parents().filter(function() {
-                return $(this).find('.dice-total, .roll-total, .total').length > 0;
-            }).first();
-
-            if ($container.length === 0) $container = $html;
-
-            // Nuke the system's green text and inject our red class
-            $container.find('.dice-total, .roll-total, .total').each(function() {
-                $(this).removeClass('critical success'); 
-                $(this).addClass('aeris-fumble-total');  
-            });
-        }
+    // Check all native Foundry rolls attached to the message
+    const rolls = message.rolls || [];
+    rolls.forEach(roll => {
+        // .dice returns only the actual dice objects (ignoring flat modifiers like +9)
+        roll.dice?.forEach(die => { 
+            if (die.faces === 200) {
+                die.results.forEach(res => {
+                    // Check if it's a natural 1-10!
+                    if (res.result <= 10 && !res.discarded) hasFumble = true;
+                });
+            }
+        });
     });
+
+    // 3. If the math says we fumbled, execute the Red Paint Protocol
+    if (hasFumble) {
+        // Wrap native V13 element in jQuery safely
+        const $html = html instanceof jQuery ? html : $(html);
+
+        // Target PF1e's specific attack roll boxes and core Foundry total boxes
+        const $totals = $html.find('.dice-total, .roll-total, .total');
+        
+        $totals.each(function() {
+            // Nuke the system's green success text
+            $(this).removeClass('critical success');
+            
+            // Add your custom CSS class
+            $(this).addClass('aeris-fumble-total');
+            
+            // NUCLEAR OPTION: Force the styling inline just in case PF1e CSS is overriding your stylesheet
+            let currentStyle = $(this).attr('style') || '';
+            $(this).attr('style', currentStyle + ' color: #aa0200 !important; text-shadow: 0 0 4px rgba(170, 2, 0, 0.4) !important; border-color: #aa0200 !important;');
+        });
+
+        // Still paint the tiny tooltip dice if they exist
+        $html.find('li.die.d200').each(function() {
+            const val = parseInt($(this).text(), 10);
+            if (!isNaN(val) && val <= 10) {
+                $(this).addClass('aeris-fumble-die fumble min');
+                let currentDieStyle = $(this).attr('style') || '';
+                $(this).attr('style', currentDieStyle + ' color: #aa0200 !important; font-weight: bold !important;');
+            }
+        });
+    }
 });
