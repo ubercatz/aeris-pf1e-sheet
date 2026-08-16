@@ -512,21 +512,30 @@ Hooks.on("renderChatMessageHTML", (message, html, data) => {
             let currentDieStyle = $(this).attr('style') || '';
             $(this).attr('style', currentDieStyle + ' color: #aa0200 !important; font-weight: bold !important;');
 
-            // 6. SURGICAL STRIKE: Walk up the tree to find THIS specific attack's container.
-            // This prevents turning a successful attack red if a player uses Multi-Attack/Full Attack.
-            let $attackContainer = $(this).closest('.attack-roll, .damage-roll, .dice-roll');
-            
-            // Fallback if the layout is flat
+            // 6. THE PF1E FIX: Find the *closest* wrapper. 
+            // PF1e attacks are usually wrapped in flexrows, dice-rolls, or message-contents
+            let $attackContainer = $(this).closest('.flexrow, .attack-roll, .dice-roll');
+            if ($attackContainer.length === 0) $attackContainer = $(this).closest('.message-content, .chat-card');
             if ($attackContainer.length === 0) $attackContainer = $html;
 
-            // 7. Paint ONLY the totals related to this specific fumbled attack
-            $attackContainer.find('.dice-total, .roll-total, .total').each(function() {
+            // 7. SURGICAL STRIKE: Target EVERY possible class PF1e uses for totals
+            const pf1eTargets = [
+                '.dice-total', 
+                '.roll-total', 
+                '.total', 
+                '.inline-roll', 
+                '.inline-result', 
+                '.attack-result'
+            ];
+            
+            $attackContainer.find(pf1eTargets.join(', ')).each(function() {
+                // Strip the system's success states
                 $(this).removeClass('critical success');
-                $(this).addClass('aeris-fumble-total');
+                $(this).addClass('aeris-fumble-total fumble min');
                 
                 // Nuclear override against PF1e's stylesheets
                 let currentStyle = $(this).attr('style') || '';
-                $(this).attr('style', currentStyle + ' color: #aa0200 !important; text-shadow: 0 0 4px rgba(170, 2, 0, 0.4) !important; border-color: #aa0200 !important;');
+                $(this).attr('style', currentStyle + ' color: #aa0200 !important; text-shadow: 0 0 4px rgba(170, 2, 0, 0.4) !important; border-color: #aa0200 !important; background-color: rgba(170, 2, 0, 0.1) !important;');
             });
         }
     });
