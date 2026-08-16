@@ -472,13 +472,35 @@ Hooks.once("init", () => {
   }, "WRAPPER");
   
 });
-// ─── CHAT CARD STYLING (V13 PURE VANILLA JS) ───────────────────────────────────
+// ─── 1. INJECT AERIS CUSTOM STYLESHEET (RUNS ONCE ON LOAD) ─────────────────────
+
+Hooks.once("init", () => {
+    // We inject this directly into the browser so we don't have to fight PF1e's CSS files
+    const aerisStyles = document.createElement("style");
+    aerisStyles.innerHTML = `
+        /* Our brand new classification for custom fumbles */
+        .aeris-crit-fail {
+            color: #aa0200 !important;
+            border-color: #aa0200 !important;
+            text-shadow: 0 0 4px rgba(170, 2, 0, 0.4) !important;
+            background-color: rgba(170, 2, 0, 0.1) !important;
+        }
+        /* Make the tiny tooltip dice match */
+        .aeris-crit-fail-die {
+            color: #aa0200 !important;
+            font-weight: bold !important;
+        }
+    `;
+    document.head.appendChild(aerisStyles);
+});
+
+// ─── 2. CHAT CARD STYLING (NEW CLASS PROTOCOL) ─────────────────────────────────
 
 Hooks.on("renderChatMessageHTML", (message, html, data) => {
-    // 1. Settings Check
+    // A. Settings Check
     if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
 
-    // 2. Fetch Custom Fumble Range
+    // B. Fetch Custom Fumble Range
     let customFumble = 10; 
     try {
         const actor = ChatMessage.getSpeakerActor(message.speaker);
@@ -495,44 +517,32 @@ Hooks.on("renderChatMessageHTML", (message, html, data) => {
         console.warn("PF1 Alt Sheet: Could not fetch custom fumble flag, defaulting to 10.");
     }
 
-    // 3. V13 Native DOM Parsing (No jQuery!)
-    // 'html' is passed as a native HTMLElement array or object in V13.
-    // We grab the main element to search through.
+    // C. V13 Native DOM Parsing
     const htmlElement = html.length ? html[0] : html;
-
-    // 4. Find all d200 dice tooltips directly via browser DOM
     const d200s = htmlElement.querySelectorAll('li.die.d200');
     
     d200s.forEach(die => {
         const rollValue = parseInt(die.textContent, 10);
         
-        // 5. Does the die match our custom fumble range?
+        // D. Apply our NEW class to the 1-10 range (includes 1 so it perfectly matches 2-10)
         if (!isNaN(rollValue) && rollValue <= customFumble) {
             
-            // Double-tap the tooltip die
-            die.classList.add('aeris-fumble-die', 'fumble', 'min');
-            die.style.setProperty('color', '#aa0200', 'important');
-            die.style.setProperty('font-weight', 'bold', 'important');
+            // Stamp the die
+            die.classList.add('aeris-crit-fail-die');
 
-            // 6. Walk up the tree to find THIS specific attack's container
+            // Find the container
             let container = die.closest('.attack-roll, .damage-roll, .dice-roll, .flexrow');
-            if (!container) container = htmlElement; // Fallback
+            if (!container) container = htmlElement; 
 
-            // 7. Target EVERY possible class PF1e uses for totals
+            // Find the totals
             const totals = container.querySelectorAll('.dice-total, .roll-total, .total, .inline-roll, .inline-result, .attack-result');
             
             totals.forEach(total => {
-                // Strip the system's success states so they don't fight us
-                total.classList.remove('critical', 'success', 'max');
+                // Strip all system success/fail states entirely. We own this box now.
+                total.classList.remove('critical', 'success', 'max', 'fumble', 'min');
                 
-                // Inject the native PF1e fumble classes to trigger base system red
-                total.classList.add('aeris-fumble-total', 'fumble', 'min');
-                
-                // Nuclear override against PF1e's stylesheets
-                total.style.setProperty('color', '#aa0200', 'important');
-                total.style.setProperty('border-color', '#aa0200', 'important');
-                total.style.setProperty('text-shadow', '0 0 4px rgba(170, 2, 0, 0.4)', 'important');
-                total.style.setProperty('background-color', 'rgba(170, 2, 0, 0.1)', 'important');
+                // Stamp it with our unbreakable custom class
+                total.classList.add('aeris-crit-fail');
             });
         }
     });
