@@ -478,51 +478,56 @@ Hooks.on("renderChatMessageHTML", (message, html, data) => {
     // 1. Settings Check
     if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
 
-    // 2. Math Check: Read the pure data of the roll, bypassing the HTML entirely!
-    let hasFumble = false;
-
-    // Check all native Foundry rolls attached to the message
-    const rolls = message.rolls || [];
-    rolls.forEach(roll => {
-        // .dice returns only the actual dice objects (ignoring flat modifiers like +9)
-        roll.dice?.forEach(die => { 
-            if (die.faces === 200) {
-                die.results.forEach(res => {
-                    // Check if it's a natural 1-10!
-                    if (res.result <= 10 && !res.discarded) hasFumble = true;
-                });
+    // 2. Fetch Custom Fumble Range (Dynamically matches your Item UI!)
+    let customFumble = 10; // Baseline fallback
+    try {
+        const actor = ChatMessage.getSpeakerActor(message.speaker);
+        if (actor) {
+            // Find the specific item used in the attack via PF1e's system data
+            const itemId = message.system?.item?.id;
+            if (itemId) {
+                const item = actor.items.get(itemId);
+                // Check if the item has our custom Fumble Range flag
+                if (item && item.flags["pf1-altsheet-reworked"]?.fumbleRange !== undefined) {
+                    customFumble = Number(item.flags["pf1-altsheet-reworked"].fumbleRange);
+                }
             }
-        });
-    });
-
-    // 3. If the math says we fumbled, execute the Red Paint Protocol
-    if (hasFumble) {
-        // Wrap native V13 element in jQuery safely
-        const $html = html instanceof jQuery ? html : $(html);
-
-        // Target PF1e's specific attack roll boxes and core Foundry total boxes
-        const $totals = $html.find('.dice-total, .roll-total, .total');
-        
-        $totals.each(function() {
-            // Nuke the system's green success text
-            $(this).removeClass('critical success');
-            
-            // Add your custom CSS class
-            $(this).addClass('aeris-fumble-total');
-            
-            // NUCLEAR OPTION: Force the styling inline just in case PF1e CSS is overriding your stylesheet
-            let currentStyle = $(this).attr('style') || '';
-            $(this).attr('style', currentStyle + ' color: #aa0200 !important; text-shadow: 0 0 4px rgba(170, 2, 0, 0.4) !important; border-color: #aa0200 !important;');
-        });
-
-        // Still paint the tiny tooltip dice if they exist
-        $html.find('li.die.d200').each(function() {
-            const val = parseInt($(this).text(), 10);
-            if (!isNaN(val) && val <= 10) {
-                $(this).addClass('aeris-fumble-die fumble min');
-                let currentDieStyle = $(this).attr('style') || '';
-                $(this).attr('style', currentDieStyle + ' color: #aa0200 !important; font-weight: bold !important;');
-            }
-        });
+        }
+    } catch (e) {
+        console.warn("PF1 Alt Sheet: Could not fetch custom fumble flag, defaulting to 10.");
     }
+
+    // 3. Wrap native V13 HTML element
+    const $html = $(html);
+
+    // 4. Find all d200 dice tooltips directly in the rendered HTML
+    $html.find('li.die.d200').each(function() {
+        const rollValue = parseInt($(this).text(), 10);
+        
+        // 5. Does the die match our custom fumble range? (e.g., <= 10)
+        if (!isNaN(rollValue) && rollValue <= customFumble) {
+            
+            // Double tap the tiny die just to ensure it maintains our custom red styling
+            $(this).addClass('aeris-fumble-die fumble min');
+            let currentDieStyle = $(this).attr('style') || '';
+            $(this).attr('style', currentDieStyle + ' color: #aa0200 !important; font-weight: bold !important;');
+
+            // 6. SURGICAL STRIKE: Walk up the tree to find THIS specific attack's container.
+            // This prevents turning a successful attack red if a player uses Multi-Attack/Full Attack.
+            let $attackContainer = $(this).closest('.attack-roll, .damage-roll, .dice-roll');
+            
+            // Fallback if the layout is flat
+            if ($attackContainer.length === 0) $attackContainer = $html;
+
+            // 7. Paint ONLY the totals related to this specific fumbled attack
+            $attackContainer.find('.dice-total, .roll-total, .total').each(function() {
+                $(this).removeClass('critical success');
+                $(this).addClass('aeris-fumble-total');
+                
+                // Nuclear override against PF1e's stylesheets
+                let currentStyle = $(this).attr('style') || '';
+                $(this).attr('style', currentStyle + ' color: #aa0200 !important; text-shadow: 0 0 4px rgba(170, 2, 0, 0.4) !important; border-color: #aa0200 !important;');
+            });
+        }
+    });
 });
