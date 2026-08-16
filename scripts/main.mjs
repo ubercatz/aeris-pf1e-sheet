@@ -472,22 +472,20 @@ Hooks.once("init", () => {
   }, "WRAPPER");
   
 });
-// ─── CHAT CARD STYLING (V13 MODERNIZED & BULLETPROOF) ──────────────────────────
+// ─── CHAT CARD STYLING (V13 PURE VANILLA JS) ───────────────────────────────────
 
 Hooks.on("renderChatMessageHTML", (message, html, data) => {
     // 1. Settings Check
     if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
 
-    // 2. Fetch Custom Fumble Range (Dynamically matches your Item UI!)
-    let customFumble = 10; // Baseline fallback
+    // 2. Fetch Custom Fumble Range
+    let customFumble = 10; 
     try {
         const actor = ChatMessage.getSpeakerActor(message.speaker);
         if (actor) {
-            // Find the specific item used in the attack via PF1e's system data
             const itemId = message.system?.item?.id;
             if (itemId) {
                 const item = actor.items.get(itemId);
-                // Check if the item has our custom Fumble Range flag
                 if (item && item.flags["pf1-altsheet-reworked"]?.fumbleRange !== undefined) {
                     customFumble = Number(item.flags["pf1-altsheet-reworked"].fumbleRange);
                 }
@@ -497,45 +495,44 @@ Hooks.on("renderChatMessageHTML", (message, html, data) => {
         console.warn("PF1 Alt Sheet: Could not fetch custom fumble flag, defaulting to 10.");
     }
 
-    // 3. Wrap native V13 HTML element
-    const $html = $(html);
+    // 3. V13 Native DOM Parsing (No jQuery!)
+    // 'html' is passed as a native HTMLElement array or object in V13.
+    // We grab the main element to search through.
+    const htmlElement = html.length ? html[0] : html;
 
-    // 4. Find all d200 dice tooltips directly in the rendered HTML
-    $html.find('li.die.d200').each(function() {
-        const rollValue = parseInt($(this).text(), 10);
+    // 4. Find all d200 dice tooltips directly via browser DOM
+    const d200s = htmlElement.querySelectorAll('li.die.d200');
+    
+    d200s.forEach(die => {
+        const rollValue = parseInt(die.textContent, 10);
         
-        // 5. Does the die match our custom fumble range? (e.g., <= 10)
+        // 5. Does the die match our custom fumble range?
         if (!isNaN(rollValue) && rollValue <= customFumble) {
             
-            // Double tap the tiny die just to ensure it maintains our custom red styling
-            $(this).addClass('aeris-fumble-die fumble min');
-            let currentDieStyle = $(this).attr('style') || '';
-            $(this).attr('style', currentDieStyle + ' color: #aa0200 !important; font-weight: bold !important;');
+            // Double-tap the tooltip die
+            die.classList.add('aeris-fumble-die', 'fumble', 'min');
+            die.style.setProperty('color', '#aa0200', 'important');
+            die.style.setProperty('font-weight', 'bold', 'important');
 
-            // 6. THE PF1E FIX: Find the *closest* wrapper. 
-            // PF1e attacks are usually wrapped in flexrows, dice-rolls, or message-contents
-            let $attackContainer = $(this).closest('.flexrow, .attack-roll, .dice-roll');
-            if ($attackContainer.length === 0) $attackContainer = $(this).closest('.message-content, .chat-card');
-            if ($attackContainer.length === 0) $attackContainer = $html;
+            // 6. Walk up the tree to find THIS specific attack's container
+            let container = die.closest('.attack-roll, .damage-roll, .dice-roll, .flexrow');
+            if (!container) container = htmlElement; // Fallback
 
-            // 7. SURGICAL STRIKE: Target EVERY possible class PF1e uses for totals
-            const pf1eTargets = [
-                '.dice-total', 
-                '.roll-total', 
-                '.total', 
-                '.inline-roll', 
-                '.inline-result', 
-                '.attack-result'
-            ];
+            // 7. Target EVERY possible class PF1e uses for totals
+            const totals = container.querySelectorAll('.dice-total, .roll-total, .total, .inline-roll, .inline-result, .attack-result');
             
-            $attackContainer.find(pf1eTargets.join(', ')).each(function() {
-                // Strip the system's success states
-                $(this).removeClass('critical success');
-                $(this).addClass('aeris-fumble-total fumble min');
+            totals.forEach(total => {
+                // Strip the system's success states so they don't fight us
+                total.classList.remove('critical', 'success', 'max');
+                
+                // Inject the native PF1e fumble classes to trigger base system red
+                total.classList.add('aeris-fumble-total', 'fumble', 'min');
                 
                 // Nuclear override against PF1e's stylesheets
-                let currentStyle = $(this).attr('style') || '';
-                $(this).attr('style', currentStyle + ' color: #aa0200 !important; text-shadow: 0 0 4px rgba(170, 2, 0, 0.4) !important; border-color: #aa0200 !important; background-color: rgba(170, 2, 0, 0.1) !important;');
+                total.style.setProperty('color', '#aa0200', 'important');
+                total.style.setProperty('border-color', '#aa0200', 'important');
+                total.style.setProperty('text-shadow', '0 0 4px rgba(170, 2, 0, 0.4)', 'important');
+                total.style.setProperty('background-color', 'rgba(170, 2, 0, 0.1)', 'important');
             });
         }
     });
