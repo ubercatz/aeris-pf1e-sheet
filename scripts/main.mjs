@@ -547,3 +547,28 @@ Hooks.on("renderChatMessageHTML", (message, html, data) => {
         }
     });
 });
+Hooks.on("preCreateChatMessage", (message, data, options, userId) => {
+    // Only execute this for the player actually making the roll
+    if (game.user.id !== userId) return;
+
+    // 1. Dig into Pathfinder 1e's hidden attack data structure
+    const pf1Attacks = foundry.utils.getProperty(message, "system.rolls.attacks");
+    
+    // 2. Check if this is an attack card AND if the standard rolls array is currently empty
+    if (pf1Attacks && Array.isArray(pf1Attacks) && message.rolls.length === 0) {
+        
+        // 3. Extract the actual Roll objects from PF1e's custom attack array
+        const extractedRolls = pf1Attacks
+            .map(atk => atk.roll) // Grab the 'roll' property from the attack data
+            .filter(r => r !== undefined); // Ensure it actually exists
+            
+        if (extractedRolls.length > 0) {
+            // 4. Update the message source to inject these rolls into standard Foundry logic!
+            // We stringify the JSON because older and newer versions of Foundry both accept this format safely.
+            const serializedRolls = extractedRolls.map(r => JSON.stringify(r.toJSON()));
+            
+            message.updateSource({ rolls: serializedRolls });
+            console.log("Aeris Engine: Successfully bridged PF1e hidden attack rolls for Sephral's Roll Triggers!");
+        }
+    }
+});
