@@ -584,3 +584,12 @@ Hooks.on("preCreateChatMessage", (message, data, options, userId) => {
         console.log("Aeris Engine: Chat message stamped with flags ->", customFlags);
     }
 });
+Hooks.on("createChatMessage", (message) => {
+    console.log("==== AERIS ENGINE: CHAT MESSAGE X-RAY ====");
+    console.log("1. The Full Message Object:", message);
+    
+    // PF1e usually hides its complex attack/damage data in one of these two places:
+    console.log("2. PF1e System Data:", message.system);
+    console.log("3. PF1e Custom Flags:", message.flags?.pf1);
+    console.log("==========================================");
+});
