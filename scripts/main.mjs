@@ -548,27 +548,39 @@ Hooks.on("renderChatMessageHTML", (message, html, data) => {
     });
 });
 Hooks.on("preCreateChatMessage", (message, data, options, userId) => {
-    // Only execute this for the player actually making the roll
+    // 1. Only evaluate this for the player actually rolling
     if (game.user.id !== userId) return;
 
-    // 1. Dig into Pathfinder 1e's hidden attack data structure
+    // 2. Dig into Pathfinder 1e's hidden attack data structure
     const pf1Attacks = foundry.utils.getProperty(message, "system.rolls.attacks");
-    
-    // 2. Check if this is an attack card AND if the standard rolls array is currently empty
-    if (pf1Attacks && Array.isArray(pf1Attacks) && message.rolls.length === 0) {
-        
-        // 3. Extract the actual Roll objects from PF1e's custom attack array
-        const extractedRolls = pf1Attacks
-            .map(atk => atk.roll) // Grab the 'roll' property from the attack data
-            .filter(r => r !== undefined); // Ensure it actually exists
+    if (!pf1Attacks || !Array.isArray(pf1Attacks)) return;
+
+    let isFumble = false;
+    let isCritical = false;
+
+    // 3. Scan the hidden attack rolls for our 10x Granularity Engine results
+    for (let atk of pf1Attacks) {
+        if (atk.roll && atk.roll.terms && atk.roll.terms[0]) {
+            const mainDie = atk.roll.terms[0];
             
-        if (extractedRolls.length > 0) {
-            // 4. Update the message source to inject these rolls into standard Foundry logic!
-            // We stringify the JSON because older and newer versions of Foundry both accept this format safely.
-            const serializedRolls = extractedRolls.map(r => JSON.stringify(r.toJSON()));
-            
-            message.updateSource({ rolls: serializedRolls });
-            console.log("Aeris Engine: Successfully bridged PF1e hidden attack rolls for Sephral's Roll Triggers!");
+            // Check if it's your modified 10x engine dice (d200)
+            if (mainDie.faces === 200 && mainDie.results) {
+                for (let res of mainDie.results) {
+                    if (res.result <= 10) isFumble = true;
+                    if (res.result >= 191) isCritical = true; // Might as well flag crits too!
+                }
+            }
         }
+    }
+
+    // 4. Apply the custom flags to the message!
+    // We put them inside an "aeris" namespace so they never conflict with other modules.
+    const customFlags = {};
+    if (isFumble) customFlags["flags.aeris.fumble"] = true;
+    if (isCritical) customFlags["flags.aeris.critical"] = true;
+
+    if (Object.keys(customFlags).length > 0) {
+        message.updateSource(customFlags);
+        console.log("Aeris Engine: Chat message stamped with flags ->", customFlags);
     }
 });
