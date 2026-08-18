@@ -58,24 +58,21 @@ Hooks.once("init", () => {
     `modules/${MODULE_ID}/templates/parts/settings.hbs`,
   ]);
 });
-// ========================================================================
-// CUSTOM UI INJECTOR: Adds the "Fumble Range" field to Weapons and Spells
-// ========================================================================
+
+// ─── CUSTOM UI INJECTOR ───────────────────────────────────────────────────
+
 Hooks.on("renderItemSheet", (app, html, data) => {
-    // 1. Only run this for Weapons, Spells, and Attacks
     if (!["weapon", "spell", "attack"].includes(app.item.type)) return;
 
-    // 2. Grab the existing custom Fumble flag, or default to standard 10
-    let currentFumble = app.item.getFlag("pf1-altsheet-reworked", "fumbleRange");
+    let currentFumble = app.item.getFlag(MODULE_ID, "fumbleRange");
     if (currentFumble === undefined) currentFumble = 10;
 
-    // 3. Build our custom HTML field using native Foundry styling
     let fumbleHtml = `
         <div class="form-group">
             <label>10x Fumble Range</label>
             <div class="form-fields">
                 <input type="number" 
-                       name="flags.pf1-altsheet-reworked.fumbleRange" 
+                       name="flags.${MODULE_ID}.fumbleRange" 
                        value="${currentFumble}" 
                        data-dtype="Number">
             </div>
@@ -83,44 +80,56 @@ Hooks.on("renderItemSheet", (app, html, data) => {
         </div>
     `;
 
-    // 4. Inject it natively into the "Advanced" tab of the Item Sheet
     let $advancedTab = html.find('.tab[data-tab="advanced"]');
     if ($advancedTab.length > 0) {
         $advancedTab.append(fumbleHtml);
     } else {
-        // Safe fallback just in case the item sheet is structured differently
         html.find('.sheet-body').append(fumbleHtml);
     }
 });
+
 // ─── READY: SYSTEM OVERRIDES ──────────────────────────────────────────────
 
 Hooks.once("ready", () => {
   if (game.system?.id !== "pf1") return;
 
-  // 1. Register Alternate Sheets
   DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltCharacterSheetPF, { label: game.i18n.localize("PF1AR.CharacterSheetLabel"), types: ["character"], makeDefault: false });
   DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltNPCSheetPF, { label: game.i18n.localize("PF1AR.NPCSheetLabel"), types: ["npc"], makeDefault: false });
   DocumentSheetConfig.updateDefaultSheets();
 
-
-  document.head.appendChild(pf1arStyles);
-
-  // 3. Apply Base System Config Math Overrides
   if (game.settings.get(MODULE_ID, "enable10xGranularity") && pf1.config) {
     pf1.config.classSkillBonus = 30;
     pf1.config.nonProficiencyPenalty = -40;
   }
 });
+
+// ─── STYLESHEET INJECTION ─────────────────────────────────────────────────
+
+Hooks.once("init", () => {
+    const aerisStyles = document.createElement("style");
+    aerisStyles.innerHTML = `
+        .aeris-crit-fail {
+            color: #aa0200 !important;
+            border-color: #aa0200 !important;
+            text-shadow: 0 0 4px rgba(170, 2, 0, 0.4) !important;
+            background-color: rgba(170, 2, 0, 0.1) !important;
+        }
+        .aeris-crit-fail-die {
+            color: #aa0200 !important;
+            font-weight: bold !important;
+        }
+    `;
+    document.head.appendChild(aerisStyles);
+});
+
 // ─── LIBWRAPPER INTERCEPTIONS (10X ENGINE) ────────────────────────────────
 
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
- // 1. Core Dice Evaluator: Scales dice and reads the Custom UI Fumble Range
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       for (let term of this.terms) {
-        // Pre-roll setup: Scale dice up to 200
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
           term._pf1arScaled = true;
@@ -128,23 +137,19 @@ Hooks.once("init", () => {
       }
     }
 
-    // Let Foundry execute the math natively
     let evaluatedRoll = await wrapped(...args);
 
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      // A. Hunt for the custom UI Fumble Range you typed in (Defaults to 10)
       let customFumble = 10;
       try {
-          // Check standard PF1e item data locations attached to the roll
           let itemData = this.data?.item || this.options?.item;
           if (!itemData && this.data?.flags) itemData = this.data; 
           
-          if (itemData?.flags && itemData.flags["pf1-altsheet-reworked"]?.fumbleRange !== undefined) {
-              customFumble = Number(itemData.flags["pf1-altsheet-reworked"].fumbleRange);
+          if (itemData?.flags && itemData.flags[MODULE_ID]?.fumbleRange !== undefined) {
+              customFumble = Number(itemData.flags[MODULE_ID].fumbleRange);
           }
       } catch (e) {}
 
-      // B. Flag any d200 that rolls equal to or below your custom threshold
       for (let term of this.terms) {
         if (term.faces === 200 && term.results) {
           for (let res of term.results) {
@@ -152,7 +157,6 @@ Hooks.once("init", () => {
               res.fumble = true;
               res.failure = true; 
             } else {
-              // Prevents PF1e from falsely keeping native 20 fumbles 
               res.fumble = false;
               res.failure = false;
             }
@@ -162,7 +166,7 @@ Hooks.once("init", () => {
     }
     return evaluatedRoll;
   }, "WRAPPER");
-  // 2. Item Base Data: Armor, ACP, Enhancements, and Smart Formula Scaling
+
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareBaseData", function (wrapped, ...args) {
     wrapped(...args); 
     
@@ -173,35 +177,20 @@ Hooks.once("init", () => {
         let res = f;
         let pId = 0;
         let placeholders = {};
-
-        // Helper: Hides successfully scaled dice/pools so later math passes CANNOT touch them
         const hide = (str) => {
             const key = `__PF1AR_${pId++}__`;
             placeholders[key] = str;
             return key;
         };
 
-        // ========================================================================
-        // PRONG 1: EXPLICIT CAPPED DICE POOLS (e.g., Fireball, Snowball)
-        // UPGRADES IN THIS VERSION:
-        // - `([^)]+)` catches complex inner variables (like @cl+2 or floor(@cl))
-        // - `(\s*(?:\[.*?\])?\s*)` catches and preserves [fire] flavor text & spaces!
-        // - `fcs <= 20` prevents exponential dice explosion on multiple math passes!
-        // ========================================================================
-
-        // 1a. Standard Pool: min(10, @cl)d6 -> min(10, @cl)d60
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
             let fcs = Number(faces);
             return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
-
-        // 1b. Outer Parens: (min(10, @cl))d6 -> (min(10, @cl))d60
         res = res.replace(/\(\s*(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
             let fcs = Number(faces);
             return hide(`(${func}(${num}, ${variable}))${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
-
-        // 1c. Multiplied Pool: (min(10, @cl)) * 1d6 -> (min(10, @cl)) * 1d60
         res = res.replace(/\(\s*(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)\s*\)(\s*(?:\[.*?\])?\s*\*\s*)(\d*)d(\d+)/gi, (m, func, num, variable, middle, count, faces) => {
             let fcs = Number(faces);
             return hide(`(${func}(${num}, ${variable}))${middle}${count || ""}d${fcs <= 20 ? fcs * 10 : fcs}`);
@@ -210,14 +199,10 @@ Hooks.once("init", () => {
             let fcs = Number(faces);
             return hide(`${func}(${num}, ${variable})${middle}${count || ""}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
-
-        // 1d. Reversed limits: min(@cl, 10)d6 -> min(@cl, 10)d60
         res = res.replace(/(min|max)\(\s*([^,]+)\s*,\s*(\d+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, num, middle, faces) => {
             let fcs = Number(faces);
             return hide(`${func}(${variable}, ${num})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
-
-        // 1e. Fractional levels: floor(@cl/2)d6 -> floor(@cl/2)d60
         res = res.replace(/(floor|ceil)\(\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, middle, faces) => {
             let fcs = Number(faces);
             return hide(`${func}(${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
@@ -226,59 +211,35 @@ Hooks.once("init", () => {
             let fcs = Number(faces);
             return hide(`(${func}(${variable}))${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
-
-        // 1f. Uncapped variable pools: @cl d6 -> @cl d60
         res = res.replace(/(@[a-zA-Z0-9_.]+)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, variable, middle, faces) => {
             let fcs = Number(faces);
             return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
 
-        // ========================================================================
-        // PRONG 2: ISOLATE STANDARD DICE
-        // Temporarily hides generic dice (1d8, 4d6) so flat math ignores them.
-        // ========================================================================
         res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, count, faces) => {
             let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
             return hide(`${count || ""}d${scaledFaces}`);
         });
-
-        // ========================================================================
-        // PRONG 3: EXPLICIT FLAT MATH (e.g., Cure Light Wounds)
-        // Since all dice are safely hidden, we can scale BOTH the cap and variable!
-        // ========================================================================
         
-        // Matches: min(5, @cl) -> min(50, (@cl * 10))
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)/gi, (m, func, num, variable) => {
             return `${func}(${Number(num) * 10}, (${variable} * 10))`;
         });
-        
-        // Matches Reversed: min(@cl, 5) -> min((@cl * 10), 50)
         res = res.replace(/(min|max)\(\s*(@[a-zA-Z0-9_.]+)\s*,\s*(\d+)\s*\)/gi, (m, func, variable, num) => {
             return `${func}((${variable} * 10), ${Number(num) * 10})`;
         });
 
-        // ========================================================================
-        // PRONG 4: STANDALONE FLAT VARIABLES AND INTEGERS (+ @cl or + 1)
-        // ========================================================================
         res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)/gi, (m, sign, variable) => {
             return `${sign}(${variable} * 10)`;
         });
-
         res = res.replace(/(^|[-+]\s*)(\d+)\b/gi, (m, sign, num) => {
             return `${sign}${Number(num) * 10}`;
         });
 
-        // ========================================================================
-        // PRONG 5: RESTORE PLACEHOLDERS
-        // Puts the safely scaled Fireball and Standard Dice back into the string!
-        // ========================================================================
         for (const [key, val] of Object.entries(placeholders)) {
             res = res.replace(key, val);
         }
-
         return res;
       };
-      //end scaleCL
 
       if (this.system?.armor) {
         if (this._source?.system?.armor?.value !== undefined) this.system.armor.value = Number(this._source.system.armor.value) * 10;
@@ -286,135 +247,68 @@ Hooks.once("init", () => {
       }
       if (this.system?.enh !== undefined && this._source?.system?.enh !== undefined) this.system.enh = Number(this._source.system.enh) * 10;
 
-      // Scale Item Buffs/Debuffs & Damage formulas safely
       if (this.system?.changes && this._source?.system?.changes) {
         this.system.changes.forEach((change, i) => {
           const srcFormula = this._source.system.changes[i]?.formula;
           if (srcFormula) change.formula = scaleCL(String(srcFormula));
         });
       }
+
       if (this.system?.actions && this._source?.system?.actions) {
         this.system.actions.forEach((action, i) => {
           const srcAction = this._source.system.actions[i];
           
-          // 1. Scale Damage Formulas safely
           if (srcAction && action.damage?.parts) {
             action.damage.parts.forEach((part, j) => {
               const srcFormula = srcAction.damage.parts[j]?.formula;
               if (srcFormula) part.formula = scaleCL(String(srcFormula));
             });
           }
+
           if (action.actionType) {
-              // ========================================================================
-              // UNIVERSAL CRITICAL THREAT CONVERTER (Weapons, Spells, Skills)
-              // ========================================================================
-              
-              // 1. Safely guarantee the nested 'ability' container exists for ALL actions
               action.ability = action.ability || {};
               
-              // 2. Look for the crit range in the new V11 location OR the old legacy location
               let cRange = action.ability.critRange;
               if (cRange === undefined || cRange === null || cRange === "") {
                   cRange = action.critRange;
               }
               
-              // 3. If it is completely blank, PF1e assumes '20'. We force it to '191'.
               if (cRange === undefined || cRange === null || cRange === "") {
                   action.ability.critRange = 191; 
-                  action.critRange = 191; // Legacy fallback sync
+                  action.critRange = 191; 
               } else {
                   cRange = Number(cRange);
-                  
                   if (!isNaN(cRange)) {
-                      // 4a. If it's a standard PF1e range (20, 19, 18), scale it!
                       if (cRange > 0 && cRange <= 20) {
                           let scaled = (cRange * 10) - 9;
                           action.ability.critRange = scaled;
                           action.critRange = scaled; 
-                      } 
-                      // 4b. Safely catches your manual granular inputs (like 181 or 175)
-                      // and perfectly syncs them into the modern database location.
-                      else {
+                      } else {
                           action.ability.critRange = cRange;
                           action.critRange = cRange;
                       }
                   }
               }
           }
-          /*if (action.actionType) {
-              
-              // ========================================================================
-              // 1. STANDARD ATTACKS (Weapons, Features, etc.)
-              // This is your original working code! We leave it completely alone.
-              // ========================================================================
-              if (this.type !== "spell") {
-                  let cRange = action.critRange; 
-                  // (Assuming this was your working logic, adjust if yours looked slightly different)
-                  if (cRange !== undefined && cRange !== null && cRange !== "") {
-                      cRange = Number(cRange);
-                      // Only convert if it's 20 or below, ignoring manual 181+ inputs
-                      if (!isNaN(cRange) && cRange > 0 && cRange <= 20) {
-                          action.critRange = (cRange * 10) - 9;
-                      }
-                  }
-              }
-
-              // ========================================================================
-              // 2. SPELL ATTACKS EXCLUSIVE
-              // Completely isolated. Targets the deeper nested 'ability' object securely.
-              // ========================================================================
-              if (this.type === "spell") {
-                  // Safely ensure the ability object exists without overwriting existing stats
-                  action.ability = action.ability || {};
-                  
-                  let cRange = action.ability.critRange;
-                  
-                  // Spells are usually blank by default in the database (which means 20)
-                  // If it's blank, we force it directly to 191
-                  if (cRange === undefined || cRange === null || cRange === "") {
-                      action.ability.critRange = 191; 
-                  } else {
-                      cRange = Number(cRange);
-                      // If a user manually typed 19, convert to 181. 
-                      // If it is already 191, it safely ignores it.
-                      if (!isNaN(cRange) && cRange > 0 && cRange <= 20) {
-                          action.ability.critRange = (cRange * 10) - 9;
-                      }
-                  }
-              }
-              
-          }*/
-// ========================================================================
-          
-          
-          
         });
       }
-      
     }
   }, "WRAPPER");
-// 3. System-Wide Ability Modifier Interception
+
   libWrapper.register(MODULE_ID, "pf1.utils.getAbilityModifier", function (wrapped, score, ...args) {
-    // We ensure score is a number so we don't accidentally break system checks passing undefined
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && typeof score === "number") {
-       // Shift base 10 to 100, divide by 2 for the 1-to-2 scaling ratio
        return Math.floor((score - 100) / 2);
     }
     return wrapped(score, ...args);
   }, "MIXED");
-// 5. Action DC Interception: Natively scale Spell and Ability Save DCs
+
   libWrapper.register(MODULE_ID, "pf1.components.ItemAction.prototype.getDC", function(wrapped, ...args) {
     let result = wrapped(...args);
     
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && result != null) {
-      // Safely pull the spell level (defaults to 0 for non-spell actions like Ex/Su abilities)
       const sl = this.spellLevel ?? this.item?.spellLevel ?? 0;
-      
-      // Calculate the difference needed to reach our 10x baseline
-      // Base 10 needs 90. Spell Level 1 needs 9. (Modifier is already 10x).
       const bonus = 90 + (sl * 9);
       
-      // The system sometimes returns an object and sometimes a raw number depending on the hook phase
       if (typeof result === "number") {
           result += bonus;
       } else if (result.value !== undefined) {
@@ -423,13 +317,12 @@ Hooks.once("init", () => {
     }
     return result;
   }, "WRAPPER");
-  // 4. Actor Derived Data: Natively Scale BAB, AC, and Encumbrance
+
   libWrapper.register(MODULE_ID, "CONFIG.Actor.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args); 
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
-      // Base AC Adjustment
       if (this.system.attributes?.ac) {
         ["normal", "touch", "flatFooted"].forEach(type => {
           if (this.system.attributes.ac[type]?.total !== undefined) {
@@ -438,7 +331,6 @@ Hooks.once("init", () => {
         });
       }
 
-      // BAB (Fractional or standard 10x)
       if (game.settings.get(MODULE_ID, "enableFractionalProgression")) {
         let granularBab = 0;
         for (const item of this.items) {
@@ -454,10 +346,8 @@ Hooks.once("init", () => {
         if (this.system.attributes?.bab?.total !== undefined) this.system.attributes.bab.total *= 10;
       }
 
-      // Encumbrance Manual Override
-      // Prevents the system from using raw 223 STR to calculate trillions of pounds
       if (this.system.attributes?.encumbrance && this.system.abilities?.str?.total) {
-        const str = Math.floor(this.system.abilities.str.total / 10); // Treat 223 as 22
+        const str = Math.floor(this.system.abilities.str.total / 10); 
         let heavy = 0;
         if (str <= 10) heavy = str * 10;
         else {
@@ -470,88 +360,14 @@ Hooks.once("init", () => {
       }
     }
   }, "WRAPPER");
-  
-});
-// ─── 1. INJECT AERIS CUSTOM STYLESHEET (RUNS ONCE ON LOAD) ─────────────────────
-
-Hooks.once("init", () => {
-    // We inject this directly into the browser so we don't have to fight PF1e's CSS files
-    const aerisStyles = document.createElement("style");
-    aerisStyles.innerHTML = `
-        /* Our brand new classification for custom fumbles */
-        .aeris-crit-fail {
-            color: #aa0200 !important;
-            border-color: #aa0200 !important;
-            text-shadow: 0 0 4px rgba(170, 2, 0, 0.4) !important;
-            background-color: rgba(170, 2, 0, 0.1) !important;
-        }
-        /* Make the tiny tooltip dice match */
-        .aeris-crit-fail-die {
-            color: #aa0200 !important;
-            font-weight: bold !important;
-        }
-    `;
-    document.head.appendChild(aerisStyles);
 });
 
-// ─── 2. CHAT CARD STYLING (NEW CLASS PROTOCOL) ─────────────────────────────────
+// ─── CHAT HOOKS: DATA BROADCASTING & DOM STYLING ──────────────────────────
 
-Hooks.on("renderChatMessageHTML", (message, html, data) => {
-    // A. Settings Check
-    if (!game.settings.get("pf1-altsheet-reworked", "enable10xGranularity")) return;
-
-    // B. Fetch Custom Fumble Range
-    let customFumble = 10; 
-    try {
-        const actor = ChatMessage.getSpeakerActor(message.speaker);
-        if (actor) {
-            const itemId = message.system?.item?.id;
-            if (itemId) {
-                const item = actor.items.get(itemId);
-                if (item && item.flags["pf1-altsheet-reworked"]?.fumbleRange !== undefined) {
-                    customFumble = Number(item.flags["pf1-altsheet-reworked"].fumbleRange);
-                }
-            }
-        }
-    } catch (e) {
-        console.warn("PF1 Alt Sheet: Could not fetch custom fumble flag, defaulting to 10.");
-    }
-
-    // C. V13 Native DOM Parsing
-    const htmlElement = html.length ? html[0] : html;
-    const d200s = htmlElement.querySelectorAll('li.die.d200');
-    
-    d200s.forEach(die => {
-        const rollValue = parseInt(die.textContent, 10);
-        
-        // D. Apply our NEW class to the 1-10 range (includes 1 so it perfectly matches 2-10)
-        if (!isNaN(rollValue) && rollValue <= customFumble) {
-            
-            // Stamp the die
-            die.classList.add('aeris-crit-fail-die');
-
-            // Find the container
-            let container = die.closest('.attack-roll, .damage-roll, .dice-roll, .flexrow');
-            if (!container) container = htmlElement; 
-
-            // Find the totals
-            const totals = container.querySelectorAll('.dice-total, .roll-total, .total, .inline-roll, .inline-result, .attack-result');
-            
-            totals.forEach(total => {
-                // Strip all system success/fail states entirely. We own this box now.
-                total.classList.remove('critical', 'success', 'max', 'fumble', 'min');
-                
-                // Stamp it with our unbreakable custom class
-                total.classList.add('aeris-crit-fail');
-            });
-        }
-    });
-});
 Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
-    // 1. Only run for the player rolling the dice
     if (game.user.id !== userId) return;
 
-    // 2. Locate PF1e's hidden attacks array (we now know they are direct RollPF objects!)
+    // PF1e attacks are stored as an array of objects: { attack: D20RollPF, damage: [DamageRoll] }
     const attacks = message?.system?.rolls?.attacks;
     if (!attacks || !Array.isArray(attacks) || attacks.length === 0) return;
 
@@ -559,22 +375,21 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     let agnosticResult = null;
     let isFumble = false;
 
-    // 3. Loop through the hidden attacks and extract the raw dice
-    attacks.forEach(atkRoll => {
+    attacks.forEach(attackGroup => {
+        const atkRoll = attackGroup.attack;
+        
+        // Ensure the roll exists and dive into the terms array
         if (atkRoll && atkRoll.terms && atkRoll.terms[0]) {
             const mainDie = atkRoll.terms[0];
             
-            // Ensure we are tracking our custom 10x Granularity Engine d200
             if (mainDie.faces === 200) {
-                // Grab the raw numerical result of the d200
                 agnosticResult = mainDie.total; 
                 
-                // Check if it's in our 1-10 fumble range
-                if (mainDie.results.some(res => res.result <= 10)) {
+                // If our _evaluate wrapper flagged any of the results as a fumble
+                if (mainDie.results.some(res => res.fumble)) {
                     isFumble = true;
                 }
 
-                // Push the full Roll object into an array, stringified (Foundry DB requirement)
                 try {
                     exportedRolls.push(JSON.stringify(atkRoll.toJSON()));
                 } catch (e) {
@@ -584,18 +399,45 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         }
     });
 
-    // 4. INJECT THE AGNOSTIC DATA INTO FOUNDRY CORE
     if (exportedRolls.length > 0) {
         const injectedData = {
-            // A. Populate the standard Foundry rolls array for generic modules!
             rolls: exportedRolls,
-            
-            // B. Stamp pure, easily readable numbers and booleans into the flags
             "flags.aeris.d200Result": agnosticResult,
             "flags.aeris.isFumble": isFumble
         };
-
         message.updateSource(injectedData);
-        console.log("Aeris Engine: Successfully broadcasted agnostic roll data!", injectedData);
     }
+});
+
+Hooks.on("renderChatMessageHTML", (message, html, data) => {
+    if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return;
+
+    const htmlElement = html.length ? html[0] : html;
+    
+    // PF1e stores the roll data natively encoded inside the 'data-roll' attribute of the <a> tag
+    const inlineRolls = htmlElement.querySelectorAll('.inline-roll[data-roll]');
+    
+    inlineRolls.forEach(rollEl => {
+        try {
+            const rollData = JSON.parse(decodeURIComponent(rollEl.getAttribute('data-roll')));
+            const firstTerm = rollData.terms?.[0];
+            
+            // Validate that this is our scaled d200
+            if (firstTerm?.class === "Die" && firstTerm.faces === 200 && firstTerm.results) {
+                const isCustomFumble = firstTerm.results.some(r => r.fumble);
+                
+                if (isCustomFumble) {
+                    // Give the inner dice icon the red stamp
+                    const icon = rollEl.querySelector('.fa-dice-d20');
+                    if (icon) icon.classList.add('aeris-crit-fail-die');
+                    
+                    // Nuke PF1e's styling and apply ours
+                    rollEl.classList.remove('critical', 'success', 'max', 'fumble', 'min', 'natural-1');
+                    rollEl.classList.add('aeris-crit-fail');
+                }
+            }
+        } catch (e) {
+            console.warn("PF1 Alt Sheet: Failed to decode chat card roll data.", e);
+        }
+    });
 });
