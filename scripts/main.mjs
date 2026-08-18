@@ -547,49 +547,55 @@ Hooks.on("renderChatMessageHTML", (message, html, data) => {
         }
     });
 });
-Hooks.on("preCreateChatMessage", (message, data, options, userId) => {
-    // 1. Only evaluate this for the player actually rolling
+Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
+    // 1. Only run for the player rolling the dice
     if (game.user.id !== userId) return;
 
-    // 2. Dig into Pathfinder 1e's hidden attack data structure
-    const pf1Attacks = foundry.utils.getProperty(message, "system.rolls.attacks");
-    if (!pf1Attacks || !Array.isArray(pf1Attacks)) return;
+    // 2. Locate PF1e's hidden attacks array (we now know they are direct RollPF objects!)
+    const attacks = message?.system?.rolls?.attacks;
+    if (!attacks || !Array.isArray(attacks) || attacks.length === 0) return;
 
+    let exportedRolls = [];
+    let agnosticResult = null;
     let isFumble = false;
-    let isCritical = false;
 
-    // 3. Scan the hidden attack rolls for our 10x Granularity Engine results
-    for (let atk of pf1Attacks) {
-        if (atk.roll && atk.roll.terms && atk.roll.terms[0]) {
-            const mainDie = atk.roll.terms[0];
+    // 3. Loop through the hidden attacks and extract the raw dice
+    attacks.forEach(atkRoll => {
+        if (atkRoll && atkRoll.terms && atkRoll.terms[0]) {
+            const mainDie = atkRoll.terms[0];
             
-            // Check if it's your modified 10x engine dice (d200)
-            if (mainDie.faces === 200 && mainDie.results) {
-                for (let res of mainDie.results) {
-                    if (res.result <= 10) isFumble = true;
-                    if (res.result >= 191) isCritical = true; // Might as well flag crits too!
+            // Ensure we are tracking our custom 10x Granularity Engine d200
+            if (mainDie.faces === 200) {
+                // Grab the raw numerical result of the d200
+                agnosticResult = mainDie.total; 
+                
+                // Check if it's in our 1-10 fumble range
+                if (mainDie.results.some(res => res.result <= 10)) {
+                    isFumble = true;
+                }
+
+                // Push the full Roll object into an array, stringified (Foundry DB requirement)
+                try {
+                    exportedRolls.push(JSON.stringify(atkRoll.toJSON()));
+                } catch (e) {
+                    console.error("Aeris Engine: Failed to parse agnostic roll", e);
                 }
             }
         }
-    }
+    });
 
-    // 4. Apply the custom flags to the message!
-    // We put them inside an "aeris" namespace so they never conflict with other modules.
-    const customFlags = {};
-    if (isFumble) customFlags["flags.aeris.fumble"] = true;
-    if (isCritical) customFlags["flags.aeris.critical"] = true;
+    // 4. INJECT THE AGNOSTIC DATA INTO FOUNDRY CORE
+    if (exportedRolls.length > 0) {
+        const injectedData = {
+            // A. Populate the standard Foundry rolls array for generic modules!
+            rolls: exportedRolls,
+            
+            // B. Stamp pure, easily readable numbers and booleans into the flags
+            "flags.aeris.d200Result": agnosticResult,
+            "flags.aeris.isFumble": isFumble
+        };
 
-    if (Object.keys(customFlags).length > 0) {
-        message.updateSource(customFlags);
-        console.log("Aeris Engine: Chat message stamped with flags ->", customFlags);
+        message.updateSource(injectedData);
+        console.log("Aeris Engine: Successfully broadcasted agnostic roll data!", injectedData);
     }
-});
-Hooks.on("createChatMessage", (message) => {
-    console.log("==== AERIS ENGINE: CHAT MESSAGE X-RAY ====");
-    console.log("1. The Full Message Object:", message);
-    
-    // PF1e usually hides its complex attack/damage data in one of these two places:
-    console.log("2. PF1e System Data:", message.system);
-    console.log("3. PF1e Custom Flags:", message.flags?.pf1);
-    console.log("==========================================");
 });
