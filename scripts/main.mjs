@@ -433,20 +433,15 @@ Hooks.on("renderChatMessage", (message, html, data) => {
 
     const $html = $(html);
     
-    // 1. SURGICALLY STRIP TAMPERED WARNINGS
+    // 1. SURGICALLY STRIP TAMPERED/ABNORMAL WARNINGS
     $html.removeClass('tampered is-tampered validation-failed');
     $html.find('.tampered, .is-tampered, .validation-failed').removeClass('tampered is-tampered validation-failed');
-    
-    // Annihilate specific known warning icons
     $html.find('.fa-triangle-exclamation, .validation-failures, .tamper-warning').remove();
+    $html.find('[data-tooltip*="Tampered"], [data-tooltip*="Validation"]').removeAttr('data-tooltip');
     
-    // NEW: Deep-scan every element for the specific "non-default" tooltip and delete the element completely
-    $html.find('*').filter(function() {
-        const tooltip = $(this).attr('data-tooltip') || $(this).attr('title') || "";
-        return tooltip.toLowerCase().includes("non-default") || 
-               tooltip.toLowerCase().includes("tampered") || 
-               tooltip.toLowerCase().includes("validation");
-    }).remove();
+    // ---> THE NEW ASSASSIN <---
+    // Nukes the PF1e specific "abnormal roll" d20 icon you found in the X-Ray
+    $html.find('i.abnormal, [data-tooltip="PF1.CustomRollDesc"]').remove();
 
     // 2. SURGICALLY STYLE PF1e ATTACK ROLLS (100% UNTOUCHED)
     $html.find('.inline-roll[data-roll]').each(function() {
@@ -483,14 +478,12 @@ Hooks.on("renderChatMessage", (message, html, data) => {
             const isFumble = dieVal <= 10 || $(this).hasClass('fumble') || $(this).hasClass('failure');
             const isCrit = dieVal === 200;
 
-            // Find the parent container (usually .dice-roll)
             let $container = $(this).closest('.dice-roll');
             if ($container.length === 0) $container = $html;
 
             const $totals = $container.find('.dice-total, .roll-total, .total');
 
             if (isFumble) {
-                // Style Fumbles
                 $(this).removeClass('critical success max natural-20');
                 $(this).addClass('aeris-crit-fail-die');
                 
@@ -498,12 +491,10 @@ Hooks.on("renderChatMessage", (message, html, data) => {
                 $totals.addClass('aeris-crit-fail');
                 $container.removeClass('critical success max natural-20');
             } else if (!isCrit && dieVal >= 20) {
-                // Strip Native Highlighting from False Crits (20-199)
                 $(this).removeClass('critical success max natural-20');
                 $totals.removeClass('critical success max natural-20');
                 $container.removeClass('critical success max natural-20');
                 
-                // Force text to render normally in case PF1e injected CSS properties inline
                 $totals.css({
                     'color': 'unset',
                     'text-shadow': 'none',
@@ -512,21 +503,4 @@ Hooks.on("renderChatMessage", (message, html, data) => {
             }
         }
     });
-});
-// ==== AERIS ENGINE: HTML X-RAY V2 ====
-Hooks.on("renderChatMessage", (message, html, data) => {
-    const $html = $(html);
-    
-    // Trigger if ANY 10x roll (d200) is detected on the card
-    if ($html.find('.d200').length > 0) {
-        console.log("==== 🔍 AERIS X-RAY: D200 ROLL DETECTED ====");
-        console.log("1. Message ID:", message.id);
-        console.log("2. The Raw HTML Structure:");
-        
-        // Grab the raw, unadulterated HTML string
-        const rawHTML = html[0].outerHTML || html.html();
-        console.log(rawHTML);
-        
-        console.log("==================================================");
-    }
 });
