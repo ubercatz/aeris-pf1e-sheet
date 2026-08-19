@@ -158,7 +158,6 @@ Hooks.once("init", () => {
 
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      const restrictBuffs = game.settings.get(MODULE_ID, "scaleSmallBuffs");
 
       for (let i = 0; i < this.terms.length; i++) {
         let term = this.terms[i];
@@ -166,34 +165,33 @@ Hooks.once("init", () => {
         // 1. SCALE DICE (1d20 -> 1d200)
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
+          if (term._evaluated && term.results) {
+              term.results.forEach(r => r.result *= 10);
+              term.total *= 10;
+          }
           term._pf1arScaled = true;
         }
 
-        // 2. NEW DYNAMIC MODIFIER CATCHER (Shaken, Sickened, Cover, etc.)
-        // We identify a flat number by checking if it has a 'number' but no 'faces' (Dice)
+        // 2. THE BRUTE-FORCE MATH CATCHER
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
-        
         if (isNumericTerm && !term._pf1arScaled) {
           let prevTerm = i > 0 ? this.terms[i-1] : null;
-          // Ensure we aren't scaling a damage multiplier (like x2 for a crit!)
           let isMultiplier = prevTerm && prevTerm.operator !== undefined && (prevTerm.operator === "*" || prevTerm.operator === "/");
 
           if (!isMultiplier) {
              let val = term.number;
              
-             // If the modifier is a small number (meaning it wasn't scaled on the character sheet yet)
+             // If the modifier is a small number (meaning it bypassed the sheet scaling, like -2 Shaken)
              if (val !== 0 && Math.abs(val) < 10) {
-                 // If it has a flavor tag (e.g. [Shaken]) or the user toggled the scale small buffs setting
-                 if (term.options?.flavor || restrictBuffs) {
-                     term.number = val * 10;
-                     term._pf1arScaled = true;
-                 }
+                 term.number = val * 10;
+                 // FORCE THE ENGINE TO USE THE NEW NUMBER
+                 if (term._evaluated) term.total = term.number; 
+                 term._pf1arScaled = true;
              }
           }
         }
       }
       
-      // Re-sync the formula string so Foundry logs the new 10x numbers correctly in chat!
       try {
           this._formula = this.constructor.getFormula(this.terms);
       } catch (e) {
@@ -472,12 +470,41 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         });
     }
 
+    let injectedData = {};
+    
     if (agnosticResult !== null) {
-        const injectedData = {
-            "flags.aeris.d200Result": agnosticResult,
-            "flags.aeris.isFumble": isFumble
-        };
+        injectedData["flags.aeris.d200Result"] = agnosticResult;
+        injectedData["flags.aeris.isFumble"] = isFumble;
         if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
+    }
+
+    // ─── THE BRUTE-FORCE VISUAL TOOLTIP CATCHER ───
+    if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.flags?.pf1?.metadata) {
+        let metaClone = foundry.utils.deepClone(message.flags.pf1.metadata);
+        
+        const scaleModifiersRecursively = (obj) => {
+            if (!obj || typeof obj !== 'object') return;
+            if (Array.isArray(obj)) {
+                obj.forEach(i => scaleModifiersRecursively(i));
+            } else {
+                // If it's a modifier dictionary, multiply small values by 10
+                if (obj.modifier !== undefined && obj.name !== undefined) {
+                    let val = Number(obj.modifier);
+                    if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+                        obj.modifier = val * 10;
+                    }
+                }
+                for (let key in obj) {
+                    if (typeof obj[key] === 'object') scaleModifiersRecursively(obj[key]);
+                }
+            }
+        };
+        
+        scaleModifiersRecursively(metaClone);
+        injectedData["flags.pf1.metadata"] = metaClone;
+    }
+
+    if (Object.keys(injectedData).length > 0) {
         message.updateSource(injectedData);
     }
 });
