@@ -436,8 +436,17 @@ Hooks.on("renderChatMessage", (message, html, data) => {
     // 1. SURGICALLY STRIP TAMPERED WARNINGS
     $html.removeClass('tampered is-tampered validation-failed');
     $html.find('.tampered, .is-tampered, .validation-failed').removeClass('tampered is-tampered validation-failed');
+    
+    // Annihilate specific known warning icons
     $html.find('.fa-triangle-exclamation, .validation-failures, .tamper-warning').remove();
-    $html.find('[data-tooltip*="Tampered"], [data-tooltip*="Validation"]').removeAttr('data-tooltip');
+    
+    // NEW: Deep-scan every element for the specific "non-default" tooltip and delete the element completely
+    $html.find('*').filter(function() {
+        const tooltip = $(this).attr('data-tooltip') || $(this).attr('title') || "";
+        return tooltip.toLowerCase().includes("non-default") || 
+               tooltip.toLowerCase().includes("tampered") || 
+               tooltip.toLowerCase().includes("validation");
+    }).remove();
 
     // 2. SURGICALLY STYLE PF1e ATTACK ROLLS (100% UNTOUCHED)
     $html.find('.inline-roll[data-roll]').each(function() {
@@ -503,4 +512,17 @@ Hooks.on("renderChatMessage", (message, html, data) => {
             }
         }
     });
+});
+// ==== AERIS ENGINE: HTML X-RAY ====
+Hooks.on("renderChatMessage", (message, html, data) => {
+    const rawHTML = html[0].outerHTML || html.html();
+    
+    // Only trigger if it detects the pesky anti-cheat text
+    if (rawHTML.toLowerCase().includes("non-default")) {
+        console.log("==== 🔍 AERIS X-RAY: ANTI-CHEAT ICON DETECTED ====");
+        console.log("1. Message ID:", message.id);
+        console.log("2. The Raw HTML Structure:");
+        console.log(rawHTML);
+        console.log("==================================================");
+    }
 });
