@@ -430,52 +430,64 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
 
 Hooks.on("renderChatMessage", (message, html, data) => {
     const $html = $(html);
+    let is10xRoll = false;
 
-    // Only process if standard rolls exist on this message
-    if (message.rolls && message.rolls.length > 0) {
-        // We use optional chaining (?.) just in case terms array is empty
-        const firstTerm = message.rolls[0].terms?.[0]; 
+    // 1. Unify Attack & Skill Rolls (Pure HTML Scan)
+    // By scanning the HTML directly, we bypass PF1e's weird message.rolls structure entirely.
+    $html.find('li.die.d200').each(function() {
+        is10xRoll = true;
+        const dieVal = parseInt($(this).text(), 10);
+        
+        if (!isNaN(dieVal)) {
+            // Walk UP to find the container that holds this specific die's Total Box
+            let $container = $(this).closest('.attack-roll, .damage-roll, .dice-roll, .flexrow');
+            if ($container.length === 0) $container = $html; // Fallback to the whole card
 
-        if (firstTerm && firstTerm.faces === 200 && firstTerm.results) {
-            const resultVal = firstTerm.results[0].result;
-            const isFumble = firstTerm.results.some(r => r.fumble) || resultVal <= 10;
-            const isCrit = resultVal === 200; 
+            // Target ANY possible total box within that container
+            const $totals = $container.find('.dice-total, .roll-total, .total, .inline-roll, .inline-result, .attack-result, .result-text, .result-value');
 
-            // A. Strip false positives from standard Total Boxes (Expanded for Skills/Saves/Init)
-            $html.find('.dice-total, .roll-total, .total, .result-text, .result-value').each(function() {
-                if (isFumble) {
+            // A. True Fumbles (1-10)
+            if (dieVal <= 10 || $(this).hasClass('fumble') || $(this).hasClass('failure')) {
+                // Paint the die red
+                $(this).removeClass('critical success max natural-20');
+                $(this).addClass('aeris-crit-fail-die');
+                
+                // Paint the total box red
+                $totals.each(function() {
                     $(this).removeClass('critical success max fumble min natural-1 natural-20');
                     $(this).addClass('aeris-crit-fail');
-                } else if (!isCrit && resultVal >= 20) {
-                    // Strip native critical/success classes that cause the blue highlight
+                });
+            } 
+            // B. False Crits (20 to 199) - Strip the native blue/green
+            else if (dieVal >= 20 && dieVal < 200) {
+                // Normalize the die
+                $(this).removeClass('critical success max natural-20');
+                
+                // Normalize the total box and forcefully clear inline CSS colors
+                $totals.each(function() {
                     $(this).removeClass('critical success max natural-20');
-                    
-                    // Forcefully clear inline CSS just in case PF1e painted the background directly
                     $(this).css({
                         'color': '',
                         'background-color': '',
                         'text-shadow': ''
                     });
-                }
-            });
-            
-            // B. Strip false positives directly from the dropdown Tooltip Dice
-            $html.find('li.die.d200').each(function() {
-                const dieVal = parseInt($(this).text(), 10);
-                if (!isNaN(dieVal)) {
-                    if (dieVal <= 10 || isFumble) {
-                        $(this).removeClass('critical success max natural-20');
-                        $(this).addClass('aeris-crit-fail-die');
-                    } else if (!isCrit && dieVal >= 20) {
-                        $(this).removeClass('critical success max natural-20');
-                    }
-                }
-            });
-
-            // C. ASSASSINATE THE TAMPER WARNINGS
-            // Because we swap d20s for d200s, PF1e's anti-cheat flags it. We simply delete the UI elements.
-            $html.removeClass('tampered validation-failed');
-            $html.find('.validation-failures, .tamper-warning, i.fa-triangle-exclamation, [data-tooltip*="Tampered"], [data-tooltip*="Validation"]').remove();
+                });
+            }
         }
+    });
+
+    // 2. ASSASSINATE THE TAMPER WARNINGS
+    // If our d200 is present, we know it's legitimate. We scrub the UI of all anti-cheat flags.
+    if (is10xRoll || (message.rolls && message.rolls.some(r => r.terms?.[0]?.faces === 200))) {
+        
+        // Target the main message wrapper AND any internal elements that got flagged
+        $html.removeClass('tampered validation-failed');
+        $html.find('.tampered, .validation-failed').removeClass('tampered validation-failed');
+        
+        // Annihilate the warning icons and text elements (covers both V11 and PF1e specific icons)
+        $html.find('.validation-failures, .tamper-warning, i.fa-triangle-exclamation, i.fa-exclamation-triangle').remove();
+        
+        // Strip hover tooltips that complain about validation
+        $html.find('[data-tooltip*="Tampered"], [data-tooltip*="tampered"], [data-tooltip*="Validation"]').removeAttr('data-tooltip');
     }
 });
