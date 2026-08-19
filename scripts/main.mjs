@@ -429,73 +429,53 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
 });
 
 Hooks.on("renderChatMessage", (message, html, data) => {
-    if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return;
-
-    // Use jQuery for flawless DOM parsing across standard rolls and PF1e templates
     const $html = $(html);
-    
-    // 1. SURGICALLY STRIP TAMPERED WARNINGS
-    $html.removeClass('tampered is-tampered');
-    $html.find('.tampered, .is-tampered').removeClass('tampered is-tampered');
-    $html.find('.fa-triangle-exclamation').remove();
 
-    // 2. SURGICALLY STYLE PF1e ATTACK ROLLS
-    $html.find('.inline-roll[data-roll]').each(function() {
-        try {
-            const rollData = JSON.parse(decodeURIComponent($(this).attr('data-roll')));
-            const firstTerm = rollData.terms?.[0];
-            
-            if (firstTerm?.class === "Die" && firstTerm.faces === 200 && firstTerm.results) {
-                const resultVal = firstTerm.results[0].result;
-                const isCustomFumble = firstTerm.results.some(r => r.fumble);
-                const critThreshold = rollData.options?.critical ?? 200;
-                
-                if (isCustomFumble) {
-                    const $icon = $(this).find('.fa-dice-d20');
-                    if ($icon.length) $icon.addClass('aeris-crit-fail-die');
+    // Only process if standard rolls exist on this message
+    if (message.rolls && message.rolls.length > 0) {
+        // We use optional chaining (?.) just in case terms array is empty
+        const firstTerm = message.rolls[0].terms?.[0]; 
+
+        if (firstTerm && firstTerm.faces === 200 && firstTerm.results) {
+            const resultVal = firstTerm.results[0].result;
+            const isFumble = firstTerm.results.some(r => r.fumble) || resultVal <= 10;
+            const isCrit = resultVal === 200; 
+
+            // A. Strip false positives from standard Total Boxes (Expanded for Skills/Saves/Init)
+            $html.find('.dice-total, .roll-total, .total, .result-text, .result-value').each(function() {
+                if (isFumble) {
                     $(this).removeClass('critical success max fumble min natural-1 natural-20');
                     $(this).addClass('aeris-crit-fail');
-                } else if (resultVal >= 20 && resultVal < critThreshold) {
+                } else if (!isCrit && resultVal >= 20) {
+                    // Strip native critical/success classes that cause the blue highlight
                     $(this).removeClass('critical success max natural-20');
+                    
+                    // Forcefully clear inline CSS just in case PF1e painted the background directly
+                    $(this).css({
+                        'color': '',
+                        'background-color': '',
+                        'text-shadow': ''
+                    });
                 }
-            }
-        } catch (e) {
-            console.warn("PF1 Alt Sheet: Failed to decode chat card roll data.", e);
-        }
-    });
-
-    // 3. SURGICALLY STYLE SKILL CHECKS & SAVES
-    if (message.rolls && message.rolls.length > 0) {
-        message.rolls.forEach(roll => {
-            const firstTerm = roll.terms?.[0];
-            if (firstTerm?.class === "Die" && firstTerm.faces === 200 && firstTerm.results) {
-                const resultVal = firstTerm.results[0].result;
-                const isFumble = firstTerm.results.some(r => r.fumble) || resultVal <= 10;
-                const isCrit = resultVal === 200; 
-
-                // A. Strip false positives from standard Total Boxes
-                $html.find('.dice-total').each(function() {
-                    if (isFumble) {
-                        $(this).removeClass('critical success max fumble min natural-1 natural-20');
-                        $(this).addClass('aeris-crit-fail');
-                    } else if (!isCrit && resultVal >= 20) {
+            });
+            
+            // B. Strip false positives directly from the dropdown Tooltip Dice
+            $html.find('li.die.d200').each(function() {
+                const dieVal = parseInt($(this).text(), 10);
+                if (!isNaN(dieVal)) {
+                    if (dieVal <= 10 || isFumble) {
+                        $(this).removeClass('critical success max natural-20');
+                        $(this).addClass('aeris-crit-fail-die');
+                    } else if (!isCrit && dieVal >= 20) {
                         $(this).removeClass('critical success max natural-20');
                     }
-                });
-                
-                // B. Strip false positives directly from the dropdown Tooltip Dice
-                $html.find('li.die.d200').each(function() {
-                    const dieVal = parseInt($(this).text(), 10);
-                    if (!isNaN(dieVal)) {
-                        if (dieVal <= 10 || isFumble) {
-                            $(this).removeClass('critical success max natural-20');
-                            $(this).addClass('aeris-crit-fail-die');
-                        } else if (!isCrit && dieVal >= 20) {
-                            $(this).removeClass('critical success max natural-20');
-                        }
-                    }
-                });
-            }
-        });
+                }
+            });
+
+            // C. ASSASSINATE THE TAMPER WARNINGS
+            // Because we swap d20s for d200s, PF1e's anti-cheat flags it. We simply delete the UI elements.
+            $html.removeClass('tampered validation-failed');
+            $html.find('.validation-failures, .tamper-warning, i.fa-triangle-exclamation, [data-tooltip*="Tampered"], [data-tooltip*="Validation"]').remove();
+        }
     }
 });
