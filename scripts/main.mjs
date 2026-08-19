@@ -129,22 +129,10 @@ Hooks.once("init", () => {
 
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      let formulaChanged = false;
-
       for (let term of this.terms) {
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
           term._pf1arScaled = true;
-          formulaChanged = true;
-        }
-      }
-
-      // Rebuild the formula so Foundry V12 security doesn't flag it as tampered
-      if (formulaChanged) {
-        try {
-            this._formula = this.constructor.getFormula(this.terms);
-        } catch (e) {
-            this._formula = this.terms.map(t => t.expression || t.formula || "").join("");
         }
       }
     }
@@ -156,7 +144,6 @@ Hooks.once("init", () => {
       try {
           let itemData = this.data?.item || this.options?.item;
           if (!itemData && this.data?.flags) itemData = this.data; 
-          
           if (itemData?.flags && itemData.flags[MODULE_ID]?.fumbleRange !== undefined) {
               customFumble = Number(itemData.flags[MODULE_ID].fumbleRange);
           }
@@ -374,7 +361,7 @@ Hooks.once("init", () => {
   }, "WRAPPER");
 });
 
-// ─── CHAT HOOKS: DATA BROADCASTING & DOM STYLING ──────────────────────────
+// ─── CHAT HOOKS: AUTHORITATIVE DATA BROADCASTING & DOM SCRUBBING ──────────
 
 Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     if (game.user.id !== userId) return;
@@ -385,6 +372,8 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     let exportedRolls = [];
     let agnosticResult = null;
     let isFumble = false;
+    let isCrit = false;
+    let isNormal = true;
 
     attacks.forEach(attackGroup => {
         const atkRoll = attackGroup.attack;
@@ -395,24 +384,43 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
             if (mainDie.faces === 200) {
                 agnosticResult = mainDie.total; 
                 
-                if (mainDie.results.some(res => res.fumble)) {
+                // 1. Find Authoritative Fumble Range
+                let fRange = 10;
+                try {
+                    let itemData = atkRoll.data?.item || atkRoll.options?.item;
+                    if (!itemData && atkRoll.data?.flags) itemData = atkRoll.data;
+                    if (itemData?.flags && itemData.flags[MODULE_ID]?.fumbleRange !== undefined) {
+                        fRange = Number(itemData.flags[MODULE_ID].fumbleRange);
+                    }
+                } catch(e) {}
+
+                // 2. Find Authoritative Crit Range
+                let cRange = atkRoll.options?.critical ?? mainDie.options?.critical ?? 200;
+
+                // 3. Determine Absolute State
+                if (agnosticResult <= fRange) {
                     isFumble = true;
+                    isNormal = false;
+                } else if (agnosticResult >= cRange) {
+                    isCrit = true;
+                    isNormal = false;
                 }
 
                 try {
                     exportedRolls.push(JSON.stringify(atkRoll.toJSON()));
-                } catch (e) {
-                    console.error("Aeris Engine: Failed to parse agnostic roll", e);
-                }
+                } catch (e) {}
             }
         }
     });
 
+    // Save our calculated truth into the database flags forever
     if (exportedRolls.length > 0) {
         const injectedData = {
             rolls: exportedRolls,
             "flags.aeris.d200Result": agnosticResult,
-            "flags.aeris.isFumble": isFumble
+            "flags.aeris.isFumble": isFumble,
+            "flags.aeris.isCrit": isCrit,
+            "flags.aeris.isNormal": isNormal
         };
         message.updateSource(injectedData);
     }
@@ -422,43 +430,56 @@ Hooks.on("renderChatMessageHTML", (message, html, data) => {
     if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return;
 
     const htmlElement = html.length ? html[0] : html;
-    const inlineRolls = htmlElement.querySelectorAll('.inline-roll[data-roll]');
-    
-    inlineRolls.forEach(rollEl => {
-        try {
-            const rollData = JSON.parse(decodeURIComponent(rollEl.getAttribute('data-roll')));
-            const firstTerm = rollData.terms?.[0];
-            
-            if (firstTerm?.class === "Die" && firstTerm.faces === 200 && firstTerm.results) {
-                
-                // 1. Math extraction
-                const resultVal = firstTerm.results[0].result;
-                const critThreshold = rollData.options?.critical ?? 200; 
-                const isCustomFumble = firstTerm.results.some(r => r.fumble);
-                const isCrit = resultVal >= critThreshold;
 
-                // 2. Scrub Foundry's "Tampered" UI entirely
-                rollEl.classList.remove('tampered');
-                const tamperIcon = rollEl.querySelector('.fa-triangle-exclamation');
-                if (tamperIcon) tamperIcon.remove();
+    // SCORCHED EARTH ON TAMPERED WARNINGS
+    // We forcibly strip these from the root element and every child element.
+    htmlElement.classList.remove('tampered', 'is-tampered');
+    htmlElement.querySelectorAll('.tampered, .is-tampered').forEach(el => el.classList.remove('tampered', 'is-tampered'));
+    htmlElement.querySelectorAll('.fa-triangle-exclamation').forEach(el => el.remove());
 
-                // 3. Strict State Enforcement
-                if (isCustomFumble) {
-                    // It is a Fumble
-                    const icon = rollEl.querySelector('.fa-dice-d20');
-                    if (icon) icon.classList.add('aeris-crit-fail-die');
-                    rollEl.classList.remove('critical', 'success', 'max', 'fumble', 'min', 'natural-1', 'natural-20');
-                    rollEl.classList.add('aeris-crit-fail');
-                } else if (isCrit) {
-                    // It is a valid Critical Threat, preserve standard Crit styling
-                    rollEl.classList.add('critical', 'success'); 
-                } else {
-                    // Normal Roll! Destroy any false positive classes applied by the native systems
-                    rollEl.classList.remove('critical', 'success', 'max', 'fumble', 'min', 'natural-1', 'natural-20');
+    // READ OUR AUTHORITATIVE TRUTH
+    let d200Found = false;
+    let isFumble = message.getFlag("aeris", "isFumble");
+    let isCrit = message.getFlag("aeris", "isCrit");
+    let isNormal = message.getFlag("aeris", "isNormal");
+
+    if (isNormal !== undefined) {
+        d200Found = true; // It was an attack roll and we set the flags
+    } else {
+        // Fallback safety for raw Skill Checks / Saving Throws
+        const rolls = message.rolls;
+        if (rolls && rolls.length > 0) {
+            rolls.forEach(roll => {
+                const firstTerm = roll.terms?.[0];
+                if (firstTerm?.class === "Die" && firstTerm.faces === 200 && firstTerm.results) {
+                    d200Found = true;
+                    const res = firstTerm.results[0]?.result || 0;
+                    const fRange = roll.options?.fumble ?? firstTerm.options?.fumble ?? 10;
+                    const cRange = roll.options?.critical ?? firstTerm.options?.critical ?? 200;
+
+                    if (res <= fRange) { isFumble = true; isNormal = false; }
+                    else if (res >= cRange) { isCrit = true; isNormal = false; }
+                    else { isNormal = true; isFumble = false; isCrit = false; }
                 }
-            }
-        } catch (e) {
-            console.warn("PF1 Alt Sheet: Failed to decode chat card roll data.", e);
+            });
         }
-    });
+    }
+
+    // ENFORCE THE STYLING
+    if (d200Found) {
+        if (isNormal) {
+            // It's a standard roll. We nuke all false-positive PF1e coloring across the entire card.
+            htmlElement.querySelectorAll('.critical, .success, .max, .natural-20').forEach(el => {
+                el.classList.remove('critical', 'success', 'max', 'natural-20');
+            });
+        } else if (isFumble) {
+            // Apply our Fumble styling and destroy native crit classes.
+            htmlElement.querySelectorAll('.dice-total, .roll-total, .total, .inline-roll, .attack-result').forEach(el => {
+                el.classList.add('aeris-crit-fail');
+                el.classList.remove('critical', 'success', 'max', 'natural-20', 'fumble', 'min', 'natural-1');
+            });
+            htmlElement.querySelectorAll('.fa-dice-d20').forEach(el => el.classList.add('aeris-crit-fail-die'));
+        }
+        // If (isCrit), we intentionally do nothing so PF1e's native green/blue classes stay active.
+    }
 });
