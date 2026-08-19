@@ -103,11 +103,12 @@ Hooks.once("ready", () => {
   }
 });
 
-// ─── STYLESHEET INJECTION ─────────────────────────────────────────────────
+// ─── STYLESHEET INJECTION (THE ANTI-TAMPER SHIELD) ────────────────────────
 
 Hooks.once("init", () => {
     const aerisStyles = document.createElement("style");
     aerisStyles.innerHTML = `
+        /* Custom Fumble Styling */
         .aeris-crit-fail {
             color: #aa0200 !important;
             border-color: #aa0200 !important;
@@ -117,6 +118,22 @@ Hooks.once("init", () => {
         .aeris-crit-fail-die {
             color: #aa0200 !important;
             font-weight: bold !important;
+        }
+
+        /* NUCLEAR OVERRIDE: Destroy Foundry V12's Blue Tampered Visuals globally */
+        .dice-roll.is-tampered .dice-total,
+        .dice-roll.tampered .dice-total,
+        .is-tampered .dice-total {
+            background: rgba(0, 0, 0, 0.1) !important;
+            border: 1px solid var(--color-border-light-2, #999) !important;
+            color: var(--color-text-dark-primary, #191813) !important;
+            box-shadow: none !important;
+        }
+        
+        .is-tampered .fa-triangle-exclamation,
+        .tampered .fa-triangle-exclamation,
+        .dice-roll.is-tampered .fa-triangle-exclamation {
+            display: none !important;
         }
     `;
     document.head.appendChild(aerisStyles);
@@ -362,7 +379,7 @@ Hooks.once("init", () => {
   }, "WRAPPER");
 });
 
-// ─── CHAT HOOKS: DATA BROADCASTING & SURGICAL DOM STYLING ─────────────────
+// ─── CHAT HOOKS: DATA BROADCASTING & JQUERY DOM SCRUBBING ─────────────────
 
 Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     if (game.user.id !== userId) return;
@@ -371,7 +388,7 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     let agnosticResult = null;
     let isFumble = false;
 
-    // 1. Process Attack Rolls (Hidden deeply inside PF1e data)
+    // Process Attack Rolls 
     const attacks = message?.system?.rolls?.attacks;
     if (attacks && Array.isArray(attacks) && attacks.length > 0) {
         attacks.forEach(attackGroup => {
@@ -387,7 +404,7 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         });
     }
 
-    // 2. Process Skill Checks & Saves (Standard Foundry Rolls)
+    // Process Skill Checks & Saves
     const stdRolls = message.rolls;
     if (stdRolls && Array.isArray(stdRolls) && stdRolls.length > 0) {
         stdRolls.forEach(roll => {
@@ -395,14 +412,12 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
                 const mainDie = roll.terms[0];
                 if (mainDie.faces === 200) {
                     agnosticResult = mainDie.total;
-                    // Skill checks default to <=10 since they don't have item fumble flags
                     if (mainDie.results.some(res => res.fumble || res.result <= 10)) isFumble = true;
                 }
             }
         });
     }
 
-    // Broadcast flags globally for macros & Sephral's Triggers
     if (agnosticResult !== null) {
         const injectedData = {
             "flags.aeris.d200Result": agnosticResult,
@@ -413,21 +428,21 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     }
 });
 
-Hooks.on("renderChatMessageHTML", (message, html, data) => {
+Hooks.on("renderChatMessage", (message, html, data) => {
     if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return;
 
-    const htmlElement = html.length ? html[0] : html;
+    // Use jQuery for flawless DOM parsing across standard rolls and PF1e templates
+    const $html = $(html);
     
-    // --- 1. SURGICALLY STRIP TAMPERED WARNINGS EVERYWHERE ---
-    htmlElement.classList.remove('tampered', 'is-tampered');
-    htmlElement.querySelectorAll('.tampered, .is-tampered').forEach(el => el.classList.remove('tampered', 'is-tampered'));
-    htmlElement.querySelectorAll('.fa-triangle-exclamation').forEach(el => el.remove());
+    // 1. SURGICALLY STRIP TAMPERED WARNINGS
+    $html.removeClass('tampered is-tampered');
+    $html.find('.tampered, .is-tampered').removeClass('tampered is-tampered');
+    $html.find('.fa-triangle-exclamation').remove();
 
-    // --- 2. SURGICALLY STYLE PF1e ATTACK ROLLS (Inline Rolls) ---
-    const inlineRolls = htmlElement.querySelectorAll('.inline-roll[data-roll]');
-    inlineRolls.forEach(rollEl => {
+    // 2. SURGICALLY STYLE PF1e ATTACK ROLLS
+    $html.find('.inline-roll[data-roll]').each(function() {
         try {
-            const rollData = JSON.parse(decodeURIComponent(rollEl.getAttribute('data-roll')));
+            const rollData = JSON.parse(decodeURIComponent($(this).attr('data-roll')));
             const firstTerm = rollData.terms?.[0];
             
             if (firstTerm?.class === "Die" && firstTerm.faces === 200 && firstTerm.results) {
@@ -436,13 +451,12 @@ Hooks.on("renderChatMessageHTML", (message, html, data) => {
                 const critThreshold = rollData.options?.critical ?? 200;
                 
                 if (isCustomFumble) {
-                    const icon = rollEl.querySelector('.fa-dice-d20');
-                    if (icon) icon.classList.add('aeris-crit-fail-die');
-                    rollEl.classList.remove('critical', 'success', 'max', 'fumble', 'min', 'natural-1', 'natural-20');
-                    rollEl.classList.add('aeris-crit-fail');
+                    const $icon = $(this).find('.fa-dice-d20');
+                    if ($icon.length) $icon.addClass('aeris-crit-fail-die');
+                    $(this).removeClass('critical success max fumble min natural-1 natural-20');
+                    $(this).addClass('aeris-crit-fail');
                 } else if (resultVal >= 20 && resultVal < critThreshold) {
-                    // KILL THE FALSE CRIT: PF1e assumes >= 20 is a crit on attacks
-                    rollEl.classList.remove('critical', 'success', 'max', 'natural-20');
+                    $(this).removeClass('critical success max natural-20');
                 }
             }
         } catch (e) {
@@ -450,7 +464,7 @@ Hooks.on("renderChatMessageHTML", (message, html, data) => {
         }
     });
 
-    // --- 3. SURGICALLY STYLE SKILL CHECKS & SAVES (Standard Rolls) ---
+    // 3. SURGICALLY STYLE SKILL CHECKS & SAVES
     if (message.rolls && message.rolls.length > 0) {
         message.rolls.forEach(roll => {
             const firstTerm = roll.terms?.[0];
@@ -459,14 +473,26 @@ Hooks.on("renderChatMessageHTML", (message, html, data) => {
                 const isFumble = firstTerm.results.some(r => r.fumble) || resultVal <= 10;
                 const isCrit = resultVal === 200; 
 
-                // Target standard Foundry/PF1e Total Boxes
-                htmlElement.querySelectorAll('.dice-total').forEach(totalBox => {
+                // A. Strip false positives from standard Total Boxes
+                $html.find('.dice-total').each(function() {
                     if (isFumble) {
-                        totalBox.classList.remove('critical', 'success', 'max', 'fumble', 'min', 'natural-1', 'natural-20');
-                        totalBox.classList.add('aeris-crit-fail');
+                        $(this).removeClass('critical success max fumble min natural-1 natural-20');
+                        $(this).addClass('aeris-crit-fail');
                     } else if (!isCrit && resultVal >= 20) {
-                        // KILL THE FALSE CRIT: PF1e assumes >= 20 is a crit on skills
-                        totalBox.classList.remove('critical', 'success', 'max', 'natural-20');
+                        $(this).removeClass('critical success max natural-20');
+                    }
+                });
+                
+                // B. Strip false positives directly from the dropdown Tooltip Dice
+                $html.find('li.die.d200').each(function() {
+                    const dieVal = parseInt($(this).text(), 10);
+                    if (!isNaN(dieVal)) {
+                        if (dieVal <= 10 || isFumble) {
+                            $(this).removeClass('critical success max natural-20');
+                            $(this).addClass('aeris-crit-fail-die');
+                        } else if (!isCrit && dieVal >= 20) {
+                            $(this).removeClass('critical success max natural-20');
+                        }
                     }
                 });
             }
