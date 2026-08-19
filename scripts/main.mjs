@@ -431,16 +431,15 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
 Hooks.on("renderChatMessage", (message, html, data) => {
     if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return;
 
-    // Use jQuery for flawless DOM parsing across standard rolls and PF1e templates
     const $html = $(html);
     
-    // 1. SURGICALLY STRIP TAMPERED WARNINGS (Expanded for V11 Anti-Cheat)
+    // 1. SURGICALLY STRIP TAMPERED WARNINGS
     $html.removeClass('tampered is-tampered validation-failed');
     $html.find('.tampered, .is-tampered, .validation-failed').removeClass('tampered is-tampered validation-failed');
     $html.find('.fa-triangle-exclamation, .validation-failures, .tamper-warning').remove();
     $html.find('[data-tooltip*="Tampered"], [data-tooltip*="Validation"]').removeAttr('data-tooltip');
 
-    // 2. SURGICALLY STYLE PF1e ATTACK ROLLS (Untouched - Protects working Fumble logic)
+    // 2. SURGICALLY STYLE PF1e ATTACK ROLLS (100% UNTOUCHED)
     $html.find('.inline-roll[data-roll]').each(function() {
         try {
             const rollData = JSON.parse(decodeURIComponent($(this).attr('data-roll')));
@@ -465,46 +464,43 @@ Hooks.on("renderChatMessage", (message, html, data) => {
         }
     });
 
-    // 3. SURGICALLY STYLE SKILL CHECKS & SAVES
-    if (message.rolls && message.rolls.length > 0) {
-        message.rolls.forEach(roll => {
-            const firstTerm = roll.terms?.[0];
-            if (firstTerm?.class === "Die" && firstTerm.faces === 200 && firstTerm.results) {
-                const resultVal = firstTerm.results[0].result;
-                const isFumble = firstTerm.results.some(r => r.fumble) || resultVal <= 10;
-                const isCrit = resultVal === 200; 
+    // 3. SURGICALLY STYLE SKILL CHECKS & SAVES (HTML-Scan Method)
+    $html.find('li.die.d200').each(function() {
+        // SHIELD: If this die is inside an attack roll, skip it immediately to protect Part 2!
+        if ($(this).closest('.inline-roll').length > 0) return;
 
-                // A. Strip false positives from standard Total Boxes (Expanded to catch normal rolls)
-                $html.find('.dice-total, .roll-total, .total, .result-text, .result-value').each(function() {
-                    if (isFumble) {
-                        $(this).removeClass('critical success max fumble min natural-1 natural-20');
-                        $(this).addClass('aeris-crit-fail');
-                    } else if (!isCrit && resultVal >= 20) {
-                        // Strip blue/green highlight classes
-                        $(this).removeClass('critical success max natural-20');
-                        
-                        // Force clear inline CSS colors if PF1e applied them directly
-                        $(this).css({
-                            'color': '',
-                            'background-color': '',
-                            'text-shadow': ''
-                        });
-                    }
-                });
+        const dieVal = parseInt($(this).text(), 10);
+        if (!isNaN(dieVal)) {
+            const isFumble = dieVal <= 10 || $(this).hasClass('fumble') || $(this).hasClass('failure');
+            const isCrit = dieVal === 200;
+
+            // Find the parent container (usually .dice-roll)
+            let $container = $(this).closest('.dice-roll');
+            if ($container.length === 0) $container = $html;
+
+            const $totals = $container.find('.dice-total, .roll-total, .total');
+
+            if (isFumble) {
+                // Style Fumbles
+                $(this).removeClass('critical success max natural-20');
+                $(this).addClass('aeris-crit-fail-die');
                 
-                // B. Strip false positives directly from the dropdown Tooltip Dice
-                $html.find('li.die.d200').each(function() {
-                    const dieVal = parseInt($(this).text(), 10);
-                    if (!isNaN(dieVal)) {
-                        if (dieVal <= 10 || isFumble) {
-                            $(this).removeClass('critical success max natural-20');
-                            $(this).addClass('aeris-crit-fail-die');
-                        } else if (!isCrit && dieVal >= 20) {
-                            $(this).removeClass('critical success max natural-20');
-                        }
-                    }
+                $totals.removeClass('critical success max fumble min natural-1 natural-20');
+                $totals.addClass('aeris-crit-fail');
+                $container.removeClass('critical success max natural-20');
+            } else if (!isCrit && dieVal >= 20) {
+                // Strip Native Highlighting from False Crits (20-199)
+                $(this).removeClass('critical success max natural-20');
+                $totals.removeClass('critical success max natural-20');
+                $container.removeClass('critical success max natural-20');
+                
+                // Force text to render normally in case PF1e injected CSS properties inline
+                $totals.css({
+                    'color': 'unset',
+                    'text-shadow': 'none',
+                    'background-color': 'transparent'
                 });
             }
-        });
-    }
+        }
+    });
 });
