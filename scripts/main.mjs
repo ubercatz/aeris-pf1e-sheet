@@ -167,14 +167,13 @@ Hooks.once("init", () => {
           term.faces *= 10;
           if (term._evaluated && term.results) {
               term.results.forEach(r => r.result *= 10);
-              term.total *= 10;
           }
           term._pf1arScaled = true;
         }
 
         // 2. THE BRUTE-FORCE MATH CATCHER
-        // Tightly check that this is an explicitly flat number term
-        const isNumericTerm = term.class === "NumericTerm" && term.number !== undefined;
+        // Using structural checks to prevent minification class errors
+        const isNumericTerm = term.number !== undefined && term.faces === undefined;
         if (isNumericTerm && !term._pf1arScaled) {
           
           // SHIELD 1: Check surrounding math for multipliers (like 2 * 1d6)
@@ -190,9 +189,8 @@ Hooks.once("init", () => {
              
              // If the modifier is a small number (meaning it bypassed the sheet scaling, like -2 Shaken)
              if (val !== 0 && Math.abs(val) < 10) {
+                 // Update the core number safely (Foundry's Getter handles the total dynamically!)
                  term.number = val * 10;
-                 // FORCE THE ENGINE TO USE THE NEW NUMBER
-                 if (term._evaluated) term.total = term.number; 
                  term._pf1arScaled = true;
              }
           }
@@ -255,7 +253,6 @@ Hooks.once("init", () => {
             return key;
         };
 
-        // ... Standard Function Replacements ...
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
             let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
