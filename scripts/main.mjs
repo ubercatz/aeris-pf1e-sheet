@@ -476,7 +476,7 @@ Hooks.on("renderChatMessage", (message, html, data) => {
         const dieVal = parseInt($(this).text(), 10);
         if (!isNaN(dieVal)) {
             const isFumble = dieVal <= 10 || $(this).hasClass('fumble') || $(this).hasClass('failure');
-            const isCrit = dieVal === 200;
+            const isCrit = dieVal >= 191;
 
             let $container = $(this).closest('.dice-roll');
             if ($container.length === 0) $container = $html;
