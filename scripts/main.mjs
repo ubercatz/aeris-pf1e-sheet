@@ -428,22 +428,26 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     }
 });
 
+// ==== AERIS ENGINE: MASTER CHAT RENDERER ====
 Hooks.on("renderChatMessage", (message, html, data) => {
     if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return;
 
     const $html = $(html);
     
+    // --> DYNAMIC DATA LOOKUP (GLOBAL) <--
+    // Grab the actor who rolled to read their global sheet settings
+    const actor = game.actors.get(message.speaker?.actor);
+    const customSkillFumble = actor?.getFlag("aeris", "skillFumble") ?? 10;
+    const customSkillCrit = actor?.getFlag("aeris", "skillCrit") ?? 191;
+
     // 1. SURGICALLY STRIP TAMPERED/ABNORMAL WARNINGS
     $html.removeClass('tampered is-tampered validation-failed');
     $html.find('.tampered, .is-tampered, .validation-failed').removeClass('tampered is-tampered validation-failed');
     $html.find('.fa-triangle-exclamation, .validation-failures, .tamper-warning').remove();
     $html.find('[data-tooltip*="Tampered"], [data-tooltip*="Validation"]').removeAttr('data-tooltip');
-    
-    // ---> THE NEW ASSASSIN <---
-    // Nukes the PF1e specific "abnormal roll" d20 icon you found in the X-Ray
     $html.find('i.abnormal, [data-tooltip="PF1.CustomRollDesc"]').remove();
 
-    // 2. SURGICALLY STYLE PF1e ATTACK ROLLS (100% UNTOUCHED)
+    // 2. SURGICALLY STYLE PF1e ATTACK ROLLS
     $html.find('.inline-roll[data-roll]').each(function() {
         try {
             const rollData = JSON.parse(decodeURIComponent($(this).attr('data-roll')));
@@ -451,8 +455,26 @@ Hooks.on("renderChatMessage", (message, html, data) => {
             
             if (firstTerm?.class === "Die" && firstTerm.faces === 200 && firstTerm.results) {
                 const resultVal = firstTerm.results[0].result;
-                const isCustomFumble = firstTerm.results.some(r => r.fumble);
-                const critThreshold = rollData.options?.critical ?? 200;
+                
+                // --> WEAPON FUMBLE LOOKUP <--
+                // We use the same Action ID that PF1e uses to track the roll!
+                const actionId = message.flags?.pf1?.metadata?.action;
+                const itemId = message.flags?.pf1?.metadata?.item;
+                const item = actor?.items.get(itemId);
+                
+                // Find the specific action (like "system.actions.0") and grab its fumbleThreshold
+                let weaponFumbleThreshold = 10; // Default fallback
+                if (item && actionId) {
+                    const actionData = item.system?.actions?.find(a => a._id === actionId || a.id === actionId) || item.system?.actions?.[actionId];
+                    if (actionData && actionData.fumbleThreshold) {
+                        // Ensure we respect the 10x multiplier if the user typed "1" instead of "10"
+                        weaponFumbleThreshold = actionData.fumbleThreshold; 
+                    }
+                }
+
+                // Evaluate based on the weapon's custom threshold!
+                const isCustomFumble = firstTerm.results.some(r => r.fumble) || resultVal <= weaponFumbleThreshold;
+                const critThreshold = rollData.options?.critical ?? 200; 
                 
                 if (isCustomFumble) {
                     const $icon = $(this).find('.fa-dice-d20');
@@ -468,15 +490,15 @@ Hooks.on("renderChatMessage", (message, html, data) => {
         }
     });
 
-    // 3. SURGICALLY STYLE SKILL CHECKS & SAVES (HTML-Scan Method)
+    // 3. SURGICALLY STYLE SKILL CHECKS & SAVES
     $html.find('li.die.d200').each(function() {
-        // SHIELD: If this die is inside an attack roll, skip it immediately to protect Part 2!
         if ($(this).closest('.inline-roll').length > 0) return;
 
         const dieVal = parseInt($(this).text(), 10);
         if (!isNaN(dieVal)) {
-            const isFumble = dieVal <= 10 || $(this).hasClass('fumble') || $(this).hasClass('failure');
-            const isCrit = dieVal >= 191;
+            // Evaluate based on the Actor's global custom thresholds!
+            const isFumble = dieVal <= customSkillFumble || $(this).hasClass('fumble') || $(this).hasClass('failure');
+            const isCrit = dieVal >= customSkillCrit;
 
             let $container = $(this).closest('.dice-roll');
             if ($container.length === 0) $container = $html;

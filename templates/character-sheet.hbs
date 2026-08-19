@@ -212,7 +212,21 @@
         {{> "systems/pf1/templates/actors/parts/actor-settings.hbs"}}
       </div>
     </div>
-
+<h3 class="form-header">10x Granularity Engine Settings</h3>
+<div class="form-group">
+    <label>Global Skill/Save Fumble Range</label>
+    <div class="form-fields">
+        <input type="number" name="flags.aeris.skillFumble" value="{{actor.flags.aeris.skillFumble}}" placeholder="10">
+    </div>
+    <p class="notes">Rolls equal to or lower than this will trigger a critical failure.</p>
+</div>
+<div class="form-group">
+    <label>Global Skill/Save Critical Range</label>
+    <div class="form-fields">
+        <input type="number" name="flags.aeris.skillCrit" value="{{actor.flags.aeris.skillCrit}}" placeholder="191">
+    </div>
+    <p class="notes">Rolls equal to or higher than this will trigger a critical success.</p>
+</div>
   </section>
 
 </form>
