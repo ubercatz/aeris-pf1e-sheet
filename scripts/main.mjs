@@ -108,41 +108,9 @@ Hooks.once("ready", () => {
   DocumentSheetConfig.updateDefaultSheets();
 
   if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-    
-    // Scale basic global configuration values
     if (pf1.config) {
       pf1.config.classSkillBonus = 30;
       pf1.config.nonProficiencyPenalty = -40;
-    }
-
-    // --- CORE CONDITION REGISTRY PATCH ---
-    const restrictBuffs = game.settings.get(MODULE_ID, "scaleSmallBuffs");
-    
-    const scaleChangesArray = (changesArray) => {
-        if (!Array.isArray(changesArray)) return;
-        changesArray.forEach(change => {
-            let val = Number(change.formula);
-            if (!isNaN(val) && val !== 0 && !change._pf1arScaled) {
-                if (restrictBuffs && Math.abs(val) >= 10) return;
-                change.formula = String(val * 10);
-                change._pf1arScaled = true; // Hard flag to prevent loops
-            }
-        });
-    };
-
-    // 1. Legacy PF1e Conditions (v9 and older architectures)
-    if (pf1.config?.conditionDetails) {
-        Object.values(pf1.config.conditionDetails).forEach(cond => {
-            if (cond.changes) scaleChangesArray(cond.changes);
-        });
-    }
-
-    // 2. Modern PF1e Conditions (Compendium Registry/v10+)
-    if (pf1.registry?.conditions?.contents) {
-        pf1.registry.conditions.contents.forEach(cond => {
-            if (cond.system?.changes) scaleChangesArray(cond.system.changes);
-            if (cond.changes) scaleChangesArray(cond.changes);
-        });
     }
   }
 });
@@ -190,11 +158,46 @@ Hooks.once("init", () => {
 
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      for (let term of this.terms) {
+      const restrictBuffs = game.settings.get(MODULE_ID, "scaleSmallBuffs");
+
+      for (let i = 0; i < this.terms.length; i++) {
+        let term = this.terms[i];
+
+        // 1. SCALE DICE (1d20 -> 1d200)
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
           term._pf1arScaled = true;
         }
+
+        // 2. NEW DYNAMIC MODIFIER CATCHER (Shaken, Sickened, Cover, etc.)
+        // We identify a flat number by checking if it has a 'number' but no 'faces' (Dice)
+        const isNumericTerm = term.number !== undefined && term.faces === undefined;
+        
+        if (isNumericTerm && !term._pf1arScaled) {
+          let prevTerm = i > 0 ? this.terms[i-1] : null;
+          // Ensure we aren't scaling a damage multiplier (like x2 for a crit!)
+          let isMultiplier = prevTerm && prevTerm.operator !== undefined && (prevTerm.operator === "*" || prevTerm.operator === "/");
+
+          if (!isMultiplier) {
+             let val = term.number;
+             
+             // If the modifier is a small number (meaning it wasn't scaled on the character sheet yet)
+             if (val !== 0 && Math.abs(val) < 10) {
+                 // If it has a flavor tag (e.g. [Shaken]) or the user toggled the scale small buffs setting
+                 if (term.options?.flavor || restrictBuffs) {
+                     term.number = val * 10;
+                     term._pf1arScaled = true;
+                 }
+             }
+          }
+        }
+      }
+      
+      // Re-sync the formula string so Foundry logs the new 10x numbers correctly in chat!
+      try {
+          this._formula = this.constructor.getFormula(this.terms);
+      } catch (e) {
+          try { this._formula = this.terms.map(t => t.expression || t.formula || t.number).join(""); } catch(e2) {}
       }
     }
 
@@ -314,7 +317,6 @@ Hooks.once("init", () => {
       }
       if (this.system?.enh !== undefined && this._source?.system?.enh !== undefined) this.system.enh = Number(this._source.system.enh) * 10;
 
-      // ─── BUFFS & VIRTUAL ITEMS ───
       if (this.system?.changes) {
         this.system.changes.forEach((change, i) => {
           const rawFormula = this._source?.system?.changes?.[i]?.formula ?? change.formula;
