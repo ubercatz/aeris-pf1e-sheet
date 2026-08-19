@@ -513,16 +513,20 @@ Hooks.on("renderChatMessage", (message, html, data) => {
         }
     });
 });
-// ==== AERIS ENGINE: HTML X-RAY ====
+// ==== AERIS ENGINE: HTML X-RAY V2 ====
 Hooks.on("renderChatMessage", (message, html, data) => {
-    const rawHTML = html[0].outerHTML || html.html();
+    const $html = $(html);
     
-    // Only trigger if it detects the pesky anti-cheat text
-    if (rawHTML.toLowerCase().includes("non-default")) {
-        console.log("==== 🔍 AERIS X-RAY: ANTI-CHEAT ICON DETECTED ====");
+    // Trigger if ANY 10x roll (d200) is detected on the card
+    if ($html.find('.d200').length > 0) {
+        console.log("==== 🔍 AERIS X-RAY: D200 ROLL DETECTED ====");
         console.log("1. Message ID:", message.id);
         console.log("2. The Raw HTML Structure:");
+        
+        // Grab the raw, unadulterated HTML string
+        const rawHTML = html[0].outerHTML || html.html();
         console.log(rawHTML);
+        
         console.log("==================================================");
     }
 });
