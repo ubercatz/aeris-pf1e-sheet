@@ -36,7 +36,6 @@ Hooks.once("init", () => {
     onChange: _rerenderOpenAltSheets,
   });
 
-  // NEW: Toggle for small buff scaling
   game.settings.register(MODULE_ID, "scaleSmallBuffs", {
     name: "Scale Small Buffs/Debuffs (<10)",
     hint: "When enabled, conditions and buffs (e.g., Shaken) will only scale flat modifiers under 10. Prevents massive stats like +30ft speed from becoming +300.",
@@ -99,7 +98,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
     }
 });
 
-// ─── READY: SYSTEM OVERRIDES ──────────────────────────────────────────────
+// ─── READY: SYSTEM OVERRIDES & DICTIONARY PATCHING ────────────────────────
 
 Hooks.once("ready", () => {
   if (game.system?.id !== "pf1") return;
@@ -108,9 +107,43 @@ Hooks.once("ready", () => {
   DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltNPCSheetPF, { label: game.i18n.localize("PF1AR.NPCSheetLabel"), types: ["npc"], makeDefault: false });
   DocumentSheetConfig.updateDefaultSheets();
 
-  if (game.settings.get(MODULE_ID, "enable10xGranularity") && pf1.config) {
-    pf1.config.classSkillBonus = 30;
-    pf1.config.nonProficiencyPenalty = -40;
+  if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+    
+    // Scale basic global configuration values
+    if (pf1.config) {
+      pf1.config.classSkillBonus = 30;
+      pf1.config.nonProficiencyPenalty = -40;
+    }
+
+    // --- CORE CONDITION REGISTRY PATCH ---
+    const restrictBuffs = game.settings.get(MODULE_ID, "scaleSmallBuffs");
+    
+    const scaleChangesArray = (changesArray) => {
+        if (!Array.isArray(changesArray)) return;
+        changesArray.forEach(change => {
+            let val = Number(change.formula);
+            if (!isNaN(val) && val !== 0 && !change._pf1arScaled) {
+                if (restrictBuffs && Math.abs(val) >= 10) return;
+                change.formula = String(val * 10);
+                change._pf1arScaled = true; // Hard flag to prevent loops
+            }
+        });
+    };
+
+    // 1. Legacy PF1e Conditions (v9 and older architectures)
+    if (pf1.config?.conditionDetails) {
+        Object.values(pf1.config.conditionDetails).forEach(cond => {
+            if (cond.changes) scaleChangesArray(cond.changes);
+        });
+    }
+
+    // 2. Modern PF1e Conditions (Compendium Registry/v10+)
+    if (pf1.registry?.conditions?.contents) {
+        pf1.registry.conditions.contents.forEach(cond => {
+            if (cond.system?.changes) scaleChangesArray(cond.system.changes);
+            if (cond.changes) scaleChangesArray(cond.changes);
+        });
+    }
   }
 });
 
@@ -263,18 +296,11 @@ Hooks.once("init", () => {
             return `${sign}(${variable} * 10)`;
         });
 
-        // ─── BUFF & CONDITION INTERCEPTOR ─────────────────────────────────────
         res = res.replace(/(^|[-+]\s*)(\d+)\b/gi, (m, sign, num) => {
             let val = Number(num);
-            
-            // Limit scaling for flat numbers >= 10 if it is a buff and the setting is active
-            if (isBuff && restrictBuffs) {
-                if (val >= 10) return m; 
-            }
-            
+            if (isBuff && restrictBuffs && val >= 10) return m; 
             return `${sign}${val * 10}`;
         });
-        // ──────────────────────────────────────────────────────────────────────
 
         for (const [key, val] of Object.entries(placeholders)) {
             res = res.replace(key, val);
@@ -288,19 +314,16 @@ Hooks.once("init", () => {
       }
       if (this.system?.enh !== undefined && this._source?.system?.enh !== undefined) this.system.enh = Number(this._source.system.enh) * 10;
 
-      // ─── THE NEW CHANGES ARRAY LOGIC ──────────────────────────────────────
+      // ─── BUFFS & VIRTUAL ITEMS ───
       if (this.system?.changes) {
         this.system.changes.forEach((change, i) => {
-          // Fallback to the current formula if _source is missing (Virtual Buffs)
           const rawFormula = this._source?.system?.changes?.[i]?.formula ?? change.formula;
-          
           if (rawFormula && !change._pf1arScaled) {
             change.formula = scaleCL(String(rawFormula));
-            change._pf1arScaled = true; // Hard flag to prevent double-scaling in memory loops
+            change._pf1arScaled = true; 
           }
         });
       }
-      // ──────────────────────────────────────────────────────────────────────
 
       if (this.system?.actions && this._source?.system?.actions) {
         this.system.actions.forEach((action, i) => {
@@ -419,7 +442,6 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     let agnosticResult = null;
     let isFumble = false;
 
-    // Process Attack Rolls 
     const attacks = message?.system?.rolls?.attacks;
     if (attacks && Array.isArray(attacks) && attacks.length > 0) {
         attacks.forEach(attackGroup => {
@@ -435,7 +457,6 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         });
     }
 
-    // Process Skill Checks & Saves
     const stdRolls = message.rolls;
     if (stdRolls && Array.isArray(stdRolls) && stdRolls.length > 0) {
         stdRolls.forEach(roll => {
@@ -464,16 +485,13 @@ Hooks.on("renderChatMessage", (message, html, data) => {
 
     const $html = $(html);
     
-    // 1. SURGICALLY STRIP TAMPERED/ABNORMAL WARNINGS
     $html.removeClass('tampered is-tampered validation-failed');
     $html.find('.tampered, .is-tampered, .validation-failed').removeClass('tampered is-tampered validation-failed');
     $html.find('.fa-triangle-exclamation, .validation-failures, .tamper-warning').remove();
     $html.find('[data-tooltip*="Tampered"], [data-tooltip*="Validation"]').removeAttr('data-tooltip');
     
-    // Nukes the PF1e specific "abnormal roll" d20 icon
     $html.find('i.abnormal, [data-tooltip="PF1.CustomRollDesc"]').remove();
 
-    // 2. SURGICALLY STYLE PF1e ATTACK ROLLS (100% UNTOUCHED)
     $html.find('.inline-roll[data-roll]').each(function() {
         try {
             const rollData = JSON.parse(decodeURIComponent($(this).attr('data-roll')));
@@ -498,7 +516,6 @@ Hooks.on("renderChatMessage", (message, html, data) => {
         }
     });
 
-    // 3. SURGICALLY STYLE SKILL CHECKS & SAVES (HTML-Scan Method)
     $html.find('li.die.d200').each(function() {
         if ($(this).closest('.inline-roll').length > 0) return;
 
