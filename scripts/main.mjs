@@ -36,6 +36,17 @@ Hooks.once("init", () => {
     onChange: _rerenderOpenAltSheets,
   });
 
+  // NEW: Toggle for small buff scaling
+  game.settings.register(MODULE_ID, "scaleSmallBuffs", {
+    name: "Scale Small Buffs/Debuffs (<10)",
+    hint: "When enabled, conditions and buffs (e.g., Shaken) will only scale flat modifiers under 10. Prevents massive stats like +30ft speed from becoming +300.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+    onChange: _rerenderOpenAltSheets,
+  });
+
   game.settings.register(MODULE_ID, "darkMode", { name: "PF1AR.Settings.DarkMode", scope: "client", config: false, type: Boolean, default: false });
   game.settings.register(MODULE_ID, "theme", { name: "PF1AR.Settings.Theme", scope: "client", config: true, type: String, default: "parchment", choices: { parchment: "PF1AR.Theme.Parchment", hybrid: "PF1AR.Theme.Hybrid", slate: "PF1AR.Theme.Slate" }, onChange: _rerenderOpenAltSheets });
   game.settings.register(MODULE_ID, "compact", { name: "PF1AR.Settings.Compact", scope: "client", config: true, type: Boolean, default: false, onChange: _rerenderOpenAltSheets });
@@ -189,6 +200,9 @@ Hooks.once("init", () => {
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
+      const restrictBuffs = game.settings.get(MODULE_ID, "scaleSmallBuffs");
+      const isBuff = this.type === "buff";
+
       const scaleCL = (f) => {
         if (typeof f !== "string") return f;
         let res = f;
@@ -248,9 +262,19 @@ Hooks.once("init", () => {
         res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)/gi, (m, sign, variable) => {
             return `${sign}(${variable} * 10)`;
         });
+
+        // ─── BUFF INTERCEPTOR LOGIC ──────────────────────────────────────────
         res = res.replace(/(^|[-+]\s*)(\d+)\b/gi, (m, sign, num) => {
-            return `${sign}${Number(num) * 10}`;
+            let val = Number(num);
+            
+            // If it's a buff/condition AND the user wants to restrict large numbers
+            if (isBuff && restrictBuffs) {
+                if (val >= 10) return m; // Return unmodified (e.g., leaves 30 alone)
+            }
+            
+            return `${sign}${val * 10}`;
         });
+        // ───────────────────────────────────────────────────────────────────
 
         for (const [key, val] of Object.entries(placeholders)) {
             res = res.replace(key, val);
@@ -428,26 +452,21 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     }
 });
 
-// ==== AERIS ENGINE: MASTER CHAT RENDERER ====
 Hooks.on("renderChatMessage", (message, html, data) => {
     if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return;
 
     const $html = $(html);
     
-    // --> DYNAMIC DATA LOOKUP (GLOBAL) <--
-    // Grab the actor who rolled to read their global sheet settings
-    const actor = game.actors.get(message.speaker?.actor);
-    const customSkillFumble = actor?.getFlag("aeris", "skillFumble") ?? 10;
-    const customSkillCrit = actor?.getFlag("aeris", "skillCrit") ?? 191;
-
     // 1. SURGICALLY STRIP TAMPERED/ABNORMAL WARNINGS
     $html.removeClass('tampered is-tampered validation-failed');
     $html.find('.tampered, .is-tampered, .validation-failed').removeClass('tampered is-tampered validation-failed');
     $html.find('.fa-triangle-exclamation, .validation-failures, .tamper-warning').remove();
     $html.find('[data-tooltip*="Tampered"], [data-tooltip*="Validation"]').removeAttr('data-tooltip');
+    
+    // Nukes the PF1e specific "abnormal roll" d20 icon
     $html.find('i.abnormal, [data-tooltip="PF1.CustomRollDesc"]').remove();
 
-    // 2. SURGICALLY STYLE PF1e ATTACK ROLLS
+    // 2. SURGICALLY STYLE PF1e ATTACK ROLLS (100% UNTOUCHED)
     $html.find('.inline-roll[data-roll]').each(function() {
         try {
             const rollData = JSON.parse(decodeURIComponent($(this).attr('data-roll')));
@@ -455,26 +474,8 @@ Hooks.on("renderChatMessage", (message, html, data) => {
             
             if (firstTerm?.class === "Die" && firstTerm.faces === 200 && firstTerm.results) {
                 const resultVal = firstTerm.results[0].result;
-                
-                // --> WEAPON FUMBLE LOOKUP <--
-                // We use the same Action ID that PF1e uses to track the roll!
-                const actionId = message.flags?.pf1?.metadata?.action;
-                const itemId = message.flags?.pf1?.metadata?.item;
-                const item = actor?.items.get(itemId);
-                
-                // Find the specific action (like "system.actions.0") and grab its fumbleThreshold
-                let weaponFumbleThreshold = 10; // Default fallback
-                if (item && actionId) {
-                    const actionData = item.system?.actions?.find(a => a._id === actionId || a.id === actionId) || item.system?.actions?.[actionId];
-                    if (actionData && actionData.fumbleThreshold) {
-                        // Ensure we respect the 10x multiplier if the user typed "1" instead of "10"
-                        weaponFumbleThreshold = actionData.fumbleThreshold; 
-                    }
-                }
-
-                // Evaluate based on the weapon's custom threshold!
-                const isCustomFumble = firstTerm.results.some(r => r.fumble) || resultVal <= weaponFumbleThreshold;
-                const critThreshold = rollData.options?.critical ?? 200; 
+                const isCustomFumble = firstTerm.results.some(r => r.fumble);
+                const critThreshold = rollData.options?.critical ?? 200;
                 
                 if (isCustomFumble) {
                     const $icon = $(this).find('.fa-dice-d20');
@@ -490,15 +491,14 @@ Hooks.on("renderChatMessage", (message, html, data) => {
         }
     });
 
-    // 3. SURGICALLY STYLE SKILL CHECKS & SAVES
+    // 3. SURGICALLY STYLE SKILL CHECKS & SAVES (HTML-Scan Method)
     $html.find('li.die.d200').each(function() {
         if ($(this).closest('.inline-roll').length > 0) return;
 
         const dieVal = parseInt($(this).text(), 10);
         if (!isNaN(dieVal)) {
-            // Evaluate based on the Actor's global custom thresholds!
-            const isFumble = dieVal <= customSkillFumble || $(this).hasClass('fumble') || $(this).hasClass('failure');
-            const isCrit = dieVal >= customSkillCrit;
+            const isFumble = dieVal <= 10 || $(this).hasClass('fumble') || $(this).hasClass('failure');
+            const isCrit = dieVal >= 191;
 
             let $container = $(this).closest('.dice-roll');
             if ($container.length === 0) $container = $html;
