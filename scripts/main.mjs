@@ -263,18 +263,18 @@ Hooks.once("init", () => {
             return `${sign}(${variable} * 10)`;
         });
 
-        // ─── BUFF INTERCEPTOR LOGIC ──────────────────────────────────────────
+        // ─── BUFF & CONDITION INTERCEPTOR ─────────────────────────────────────
         res = res.replace(/(^|[-+]\s*)(\d+)\b/gi, (m, sign, num) => {
             let val = Number(num);
             
-            // If it's a buff/condition AND the user wants to restrict large numbers
+            // Limit scaling for flat numbers >= 10 if it is a buff and the setting is active
             if (isBuff && restrictBuffs) {
-                if (val >= 10) return m; // Return unmodified (e.g., leaves 30 alone)
+                if (val >= 10) return m; 
             }
             
             return `${sign}${val * 10}`;
         });
-        // ───────────────────────────────────────────────────────────────────
+        // ──────────────────────────────────────────────────────────────────────
 
         for (const [key, val] of Object.entries(placeholders)) {
             res = res.replace(key, val);
@@ -288,12 +288,19 @@ Hooks.once("init", () => {
       }
       if (this.system?.enh !== undefined && this._source?.system?.enh !== undefined) this.system.enh = Number(this._source.system.enh) * 10;
 
-      if (this.system?.changes && this._source?.system?.changes) {
+      // ─── THE NEW CHANGES ARRAY LOGIC ──────────────────────────────────────
+      if (this.system?.changes) {
         this.system.changes.forEach((change, i) => {
-          const srcFormula = this._source.system.changes[i]?.formula;
-          if (srcFormula) change.formula = scaleCL(String(srcFormula));
+          // Fallback to the current formula if _source is missing (Virtual Buffs)
+          const rawFormula = this._source?.system?.changes?.[i]?.formula ?? change.formula;
+          
+          if (rawFormula && !change._pf1arScaled) {
+            change.formula = scaleCL(String(rawFormula));
+            change._pf1arScaled = true; // Hard flag to prevent double-scaling in memory loops
+          }
         });
       }
+      // ──────────────────────────────────────────────────────────────────────
 
       if (this.system?.actions && this._source?.system?.actions) {
         this.system.actions.forEach((action, i) => {
