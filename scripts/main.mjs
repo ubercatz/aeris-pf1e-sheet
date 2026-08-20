@@ -157,7 +157,9 @@ Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
-    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+    // GATEKEEPER: Only intercept the formula math if it hasn't been evaluated yet
+    // This perfectly prevents the "Roll Validation Failed" anti-cheat crashes!
+    if (game.settings.get(MODULE_ID, "enable10xGranularity") && !this._evaluated) {
 
       for (let i = 0; i < this.terms.length; i++) {
         let term = this.terms[i];
@@ -165,31 +167,23 @@ Hooks.once("init", () => {
         // 1. SCALE DICE (1d20 -> 1d200)
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
-          if (term._evaluated && term.results) {
-              term.results.forEach(r => r.result *= 10);
-          }
           term._pf1arScaled = true;
         }
 
-        // 2. THE BRUTE-FORCE MATH CATCHER
-        // Using structural checks to prevent minification class errors
+        // 2. THE SAFE MATH CATCHER
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
         if (isNumericTerm && !term._pf1arScaled) {
           
-          // SHIELD 1: Check surrounding math for multipliers (like 2 * 1d6)
           let prevTerm = i > 0 ? this.terms[i-1] : null;
           let nextTerm = i < this.terms.length - 1 ? this.terms[i+1] : null;
           
           let isMultiplier = false;
-          if (prevTerm && prevTerm.operator !== undefined && ["*", "/"].includes(prevTerm.operator)) isMultiplier = true;
-          if (nextTerm && nextTerm.operator !== undefined && ["*", "/"].includes(nextTerm.operator)) isMultiplier = true;
+          if (prevTerm && prevTerm.operator && ["*", "/"].includes(prevTerm.operator)) isMultiplier = true;
+          if (nextTerm && nextTerm.operator && ["*", "/"].includes(nextTerm.operator)) isMultiplier = true;
 
           if (!isMultiplier) {
-             let val = term.number;
-             
-             // If the modifier is a small number (meaning it bypassed the sheet scaling, like -2 Shaken)
-             if (val !== 0 && Math.abs(val) < 10) {
-                 // Update the core number safely (Foundry's Getter handles the total dynamically!)
+             let val = Number(term.number);
+             if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
                  term.number = val * 10;
                  term._pf1arScaled = true;
              }
@@ -197,6 +191,7 @@ Hooks.once("init", () => {
         }
       }
       
+      // Resync formula strings for validation
       try {
           this._formula = this.constructor.getFormula(this.terms);
       } catch (e) {
@@ -206,6 +201,7 @@ Hooks.once("init", () => {
 
     let evaluatedRoll = await wrapped(...args);
 
+    // FUMBLE CATCHER (Runs safely AFTER math evaluates)
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       let customFumble = 10;
       try {
@@ -253,6 +249,7 @@ Hooks.once("init", () => {
             return key;
         };
 
+        // ... Function Placeholders ...
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
             let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
@@ -278,7 +275,6 @@ Hooks.once("init", () => {
             let fcs = Number(faces); return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
 
-        // SHIELD 2: Accommodates spaces in dice strings (like '2 d6') to protect the dice count
         res = res.replace(/\b(\d*)\s*d\s*(\d+)\b/gi, (m, count, faces) => {
             let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
             return hide(`${count || ""}d${scaledFaces}`);
@@ -295,7 +291,8 @@ Hooks.once("init", () => {
             return `${sign}(${variable} * 10)`;
         });
 
-        // SHIELD 3: The negative lookahead (?!\s*[*\/xd]) strictly ignores ANY number followed by a multiplier or die 'd'
+        // ─── THE MULTIPLIER SHIELD ───
+        // The negative lookahead (?!\s*[*\/xd]) completely prevents Crit multipliers (like 2 * 1d6) from being scaled!
         res = res.replace(/(^|[-+]\s*)(\d+)\b(?!\s*[*\/xd])/gi, (m, sign, num) => {
             let val = Number(num);
             if (isBuff && restrictBuffs && val >= 10) return m; 
@@ -477,7 +474,6 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
     }
 
-    // ─── SHIELD 4: STRICT VISUAL TOOLTIP CATCHER ───
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.flags?.pf1?.metadata) {
         let metaClone = foundry.utils.deepClone(message.flags.pf1.metadata);
         
@@ -486,7 +482,6 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
             if (Array.isArray(obj)) {
                 obj.forEach(i => scaleModifiersStrictly(i));
             } else {
-                // Ensure we never scale objects that define a dice pool!
                 if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined) {
                     let val = Number(obj.modifier);
                     if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
