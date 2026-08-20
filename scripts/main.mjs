@@ -98,7 +98,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
     }
 });
 
-// ─── READY: SYSTEM OVERRIDES & DICTIONARY PATCHING ────────────────────────
+// ─── READY: SYSTEM OVERRIDES ──────────────────────────────────────────────
 
 Hooks.once("ready", () => {
   if (game.system?.id !== "pf1") return;
@@ -107,11 +107,9 @@ Hooks.once("ready", () => {
   DocumentSheetConfig.registerSheet(Actor, MODULE_ID, AltNPCSheetPF, { label: game.i18n.localize("PF1AR.NPCSheetLabel"), types: ["npc"], makeDefault: false });
   DocumentSheetConfig.updateDefaultSheets();
 
-  if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-    if (pf1.config) {
-      pf1.config.classSkillBonus = 30;
-      pf1.config.nonProficiencyPenalty = -40;
-    }
+  if (game.settings.get(MODULE_ID, "enable10xGranularity") && pf1.config) {
+    pf1.config.classSkillBonus = 30;
+    pf1.config.nonProficiencyPenalty = -40;
   }
 });
 
@@ -158,11 +156,10 @@ Hooks.once("init", () => {
 
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-
       for (let i = 0; i < this.terms.length; i++) {
         let term = this.terms[i];
 
-        // 1. SCALE DICE (1d20 -> 1d200)
+        // 1. SCALE DICE
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
           if (term._evaluated && term.results) {
@@ -172,27 +169,29 @@ Hooks.once("init", () => {
           term._pf1arScaled = true;
         }
 
-        // 2. THE BRUTE-FORCE MATH CATCHER
+        // 2. SURGICAL MATH CATCHER (Protects "Take X" and Damage Dice)
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
         if (isNumericTerm && !term._pf1arScaled) {
-          let prevTerm = i > 0 ? this.terms[i-1] : null;
-          let isMultiplierPrev = prevTerm && prevTerm.operator !== undefined && (prevTerm.operator === "*" || prevTerm.operator === "/");
-          
-          // NEW: Ensure we aren't scaling a number right before a multiplier (e.g., the '1' in '1 * 1d80')
-          let nextTerm = i < this.terms.length - 1 ? this.terms[i+1] : null;
-          let isMultiplierNext = nextTerm && nextTerm.operator !== undefined && (nextTerm.operator === "*" || nextTerm.operator === "/");
+            
+            // RULE 1: Never touch the first term (Index 0). Protects Take 9, base multipliers, etc.
+            if (i > 0) {
+                let prevTerm = this.terms[i-1];
+                let nextTerm = i < this.terms.length - 1 ? this.terms[i+1] : null;
 
-          if (!isMultiplierPrev && !isMultiplierNext) {
-             let val = term.number;
-             
-             // If the modifier is a small number (meaning it bypassed the sheet scaling, like -2 Shaken)
-             if (val !== 0 && Math.abs(val) < 10) {
-                 term.number = val * 10;
-                 // FORCE THE ENGINE TO USE THE NEW NUMBER
-                 if (term._evaluated) term.total = term.number; 
-                 term._pf1arScaled = true;
-             }
-          }
+                // RULE 2: Term MUST be preceded by an additive operator (+ or -)
+                let prevIsAdditive = prevTerm && prevTerm.operator && ["+", "-"].includes(prevTerm.operator);
+                let nextIsSafe = !nextTerm || (nextTerm.operator && ["+", "-"].includes(nextTerm.operator));
+
+                if (prevIsAdditive && nextIsSafe) {
+                    let val = term.number;
+                    // Catch rogue buffs/debuffs that bypassed item scaling (e.g., hardcoded conditions)
+                    if (val !== 0 && Math.abs(val) < 10) {
+                        term.number = val * 10;
+                        if (term._evaluated) term.total = term.number;
+                        term._pf1arScaled = true;
+                    }
+                }
+            }
         }
       }
       
@@ -252,6 +251,12 @@ Hooks.once("init", () => {
             return key;
         };
 
+        // NEW: Hides base dice even if they have [flavor text] or spaces! (e.g. 1[fire] d80)
+        res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
+            let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
+            return hide(`${count || ""}${middle || ""}d${scaledFaces}`);
+        });
+
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
             let fcs = Number(faces);
             return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
@@ -285,11 +290,6 @@ Hooks.once("init", () => {
             return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
 
-        res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, count, faces) => {
-            let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
-            return hide(`${count || ""}d${scaledFaces}`);
-        });
-        
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)/gi, (m, func, num, variable) => {
             return `${func}(${Number(num) * 10}, (${variable} * 10))`;
         });
@@ -297,12 +297,12 @@ Hooks.once("init", () => {
             return `${func}((${variable} * 10), ${Number(num) * 10})`;
         });
 
-        res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)/gi, (m, sign, variable) => {
+        res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(?!\s*(?:\[.*?\])?\s*[*\/xd])/gi, (m, sign, variable) => {
             return `${sign}(${variable} * 10)`;
         });
 
-        // ─── BUFF INTERCEPTOR LOGIC ───
-        res = res.replace(/(^|[-+]\s*)(\d+)\b(?!\s*[*\/xd])/gi, (m, sign, num) => {
+        // ─── BUFF INTERCEPTOR LOGIC (Integrated from Broken Version) ───
+        res = res.replace(/(^|[-+]\s*)(\d+)\b(?!\s*(?:\[.*?\])?\s*[*\/xd])/gi, (m, sign, num) => {
             let val = Number(num);
             if (isBuff && restrictBuffs && val >= 10) return m; 
             return `${sign}${val * 10}`;
@@ -447,6 +447,7 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     let agnosticResult = null;
     let isFumble = false;
 
+    // Process Attack Rolls 
     const attacks = message?.system?.rolls?.attacks;
     if (attacks && Array.isArray(attacks) && attacks.length > 0) {
         attacks.forEach(attackGroup => {
@@ -462,6 +463,7 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         });
     }
 
+    // Process Skill Checks & Saves
     const stdRolls = message.rolls;
     if (stdRolls && Array.isArray(stdRolls) && stdRolls.length > 0) {
         stdRolls.forEach(roll => {
@@ -483,7 +485,7 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
     }
 
-    // ─── THE BRUTE-FORCE VISUAL TOOLTIP CATCHER ───
+    // ─── THE BRUTE-FORCE VISUAL TOOLTIP CATCHER (From Broken Version) ───
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.flags?.pf1?.metadata) {
         let metaClone = foundry.utils.deepClone(message.flags.pf1.metadata);
         
@@ -519,6 +521,7 @@ Hooks.on("renderChatMessage", (message, html, data) => {
 
     const $html = $(html);
     
+    // 1. SURGICALLY STRIP TAMPERED/ABNORMAL WARNINGS
     $html.removeClass('tampered is-tampered validation-failed');
     $html.find('.tampered, .is-tampered, .validation-failed').removeClass('tampered is-tampered validation-failed');
     $html.find('.fa-triangle-exclamation, .validation-failures, .tamper-warning').remove();
@@ -526,6 +529,7 @@ Hooks.on("renderChatMessage", (message, html, data) => {
     
     $html.find('i.abnormal, [data-tooltip="PF1.CustomRollDesc"]').remove();
 
+    // 2. SURGICALLY STYLE PF1e ATTACK ROLLS (100% UNTOUCHED)
     $html.find('.inline-roll[data-roll]').each(function() {
         try {
             const rollData = JSON.parse(decodeURIComponent($(this).attr('data-roll')));
@@ -550,6 +554,7 @@ Hooks.on("renderChatMessage", (message, html, data) => {
         }
     });
 
+    // 3. SURGICALLY STYLE SKILL CHECKS & SAVES
     $html.find('li.die.d200').each(function() {
         if ($(this).closest('.inline-roll').length > 0) return;
 
