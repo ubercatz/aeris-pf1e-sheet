@@ -157,9 +157,7 @@ Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
-    // GATEKEEPER: Only intercept the formula math if it hasn't been evaluated yet
-    // This perfectly prevents the "Roll Validation Failed" anti-cheat crashes!
-    if (game.settings.get(MODULE_ID, "enable10xGranularity") && !this._evaluated) {
+    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
 
       for (let i = 0; i < this.terms.length; i++) {
         let term = this.terms[i];
@@ -167,31 +165,33 @@ Hooks.once("init", () => {
         // 1. SCALE DICE (1d20 -> 1d200)
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
+          if (term._evaluated && term.results) {
+              term.results.forEach(r => r.result *= 10);
+              term.total *= 10;
+          }
           term._pf1arScaled = true;
         }
 
-        // 2. THE SAFE MATH CATCHER
+        // 2. THE BRUTE-FORCE MATH CATCHER
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
         if (isNumericTerm && !term._pf1arScaled) {
-          
           let prevTerm = i > 0 ? this.terms[i-1] : null;
-          let nextTerm = i < this.terms.length - 1 ? this.terms[i+1] : null;
-          
-          let isMultiplier = false;
-          if (prevTerm && prevTerm.operator && ["*", "/"].includes(prevTerm.operator)) isMultiplier = true;
-          if (nextTerm && nextTerm.operator && ["*", "/"].includes(nextTerm.operator)) isMultiplier = true;
+          let isMultiplier = prevTerm && prevTerm.operator !== undefined && (prevTerm.operator === "*" || prevTerm.operator === "/");
 
           if (!isMultiplier) {
-             let val = Number(term.number);
-             if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+             let val = term.number;
+             
+             // If the modifier is a small number (meaning it bypassed the sheet scaling, like -2 Shaken)
+             if (val !== 0 && Math.abs(val) < 10) {
                  term.number = val * 10;
+                 // FORCE THE ENGINE TO USE THE NEW NUMBER
+                 if (term._evaluated) term.total = term.number; 
                  term._pf1arScaled = true;
              }
           }
         }
       }
       
-      // Resync formula strings for validation
       try {
           this._formula = this.constructor.getFormula(this.terms);
       } catch (e) {
@@ -201,7 +201,6 @@ Hooks.once("init", () => {
 
     let evaluatedRoll = await wrapped(...args);
 
-    // FUMBLE CATCHER (Runs safely AFTER math evaluates)
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       let customFumble = 10;
       try {
@@ -249,33 +248,40 @@ Hooks.once("init", () => {
             return key;
         };
 
-        // ... Function Placeholders ...
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
-            let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
+            let fcs = Number(faces);
+            return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
         res = res.replace(/\(\s*(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
-            let fcs = Number(faces); return hide(`(${func}(${num}, ${variable}))${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
+            let fcs = Number(faces);
+            return hide(`(${func}(${num}, ${variable}))${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
         res = res.replace(/\(\s*(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)\s*\)(\s*(?:\[.*?\])?\s*\*\s*)(\d*)d(\d+)/gi, (m, func, num, variable, middle, count, faces) => {
-            let fcs = Number(faces); return hide(`(${func}(${num}, ${variable}))${middle}${count || ""}d${fcs <= 20 ? fcs * 10 : fcs}`);
+            let fcs = Number(faces);
+            return hide(`(${func}(${num}, ${variable}))${middle}${count || ""}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*\*\s*)(\d*)d(\d+)/gi, (m, func, num, variable, middle, count, faces) => {
-            let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}${count || ""}d${fcs <= 20 ? fcs * 10 : fcs}`);
+            let fcs = Number(faces);
+            return hide(`${func}(${num}, ${variable})${middle}${count || ""}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
         res = res.replace(/(min|max)\(\s*([^,]+)\s*,\s*(\d+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, num, middle, faces) => {
-            let fcs = Number(faces); return hide(`${func}(${variable}, ${num})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
+            let fcs = Number(faces);
+            return hide(`${func}(${variable}, ${num})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
         res = res.replace(/(floor|ceil)\(\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, middle, faces) => {
-            let fcs = Number(faces); return hide(`${func}(${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
+            let fcs = Number(faces);
+            return hide(`${func}(${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
         res = res.replace(/\(\s*(floor|ceil)\(\s*([^)]+)\s*\)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, middle, faces) => {
-            let fcs = Number(faces); return hide(`(${func}(${variable}))${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
+            let fcs = Number(faces);
+            return hide(`(${func}(${variable}))${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
         res = res.replace(/(@[a-zA-Z0-9_.]+)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, variable, middle, faces) => {
-            let fcs = Number(faces); return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
+            let fcs = Number(faces);
+            return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
 
-        res = res.replace(/\b(\d*)\s*d\s*(\d+)\b/gi, (m, count, faces) => {
+        res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, count, faces) => {
             let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
             return hide(`${count || ""}d${scaledFaces}`);
         });
@@ -291,9 +297,7 @@ Hooks.once("init", () => {
             return `${sign}(${variable} * 10)`;
         });
 
-        // ─── THE MULTIPLIER SHIELD ───
-        // The negative lookahead (?!\s*[*\/xd]) completely prevents Crit multipliers (like 2 * 1d6) from being scaled!
-        res = res.replace(/(^|[-+]\s*)(\d+)\b(?!\s*[*\/xd])/gi, (m, sign, num) => {
+        res = res.replace(/(^|[-+]\s*)(\d+)\b/gi, (m, sign, num) => {
             let val = Number(num);
             if (isBuff && restrictBuffs && val >= 10) return m; 
             return `${sign}${val * 10}`;
@@ -474,27 +478,29 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
     }
 
+    // ─── THE BRUTE-FORCE VISUAL TOOLTIP CATCHER ───
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.flags?.pf1?.metadata) {
         let metaClone = foundry.utils.deepClone(message.flags.pf1.metadata);
         
-        const scaleModifiersStrictly = (obj) => {
+        const scaleModifiersRecursively = (obj) => {
             if (!obj || typeof obj !== 'object') return;
             if (Array.isArray(obj)) {
-                obj.forEach(i => scaleModifiersStrictly(i));
+                obj.forEach(i => scaleModifiersRecursively(i));
             } else {
-                if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined) {
+                // If it's a modifier dictionary, multiply small values by 10
+                if (obj.modifier !== undefined && obj.name !== undefined) {
                     let val = Number(obj.modifier);
                     if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
                         obj.modifier = val * 10;
                     }
                 }
                 for (let key in obj) {
-                    if (typeof obj[key] === 'object') scaleModifiersStrictly(obj[key]);
+                    if (typeof obj[key] === 'object') scaleModifiersRecursively(obj[key]);
                 }
             }
         };
         
-        scaleModifiersStrictly(metaClone);
+        scaleModifiersRecursively(metaClone);
         injectedData["flags.pf1.metadata"] = metaClone;
     }
 
