@@ -176,9 +176,13 @@ Hooks.once("init", () => {
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
         if (isNumericTerm && !term._pf1arScaled) {
           let prevTerm = i > 0 ? this.terms[i-1] : null;
-          let isMultiplier = prevTerm && prevTerm.operator !== undefined && (prevTerm.operator === "*" || prevTerm.operator === "/");
+          let isMultiplierPrev = prevTerm && prevTerm.operator !== undefined && (prevTerm.operator === "*" || prevTerm.operator === "/");
+          
+          // NEW: Ensure we aren't scaling a number right before a multiplier (e.g., the '1' in '1 * 1d80')
+          let nextTerm = i < this.terms.length - 1 ? this.terms[i+1] : null;
+          let isMultiplierNext = nextTerm && nextTerm.operator !== undefined && (nextTerm.operator === "*" || nextTerm.operator === "/");
 
-          if (!isMultiplier) {
+          if (!isMultiplierPrev && !isMultiplierNext) {
              let val = term.number;
              
              // If the modifier is a small number (meaning it bypassed the sheet scaling, like -2 Shaken)
@@ -297,7 +301,8 @@ Hooks.once("init", () => {
             return `${sign}(${variable} * 10)`;
         });
 
-        res = res.replace(/(^|[-+]\s*)(\d+)\b/gi, (m, sign, num) => {
+        // ─── BUFF INTERCEPTOR LOGIC ───
+        res = res.replace(/(^|[-+]\s*)(\d+)\b(?!\s*[*\/xd])/gi, (m, sign, num) => {
             let val = Number(num);
             if (isBuff && restrictBuffs && val >= 10) return m; 
             return `${sign}${val * 10}`;
