@@ -159,38 +159,37 @@ Hooks.once("init", () => {
       for (let i = 0; i < this.terms.length; i++) {
         let term = this.terms[i];
 
+        // Ensure options exists so we can safely flag it
+        if (!term.options) term.options = {};
+
         // 1. SCALE DICE
-        if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
+        if (term.faces && term.faces <= 20 && !term.options._pf1arScaled) {
           term.faces *= 10;
-          // Cleanly scale the evaluated results WITHOUT touching the locked .total getter!
           if (term._evaluated && term.results) {
               term.results.forEach(r => { if (r.result !== undefined) r.result *= 10; });
           }
-          term._pf1arScaled = true;
+          term.options._pf1arScaled = true;
         }
 
-        // 2. SURGICAL MATH CATCHER
+        // 2. STRICT MATH CATCHER (Fixes the "Take 9" to 90 Override Issue)
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
-        if (isNumericTerm && !term._pf1arScaled) {
+        if (isNumericTerm && !term.options._pf1arScaled) {
             
             let prevTerm = i > 0 ? this.terms[i-1] : null;
             let nextTerm = i < this.terms.length - 1 ? this.terms[i+1] : null;
 
-            // Must be sandwiched between + or -, or be at the absolute beginning/end
-            let prevIsAdditive = !prevTerm || (prevTerm.operator && ["+", "-"].includes(prevTerm.operator));
+            // RULE 1: STRICTLY require an explicit preceding operator (+ or -).
+            // This prevents it from ever touching base "Check Overrides" or base weapon damage!
+            let prevIsAdditive = prevTerm && prevTerm.operator && ["+", "-"].includes(prevTerm.operator);
             let nextIsSafe = !nextTerm || (nextTerm.operator && ["+", "-"].includes(nextTerm.operator));
 
             if (prevIsAdditive && nextIsSafe) {
                 let val = term.number;
                 
-                // If it's Index 0, it is substituting a d20 roll (Take X). Scale up to 20.
-                // If it's > 0, it's a trailing buff modifier. Scale strictly < 10.
-                let limit = (i === 0) ? 20 : 9;
-                
-                if (val !== 0 && Math.abs(val) <= limit) {
+                // Since this only targets injected roll-buffs (like conditions), strictly scale numbers under 10
+                if (val !== 0 && Math.abs(val) < 10) {
                     term.number = val * 10;
-                    // Note: We completely avoid setting term.total to stop the V12 crash!
-                    term._pf1arScaled = true;
+                    term.options._pf1arScaled = true;
                 }
             }
         }
@@ -243,6 +242,8 @@ Hooks.once("init", () => {
       const restrictBuffs = game.settings.get(MODULE_ID, "scaleSmallBuffs");
       const isBuff = this.type === "buff";
 
+      // ─── THE EXPLICIT MULTI-PRONG SCALING PIPELINE ───
+      // Fixes the 10d80 Damage Multiply Bug by explicitly hiding variables attached to dice
       const scaleCL = (f) => {
         if (typeof f !== "string") return f;
         let res = f;
@@ -254,45 +255,45 @@ Hooks.once("init", () => {
             return key;
         };
 
-        // Hides base dice even if they have [flavor text] or spaces! (e.g. 1[fire] d80)
-        res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
-            let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
-            return hide(`${count || ""}${middle || ""}d${scaledFaces}`);
-        });
-
+        // 1. Explicit Capped Dice Pools (e.g., Fireball)
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
-            let fcs = Number(faces);
-            return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
+            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
+            return hide(`${func}(${num}, ${variable})${middle}d${fcs}`);
         });
         res = res.replace(/\(\s*(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
-            let fcs = Number(faces);
-            return hide(`(${func}(${num}, ${variable}))${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
+            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
+            return hide(`(${func}(${num}, ${variable}))${middle}d${fcs}`);
         });
-        res = res.replace(/\(\s*(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)\s*\)(\s*(?:\[.*?\])?\s*\*\s*)(\d*)d(\d+)/gi, (m, func, num, variable, middle, count, faces) => {
-            let fcs = Number(faces);
-            return hide(`(${func}(${num}, ${variable}))${middle}${count || ""}d${fcs <= 20 ? fcs * 10 : fcs}`);
-        });
-        res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*\*\s*)(\d*)d(\d+)/gi, (m, func, num, variable, middle, count, faces) => {
-            let fcs = Number(faces);
-            return hide(`${func}(${num}, ${variable})${middle}${count || ""}d${fcs <= 20 ? fcs * 10 : fcs}`);
-        });
+        
+        // 2. Reversed Limits
         res = res.replace(/(min|max)\(\s*([^,]+)\s*,\s*(\d+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, num, middle, faces) => {
-            let fcs = Number(faces);
-            return hide(`${func}(${variable}, ${num})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
-        });
-        res = res.replace(/(floor|ceil)\(\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, middle, faces) => {
-            let fcs = Number(faces);
-            return hide(`${func}(${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
-        });
-        res = res.replace(/\(\s*(floor|ceil)\(\s*([^)]+)\s*\)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, middle, faces) => {
-            let fcs = Number(faces);
-            return hide(`(${func}(${variable}))${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
-        });
-        res = res.replace(/(@[a-zA-Z0-9_.]+)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, variable, middle, faces) => {
-            let fcs = Number(faces);
-            return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
+            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
+            return hide(`${func}(${variable}, ${num})${middle}d${fcs}`);
         });
 
+        // 3. Fractional Levels
+        res = res.replace(/(floor|ceil)\(\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, middle, faces) => {
+            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
+            return hide(`${func}(${variable})${middle}d${fcs}`);
+        });
+        res = res.replace(/\(\s*(floor|ceil)\(\s*([^)]+)\s*\)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, middle, faces) => {
+            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
+            return hide(`(${func}(${variable}))${middle}d${fcs}`);
+        });
+
+        // 4. Uncapped Variable Pools (e.g. @cl d8)
+        res = res.replace(/(@[a-zA-Z0-9_.]+)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, variable, middle, faces) => {
+            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
+            return hide(`${variable}${middle}d${fcs}`);
+        });
+
+        // 5. Standard Dice & Multiplied Pools
+        res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
+            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
+            return hide(`${count || ""}${middle || ""}d${fcs}`);
+        });
+
+        // 6. Explicit Caps Without Dice (e.g. Cure Light Wounds)
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)/gi, (m, func, num, variable) => {
             return `${func}(${Number(num) * 10}, (${variable} * 10))`;
         });
@@ -300,17 +301,19 @@ Hooks.once("init", () => {
             return `${func}((${variable} * 10), ${Number(num) * 10})`;
         });
 
-        res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(?!\s*(?:\[.*?\])?\s*[*\/xd])/gi, (m, sign, variable) => {
+        // 7. Flat Standalone Variables 
+        res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(?!\s*(?:\[.*?\])?\s*[*\/x])/gi, (m, sign, variable) => {
             return `${sign}(${variable} * 10)`;
         });
 
-        // ─── BUFF INTERCEPTOR LOGIC ───
-        res = res.replace(/(^|[-+]\s*)(\d+)\b(?!\s*(?:\[.*?\])?\s*[*\/xd])/gi, (m, sign, num) => {
+        // 8. Buff / Debuff Flat Numbers
+        res = res.replace(/(^|[-+]\s*)(\d+)\b(?!\s*(?:\[.*?\])?\s*[*\/x])/gi, (m, sign, num) => {
             let val = Number(num);
             if (isBuff && restrictBuffs && val >= 10) return m; 
             return `${sign}${val * 10}`;
         });
 
+        // 9. Restore Placeholders Safely
         for (const [key, val] of Object.entries(placeholders)) {
             res = res.replace(key, val);
         }
@@ -490,7 +493,6 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.flags?.pf1?.metadata) {
         let metaClone = foundry.utils.deepClone(message.flags.pf1.metadata);
         
-        // Use a Set to track and prevent infinitely looping circular references!
         const scaleModifiersRecursively = (obj, visited = new Set()) => {
             if (!obj || typeof obj !== 'object') return;
             if (visited.has(obj)) return;
@@ -499,15 +501,13 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
             if (Array.isArray(obj)) {
                 obj.forEach(i => scaleModifiersRecursively(i, visited));
             } else {
-                // EXTREMELY STRICT CHECK: Ensure it is a pure modifier and NOT a dice pool metadata object
-                if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined) {
+                if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined && obj.formula === undefined) {
                     let val = Number(obj.modifier);
                     if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
                         obj.modifier = val * 10;
                     }
                 }
                 for (let key in obj) {
-                    // Shield against navigating into heavy Foundry document/DOM properties
                     if (['parent', 'document', 'actor', 'item', 'token', 'target', 'roll'].includes(key)) continue;
                     if (typeof obj[key] === 'object') {
                         scaleModifiersRecursively(obj[key], visited);
