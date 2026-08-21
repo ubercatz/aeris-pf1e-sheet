@@ -24,7 +24,6 @@ Hooks.once("init", () => {
 
   registerHandlebarsHelpers();
 
-  // Register settings
   game.settings.register(MODULE_ID, "enable10xGranularity", {
     name: "Enable 10x Granularity Engine",
     hint: "Scales base dice faces (1d6 -> 1d60) and flat modifiers by 10x.",
@@ -60,7 +59,6 @@ Hooks.once("init", () => {
   game.settings.register(MODULE_ID, "compact", { name: "PF1AR.Settings.Compact", scope: "client", config: true, type: Boolean, default: false, onChange: _rerenderOpenAltSheets });
   game.settings.register(MODULE_ID, "summarySkills", { name: "PF1AR.Settings.SummarySkills", scope: "client", config: true, type: String, default: "ranked", choices: { ranked: "PF1AR.Labels.Ranked", class: "PF1AR.Labels.SkillsClass", all: "PF1AR.Labels.SkillsAll" }, onChange: _rerenderOpenAltSheets });
 
-  // Early config adjustment: Ensure PF1e class skill bonuses scale BEFORE actor data preparation
   if (pf1.config) {
     pf1.config.classSkillBonus = 30;
     pf1.config.nonProficiencyPenalty = -40;
@@ -192,7 +190,6 @@ Hooks.once("init", () => {
           let isFirstTerm = (i === 0);
           let flavor = String(term.options?.flavor || "").toLowerCase();
 
-          // Protects ranks, attributes, and nomulti flags from being scaled during roll execution
           let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|rank|skill ranks|nomulti|nm)\b/i.test(flavor);
 
           if (!isMultiplier && !isFirstTerm && !isExcluded) {
@@ -217,7 +214,6 @@ Hooks.once("init", () => {
 
     let evaluatedRoll = await wrapped(...args);
 
-    // Apply custom fumbles
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       let customFumble = 10;
       try {
@@ -338,7 +334,7 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
 
-  // 3. Ability Modifier Hook (100-base conversion: e.g. 223 -> +61)
+  // 3. Ability Modifier Hook (100-base conversion)
   libWrapper.register(MODULE_ID, "pf1.utils.getAbilityModifier", function (wrapped, score, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && typeof score === "number") {
       return Math.floor((score - 100) / 2);
@@ -358,7 +354,7 @@ Hooks.once("init", () => {
     return result;
   }, "WRAPPER");
 
-  // 5. Actor Derived Data: Preserves 1:1 Ranks and syncs Conditions/Tooltips
+  // 5. Actor Derived Data: Direct UI Tooltip and Modifier Resync
   libWrapper.register(MODULE_ID, "CONFIG.Actor.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args); 
     
@@ -403,88 +399,92 @@ Hooks.once("init", () => {
         this.system.attributes.encumbrance.heavy = heavy * 10;
       }
 
-      // ─── GLOBAL MODIFIER DICTIONARY & CONDITION RESYNC ───
-      if (this.modifiers) {
-        for (let [target, modArray] of this.modifiers.entries()) {
-          let diff = 0;
-          modArray.forEach(mod => {
-            if (mod.name && CORE_CONDITIONS.has(mod.name.toLowerCase())) {
-              let val = Number(mod.modifier);
-              if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
-                let scaledVal = val * 10;
-                diff += (scaledVal - val);
-                mod.modifier = scaledVal; // Fixes visual UI tooltips
-              }
-            }
-          });
-          
-          if (diff !== 0) {
-            const t = target.toLowerCase();
-            // Route global conditions (Shaken, Sickened) across every skill and sub-skill
-            if (["skills.all", "skill.all", "skills", "allskills"].includes(t)) {
-              if (this.system.skills) {
-                for (const sk of Object.values(this.system.skills)) {
-                  sk.mod = (sk.mod || 0) + diff;
-                  if (sk.subSkills) {
-                    for (const sub of Object.values(sk.subSkills)) {
-                      sub.mod = (sub.mod || 0) + diff;
-                    }
-                  }
-                }
-              }
-            } else if (t.startsWith("skills.") || t.startsWith("skill.")) {
-              const path = t.replace(/^skill\./, "skills.");
-              const current = foundry.utils.getProperty(this.system, `${path}.mod`);
-              if (current !== undefined) foundry.utils.setProperty(this.system, `${path}.mod`, current + diff);
-            } else if (t === "ac") {
-              ["normal", "touch", "flatFooted"].forEach(type => {
-                if (this.system.attributes.ac?.[type]?.total !== undefined) {
-                  this.system.attributes.ac[type].total += diff;
-                }
-              });
-            } else if (t === "cmd" && this.system.attributes.cmd?.total !== undefined) {
-              this.system.attributes.cmd.total += diff;
-            } else if (t === "cmb" && this.system.attributes.cmb?.total !== undefined) {
-              this.system.attributes.cmb.total += diff;
-            } else if (t === "attack" && this.system.attributes.attack?.total !== undefined) {
-              this.system.attributes.attack.total += diff;
-            } else if (t.startsWith("saves.") || t.startsWith("savingthrows.")) {
-              const saveKey = t.split(".")[1];
-              if (this.system.attributes.savingThrows?.[saveKey]?.total !== undefined) {
-                this.system.attributes.savingThrows[saveKey].total += diff;
-              }
-            }
-          }
-        }
-      }
-
-      // ─── SYNC INLINE SKILL TOOLTIP ARRAYS ───
+      // ─── DIRECT SKILLS & SUB-SKILLS UI RESYNC ───
+      // Inspects each skill's modifier tooltip list directly, scaling Panicked/Shaken/etc. to -20 and applying the difference.
       if (this.system.skills) {
-        const updateSkillTooltips = (sk) => {
-          if (sk.modifiers && Array.isArray(sk.modifiers)) {
-            sk.modifiers.forEach(m => {
-              if (m.name && CORE_CONDITIONS.has(m.name.toLowerCase())) {
-                let v = Number(m.modifier ?? m.value);
-                if (!isNaN(v) && v !== 0 && Math.abs(v) < 10) {
-                  if (m.modifier !== undefined) m.modifier = v * 10;
-                  if (m.value !== undefined) m.value = v * 10;
+        const processSkillModifiers = (sk) => {
+          if (!sk) return;
+          let diff = 0;
+          const modList = sk.modifiers || sk.sources;
+          if (Array.isArray(modList)) {
+            modList.forEach(m => {
+              const name = String(m.name || "").toLowerCase();
+              if (CORE_CONDITIONS.has(name)) {
+                let val = Number(m.modifier ?? m.value);
+                if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+                  let scaledVal = val * 10;
+                  diff += (scaledVal - val);
+                  if (m.modifier !== undefined) m.modifier = scaledVal;
+                  if (m.value !== undefined) m.value = scaledVal;
                 }
               }
             });
           }
+          if (diff !== 0 && typeof sk.mod === "number") {
+            sk.mod += diff;
+          }
         };
+
         for (const sk of Object.values(this.system.skills)) {
-          updateSkillTooltips(sk);
+          processSkillModifiers(sk);
           if (sk.subSkills) {
-            for (const sub of Object.values(sk.subSkills)) updateSkillTooltips(sub);
+            for (const sub of Object.values(sk.subSkills)) {
+              processSkillModifiers(sub);
+            }
           }
         }
       }
+
+      // ─── SAVING THROWS & COMBAT ATTRIBUTES RESYNC ───
+      if (this.system.attributes?.savingThrows) {
+        for (const sv of Object.values(this.system.attributes.savingThrows)) {
+          let diff = 0;
+          const modList = sv.modifiers || sv.sources;
+          if (Array.isArray(modList)) {
+            modList.forEach(m => {
+              const name = String(m.name || "").toLowerCase();
+              if (CORE_CONDITIONS.has(name)) {
+                let val = Number(m.modifier ?? m.value);
+                if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+                  let scaledVal = val * 10;
+                  diff += (scaledVal - val);
+                  if (m.modifier !== undefined) m.modifier = scaledVal;
+                  if (m.value !== undefined) m.value = scaledVal;
+                }
+              }
+            });
+          }
+          if (diff !== 0 && typeof sv.total === "number") sv.total += diff;
+        }
+      }
+
+      ['cmd', 'cmb', 'attack'].forEach(attr => {
+        const target = this.system.attributes?.[attr];
+        if (target) {
+          let diff = 0;
+          const modList = target.modifiers || target.sources;
+          if (Array.isArray(modList)) {
+            modList.forEach(m => {
+              const name = String(m.name || "").toLowerCase();
+              if (CORE_CONDITIONS.has(name)) {
+                let val = Number(m.modifier ?? m.value);
+                if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+                  let scaledVal = val * 10;
+                  diff += (scaledVal - val);
+                  if (m.modifier !== undefined) m.modifier = scaledVal;
+                  if (m.value !== undefined) m.value = scaledVal;
+                }
+              }
+            });
+          }
+          if (diff !== 0 && typeof target.total === "number") target.total += diff;
+        }
+      });
     }
   }, "WRAPPER");
 });
 
-// ─── CHAT HOOKS ───────────────────────────────────────────────────────────
+// ─── CHAT HOOKS: DATA BROADCASTING & JQUERY DOM SCRUBBING ─────────────────
 
 Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
   if (game.user.id !== userId) return;
