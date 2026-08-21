@@ -75,7 +75,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
     let $advancedTab = html.find('.tab[data-tab="advanced"]');
     let $target = $advancedTab.length > 0 ? $advancedTab : html.find('.sheet-body');
 
-    // 1. Fumble Range Injection (Restricted to Weapons/Spells/Attacks)
+    // 1. Fumble Range Injection
     if (["weapon", "spell", "attack"].includes(app.item.type)) {
         let currentFumble = app.item.getFlag(MODULE_ID, "fumbleRange");
         if (currentFumble === undefined) currentFumble = 10;
@@ -95,7 +95,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
         $target.append(fumbleHtml);
     }
 
-    // 2. Disable 10x Scaling Injection (Available on EVERY Item)
+    // 2. Disable 10x Scaling Injection
     let disable10x = app.item.getFlag(MODULE_ID, "disable10x");
     if (disable10x === undefined) disable10x = false;
 
@@ -105,7 +105,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
             <div class="form-fields">
                 <input type="checkbox" name="flags.${MODULE_ID}.disable10x" ${disable10x ? "checked" : ""}>
             </div>
-            <p class="notes">If checked, this item's bonuses and formulas will NOT be multiplied by 10.</p>
+            <p class="notes">Check to skip scaling. You can also type <strong>[nomulti]</strong> next to any flat number in a formula to manually exclude it!</p>
         </div>
     `;
     $target.append(toggleHtml);
@@ -195,11 +195,10 @@ Hooks.once("init", () => {
 
           let flavor = String(term.options?.flavor || "").toLowerCase();
           
-          // ─── SHIELD 6: COMPREHENSIVE ATTRIBUTE EXCLUDER ───
-          let isAttribute = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus)\b/i.test(flavor);
+          // ─── SHIELD 6: COMPREHENSIVE ATTRIBUTE & FLAG EXCLUDER ───
+          // Now officially ignores 'ranks', 'skill ranks', and your custom 'nomulti' flag!
+          let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti)\b/i.test(flavor);
 
-          // ─── SHIELD 7: INDIVIDUAL ITEM OPT-OUT CHECK ───
-          // Scans actors to see if this flavor text matches an Item where the user checked "Disable 10x"
           let isDisabledItem = false;
           if (flavor) {
               for (const actor of game.actors.values()) {
@@ -210,7 +209,7 @@ Hooks.once("init", () => {
               }
           }
 
-          if (!isMultiplier && !isFirstTerm && !isAttribute && !isDisabledItem) {
+          if (!isMultiplier && !isFirstTerm && !isExcluded && !isDisabledItem) {
              let val = term.number;
              
              if (val !== 0 && Math.abs(val) < 10) {
@@ -266,8 +265,6 @@ Hooks.once("init", () => {
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
-      // ─── MASTER OPT-OUT CHECK ───
-      // If the user checked "Disable 10x" on this item, immediately abort scaling its formulas!
       if (this.getFlag(MODULE_ID, "disable10x")) return;
 
       const restrictBuffs = game.settings.get(MODULE_ID, "scaleSmallBuffs");
@@ -309,9 +306,9 @@ Hooks.once("init", () => {
             let fcs = Number(faces); return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
 
-        res = res.replace(/\b(\d*)\s*d\s*(\d+)\b/gi, (m, count, faces) => {
+        res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
             let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
-            return hide(`${count || ""}d${scaledFaces}`);
+            return hide(`${count || ""}${middle || ""}d${scaledFaces}`);
         });
         
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)/gi, (m, func, num, variable) => {
@@ -321,14 +318,24 @@ Hooks.once("init", () => {
             return `${func}((${variable} * 10), ${Number(num) * 10})`;
         });
 
-        res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)/gi, (m, sign, variable) => {
-            return `${sign}(${variable} * 10)`;
+        // ─── FIX: Variables properly check for [nomulti] text before scaling
+        res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, variable, flavorWrap, flavorText) => {
+            let flavor = String(flavorText || "").toLowerCase();
+            let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti)\b/i.test(flavor);
+            
+            if (isExcluded) return m;
+            return `${sign}(${variable} * 10)${flavorWrap || ""}`;
         });
 
-        res = res.replace(/(^|[-+]\s*)(\d+)\b(?!\s*[*\/xd])/gi, (m, sign, num) => {
+        // ─── FIX: Flat Numbers properly check for [nomulti] and [ranks] text before scaling
+        res = res.replace(/(^|[-+]\s*)(\d+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, num, flavorWrap, flavorText) => {
             let val = Number(num);
+            let flavor = String(flavorText || "").toLowerCase();
+            let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti)\b/i.test(flavor);
+
+            if (isExcluded) return m; 
             if (isBuff && restrictBuffs && val >= 10) return m; 
-            return `${sign}${val * 10}`;
+            return `${sign}${val * 10}${flavorWrap || ""}`;
         });
 
         for (const [key, val] of Object.entries(placeholders)) {
@@ -509,7 +516,6 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     // ─── SHIELD 5 & 6: STRICT VISUAL TOOLTIP CATCHER & EXCLUDERS ───
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.system) {
         
-        // Find the actor associated with the roll so we can check their opted-out items
         let msgActor = null;
         if (message.speaker) {
             msgActor = game.actors.get(message.speaker.actor);
@@ -541,11 +547,11 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
                     let val = Number(obj.modifier);
                     let name = String(obj.name).toLowerCase();
                     
-                    // Exclude natively scaled core attributes/BAB AND specific items flagged by the user!
-                    let isAttribute = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus)\b/i.test(name);
+                    // Excludes natively scaled core attributes/BAB, Skill Ranks, and your manual [nomulti] tags!
+                    let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti)\b/i.test(name);
                     let isDisabled = disabledItemNames.has(name);
 
-                    if (!isAttribute && !isDisabled && !isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+                    if (!isExcluded && !isDisabled && !isNaN(val) && val !== 0 && Math.abs(val) < 10) {
                         obj.modifier = val * 10;
                     }
                 }
