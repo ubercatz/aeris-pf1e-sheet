@@ -156,51 +156,57 @@ Hooks.once("init", () => {
 
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+
       for (let i = 0; i < this.terms.length; i++) {
         let term = this.terms[i];
 
-        // Ensure options exists so we can safely flag it
         if (!term.options) term.options = {};
 
-        // 1. SCALE DICE
+        // 1. SCALE DICE (1d20 -> 1d200)
         if (term.faces && term.faces <= 20 && !term.options._pf1arScaled) {
           term.faces *= 10;
-          if (term._evaluated && term.results) {
-              term.results.forEach(r => { if (r.result !== undefined) r.result *= 10; });
-          }
+          
+          // CRITICAL FIX: We completely stripped the logic that multiplied term.results!
+          // By leaving evaluated results strictly alone, any manual Check Override
+          // (like explicitly typing '9' or '90') remains EXACTLY what you typed.
+
           term.options._pf1arScaled = true;
         }
 
-        // 2. STRICT MATH CATCHER (Fixes the "Take 9" to 90 Override Issue)
+        // 2. THE BRUTE-FORCE MATH CATCHER
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
         if (isNumericTerm && !term.options._pf1arScaled) {
-            
-            let prevTerm = i > 0 ? this.terms[i-1] : null;
-            let nextTerm = i < this.terms.length - 1 ? this.terms[i+1] : null;
+          
+          let prevTerm = i > 0 ? this.terms[i-1] : null;
+          let nextTerm = i < this.terms.length - 1 ? this.terms[i+1] : null;
+          
+          // SHIELD 1 & 2: Protects multiplication damage dice (e.g. 2 * 1d6)
+          let isMultiplier = false;
+          if (prevTerm && prevTerm.operator !== undefined && ["*", "/"].includes(prevTerm.operator)) isMultiplier = true;
+          if (nextTerm && nextTerm.operator !== undefined && ["*", "/"].includes(nextTerm.operator)) isMultiplier = true;
 
-            // RULE 1: STRICTLY require an explicit preceding operator (+ or -).
-            // This prevents it from ever touching base "Check Overrides" or base weapon damage!
-            let prevIsAdditive = prevTerm && prevTerm.operator && ["+", "-"].includes(prevTerm.operator);
-            let nextIsSafe = !nextTerm || (nextTerm.operator && ["+", "-"].includes(nextTerm.operator));
+          // SHIELD 4: Protects pure Check Overrides fed directly as flat variables (Index 0)
+          let isFirstTerm = (i === 0);
 
-            if (prevIsAdditive && nextIsSafe) {
-                let val = term.number;
-                
-                // Since this only targets injected roll-buffs (like conditions), strictly scale numbers under 10
-                if (val !== 0 && Math.abs(val) < 10) {
-                    term.number = val * 10;
-                    term.options._pf1arScaled = true;
-                }
-            }
+          if (!isMultiplier && !isFirstTerm) {
+             let val = term.number;
+             
+             // If the modifier is a small number (meaning it bypassed the sheet scaling, like -2 Shaken)
+             if (val !== 0 && Math.abs(val) < 10) {
+                 term.number = val * 10;
+                 if (term._evaluated) {
+                     try { term.total = term.number; } catch(e) {}
+                 } 
+                 term.options._pf1arScaled = true;
+             }
+          }
         }
       }
       
       try {
           this._formula = this.constructor.getFormula(this.terms);
       } catch (e) {
-          try { 
-              this._formula = this.terms.map(t => t.expression ?? t.formula ?? t.operator ?? t.number ?? "").join(" "); 
-          } catch(e2) {}
+          try { this._formula = this.terms.map(t => t.expression || t.formula || t.number).join(""); } catch(e2) {}
       }
     }
 
@@ -242,8 +248,6 @@ Hooks.once("init", () => {
       const restrictBuffs = game.settings.get(MODULE_ID, "scaleSmallBuffs");
       const isBuff = this.type === "buff";
 
-      // ─── THE EXPLICIT MULTI-PRONG SCALING PIPELINE ───
-      // Fixes the 10d80 Damage Multiply Bug by explicitly hiding variables attached to dice
       const scaleCL = (f) => {
         if (typeof f !== "string") return f;
         let res = f;
@@ -255,45 +259,37 @@ Hooks.once("init", () => {
             return key;
         };
 
-        // 1. Explicit Capped Dice Pools (e.g., Fireball)
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
-            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
-            return hide(`${func}(${num}, ${variable})${middle}d${fcs}`);
+            let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
         res = res.replace(/\(\s*(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
-            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
-            return hide(`(${func}(${num}, ${variable}))${middle}d${fcs}`);
+            let fcs = Number(faces); return hide(`(${func}(${num}, ${variable}))${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
-        
-        // 2. Reversed Limits
+        res = res.replace(/\(\s*(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)\s*\)(\s*(?:\[.*?\])?\s*\*\s*)(\d*)d(\d+)/gi, (m, func, num, variable, middle, count, faces) => {
+            let fcs = Number(faces); return hide(`(${func}(${num}, ${variable}))${middle}${count || ""}d${fcs <= 20 ? fcs * 10 : fcs}`);
+        });
+        res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*\*\s*)(\d*)d(\d+)/gi, (m, func, num, variable, middle, count, faces) => {
+            let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}${count || ""}d${fcs <= 20 ? fcs * 10 : fcs}`);
+        });
         res = res.replace(/(min|max)\(\s*([^,]+)\s*,\s*(\d+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, num, middle, faces) => {
-            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
-            return hide(`${func}(${variable}, ${num})${middle}d${fcs}`);
+            let fcs = Number(faces); return hide(`${func}(${variable}, ${num})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
-
-        // 3. Fractional Levels
         res = res.replace(/(floor|ceil)\(\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, middle, faces) => {
-            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
-            return hide(`${func}(${variable})${middle}d${fcs}`);
+            let fcs = Number(faces); return hide(`${func}(${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
         res = res.replace(/\(\s*(floor|ceil)\(\s*([^)]+)\s*\)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, middle, faces) => {
-            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
-            return hide(`(${func}(${variable}))${middle}d${fcs}`);
+            let fcs = Number(faces); return hide(`(${func}(${variable}))${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
-
-        // 4. Uncapped Variable Pools (e.g. @cl d8)
         res = res.replace(/(@[a-zA-Z0-9_.]+)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, variable, middle, faces) => {
-            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
-            return hide(`${variable}${middle}d${fcs}`);
+            let fcs = Number(faces); return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
 
-        // 5. Standard Dice & Multiplied Pools
-        res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
-            let fcs = Number(faces) <= 20 ? Number(faces) * 10 : faces;
-            return hide(`${count || ""}${middle || ""}d${fcs}`);
+        // SHIELD 2: Accommodates spaces in dice strings (like '2 d6') to protect the dice count
+        res = res.replace(/\b(\d*)\s*d\s*(\d+)\b/gi, (m, count, faces) => {
+            let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
+            return hide(`${count || ""}d${scaledFaces}`);
         });
-
-        // 6. Explicit Caps Without Dice (e.g. Cure Light Wounds)
+        
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)/gi, (m, func, num, variable) => {
             return `${func}(${Number(num) * 10}, (${variable} * 10))`;
         });
@@ -301,19 +297,17 @@ Hooks.once("init", () => {
             return `${func}((${variable} * 10), ${Number(num) * 10})`;
         });
 
-        // 7. Flat Standalone Variables 
-        res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(?!\s*(?:\[.*?\])?\s*[*\/x])/gi, (m, sign, variable) => {
+        res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)/gi, (m, sign, variable) => {
             return `${sign}(${variable} * 10)`;
         });
 
-        // 8. Buff / Debuff Flat Numbers
-        res = res.replace(/(^|[-+]\s*)(\d+)\b(?!\s*(?:\[.*?\])?\s*[*\/x])/gi, (m, sign, num) => {
+        // SHIELD 3: The negative lookahead strictly ignores ANY number followed by a multiplier or die 'd'
+        res = res.replace(/(^|[-+]\s*)(\d+)\b(?!\s*[*\/xd])/gi, (m, sign, num) => {
             let val = Number(num);
             if (isBuff && restrictBuffs && val >= 10) return m; 
             return `${sign}${val * 10}`;
         });
 
-        // 9. Restore Placeholders Safely
         for (const [key, val] of Object.entries(placeholders)) {
             res = res.replace(key, val);
         }
@@ -489,34 +483,28 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
     }
 
-    // ─── THE AIRTIGHT VISUAL TOOLTIP CATCHER ───
+    // ─── SHIELD 5: STRICT VISUAL TOOLTIP CATCHER ───
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.flags?.pf1?.metadata) {
         let metaClone = foundry.utils.deepClone(message.flags.pf1.metadata);
         
-        const scaleModifiersRecursively = (obj, visited = new Set()) => {
+        const scaleModifiersStrictly = (obj) => {
             if (!obj || typeof obj !== 'object') return;
-            if (visited.has(obj)) return;
-            visited.add(obj);
-
             if (Array.isArray(obj)) {
-                obj.forEach(i => scaleModifiersRecursively(i, visited));
+                obj.forEach(i => scaleModifiersStrictly(i));
             } else {
-                if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined && obj.formula === undefined) {
+                if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined) {
                     let val = Number(obj.modifier);
                     if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
                         obj.modifier = val * 10;
                     }
                 }
                 for (let key in obj) {
-                    if (['parent', 'document', 'actor', 'item', 'token', 'target', 'roll'].includes(key)) continue;
-                    if (typeof obj[key] === 'object') {
-                        scaleModifiersRecursively(obj[key], visited);
-                    }
+                    if (typeof obj[key] === 'object') scaleModifiersStrictly(obj[key]);
                 }
             }
         };
         
-        scaleModifiersRecursively(metaClone);
+        scaleModifiersStrictly(metaClone);
         injectedData["flags.pf1.metadata"] = metaClone;
     }
 
