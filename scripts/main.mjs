@@ -3,6 +3,14 @@ import { AltCharacterSheetPF, AltNPCSheetPF } from "./sheet.mjs";
 
 const MODULE_ID = "pf1-altsheet-reworked";
 
+// Define Pathfinder's hardcoded conditions that bypass item scaling
+const CORE_CONDITIONS = new Set([
+  "panicked", "shaken", "sickened", "fatigued", "exhausted", "entangled", 
+  "grappled", "prone", "frightened", "cowering", "dazzled", "blinded", 
+  "deafened", "stunned", "staggered", "paralyzed", "pinned", "invisible", 
+  "squeezing", "negative level"
+]);
+
 function _rerenderOpenAltSheets() {
   for (const app of Object.values(ui.windows)) {
     if (app?.element?.[0]?.classList?.contains("pf1ar-sheet")) app.render(false);
@@ -75,7 +83,6 @@ Hooks.on("renderItemSheet", (app, html, data) => {
     let $advancedTab = html.find('.tab[data-tab="advanced"]');
     let $target = $advancedTab.length > 0 ? $advancedTab : html.find('.sheet-body');
 
-    // 1. Fumble Range Injection
     if (["weapon", "spell", "attack"].includes(app.item.type)) {
         let currentFumble = app.item.getFlag(MODULE_ID, "fumbleRange");
         if (currentFumble === undefined) currentFumble = 10;
@@ -95,7 +102,6 @@ Hooks.on("renderItemSheet", (app, html, data) => {
         $target.append(fumbleHtml);
     }
 
-    // 2. Disable 10x Scaling Injection
     let disable10x = app.item.getFlag(MODULE_ID, "disable10x");
     if (disable10x === undefined) disable10x = false;
 
@@ -105,7 +111,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
             <div class="form-fields">
                 <input type="checkbox" name="flags.${MODULE_ID}.disable10x" ${disable10x ? "checked" : ""}>
             </div>
-            <p class="notes">Check to skip scaling. You can also type <strong>[nomulti]</strong> or <strong>[nm]</strong> next to any flat number in a formula to manually exclude it!</p>
+            <p class="notes">Check to skip scaling. You can also type <strong>[nomulti]</strong> next to any flat number in a formula to manually exclude it!</p>
         </div>
     `;
     $target.append(toggleHtml);
@@ -131,7 +137,6 @@ Hooks.once("ready", () => {
 Hooks.once("init", () => {
     const aerisStyles = document.createElement("style");
     aerisStyles.innerHTML = `
-        /* Custom Fumble Styling */
         .aeris-crit-fail {
             color: #aa0200 !important;
             border-color: #aa0200 !important;
@@ -143,7 +148,6 @@ Hooks.once("init", () => {
             font-weight: bold !important;
         }
 
-        /* NUCLEAR OVERRIDE: Destroy Foundry V12's Blue Tampered Visuals globally */
         .dice-roll.is-tampered .dice-total,
         .dice-roll.tampered .dice-total,
         .is-tampered .dice-total {
@@ -172,7 +176,6 @@ Hooks.once("init", () => {
 
       for (let i = 0; i < this.terms.length; i++) {
         let term = this.terms[i];
-
         if (!term.options) term.options = {};
 
         // 1. SCALE DICE (1d20 -> 1d200)
@@ -196,30 +199,19 @@ Hooks.once("init", () => {
           let flavor = String(term.options?.flavor || "").toLowerCase();
           
           // ─── SHIELD 6: COMPREHENSIVE ATTRIBUTE & FLAG EXCLUDER ───
-          // Now officially ignores 'ranks', 'skill ranks', and your custom 'nomulti' flag!
+          // Perfectly protects nm, nomulti, ranks, and core attributes!
           let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti|nm)\b/i.test(flavor);
 
-          let isDisabledItem = false;
-          if (flavor) {
-              for (const actor of game.actors.values()) {
-                  if (actor.items.some(i => i.name.toLowerCase() === flavor && i.getFlag(MODULE_ID, "disable10x"))) {
-                      isDisabledItem = true;
-                      break;
-                  }
-              }
-          }
-
-          if (!isMultiplier && !isFirstTerm && !isExcluded && !isDisabledItem) {
+          if (!isMultiplier && !isFirstTerm && !isExcluded) {
              let val = term.number;
-             
              if (val !== 0 && Math.abs(val) < 10) {
                  term.number = val * 10;
                  if (term._evaluated) {
                      try { term.total = term.number; } catch(e) {}
                  } 
-                 term.options._pf1arScaled = true;
              }
           }
+          term.options._pf1arScaled = true;
         }
       }
       
@@ -265,7 +257,30 @@ Hooks.once("init", () => {
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
-      if (this.getFlag(MODULE_ID, "disable10x")) return;
+      // ─── MASTER OPT-OUT INJECTOR ───
+      if (this.getFlag(MODULE_ID, "disable10x")) {
+          // If checked, we forcefully append [NM] to the item's name in memory.
+          // This ensures passive buffs inherit the NM tag so the engine ignores them!
+          if (!this.name.includes("[NM]")) {
+              this.name = `${this.name} [NM]`;
+          }
+
+          if (this.system?.actions) {
+            this.system.actions.forEach((action, i) => {
+              const srcAction = this._source?.system?.actions?.[i];
+              if (srcAction && action.damage?.parts) {
+                action.damage.parts.forEach((part, j) => {
+                  const srcFormula = srcAction.damage.parts[j]?.formula ?? part.formula;
+                  if (srcFormula && !part._pf1arScaled) {
+                    part.formula = `${srcFormula}[nomulti]`;
+                    part._pf1arScaled = true;
+                  }
+                });
+              }
+            });
+          }
+          return; 
+      }
 
       const restrictBuffs = game.settings.get(MODULE_ID, "scaleSmallBuffs");
       const isBuff = this.type === "buff";
@@ -281,6 +296,7 @@ Hooks.once("init", () => {
             return key;
         };
 
+        // Standard scaling regexes...
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
             let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
@@ -305,34 +321,26 @@ Hooks.once("init", () => {
         res = res.replace(/(@[a-zA-Z0-9_.]+)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, variable, middle, faces) => {
             let fcs = Number(faces); return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
-
         res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
             let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
             return hide(`${count || ""}${middle || ""}d${scaledFaces}`);
         });
-        
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*\)/gi, (m, func, num, variable) => {
             return `${func}(${Number(num) * 10}, (${variable} * 10))`;
         });
         res = res.replace(/(min|max)\(\s*(@[a-zA-Z0-9_.]+)\s*,\s*(\d+)\s*\)/gi, (m, func, variable, num) => {
             return `${func}((${variable} * 10), ${Number(num) * 10})`;
         });
-
-        // ─── FIX: Variables properly check for [nomulti] text before scaling
         res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, variable, flavorWrap, flavorText) => {
             let flavor = String(flavorText || "").toLowerCase();
             let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti|nm)\b/i.test(flavor);
-            
             if (isExcluded) return m;
             return `${sign}(${variable} * 10)${flavorWrap || ""}`;
         });
-
-        // ─── FIX: Flat Numbers properly check for [nomulti] and [ranks] text before scaling
         res = res.replace(/(^|[-+]\s*)(\d+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, num, flavorWrap, flavorText) => {
             let val = Number(num);
             let flavor = String(flavorText || "").toLowerCase();
-            let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti)\b/i.test(flavor);
-
+            let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti|nm)\b/i.test(flavor);
             if (isExcluded) return m; 
             if (isBuff && restrictBuffs && val >= 10) return m; 
             return `${sign}${val * 10}${flavorWrap || ""}`;
@@ -363,7 +371,6 @@ Hooks.once("init", () => {
       if (this.system?.actions && this._source?.system?.actions) {
         this.system.actions.forEach((action, i) => {
           const srcAction = this._source.system.actions[i];
-          
           if (srcAction && action.damage?.parts) {
             action.damage.parts.forEach((part, j) => {
               const srcFormula = srcAction.damage.parts[j]?.formula;
@@ -373,11 +380,8 @@ Hooks.once("init", () => {
 
           if (action.actionType) {
               action.ability = action.ability || {};
-              
               let cRange = action.ability.critRange;
-              if (cRange === undefined || cRange === null || cRange === "") {
-                  cRange = action.critRange;
-              }
+              if (cRange === undefined || cRange === null || cRange === "") cRange = action.critRange;
               
               if (cRange === undefined || cRange === null || cRange === "") {
                   action.ability.critRange = 191; 
@@ -410,16 +414,11 @@ Hooks.once("init", () => {
 
   libWrapper.register(MODULE_ID, "pf1.components.ItemAction.prototype.getDC", function(wrapped, ...args) {
     let result = wrapped(...args);
-    
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && result != null) {
       const sl = this.spellLevel ?? this.item?.spellLevel ?? 0;
       const bonus = 90 + (sl * 9);
-      
-      if (typeof result === "number") {
-          result += bonus;
-      } else if (result.value !== undefined) {
-          result.value += bonus;
-      }
+      if (typeof result === "number") result += bonus;
+      else if (result.value !== undefined) result.value += bonus;
     }
     return result;
   }, "WRAPPER");
@@ -465,62 +464,37 @@ Hooks.once("init", () => {
         this.system.attributes.encumbrance.heavy = heavy * 10;
       }
 
-      // ─── NEW: SHEET UI DATA RE-SYNC (TOOLTIPS & TOTALS) ───
-      let disabledItemNames = new Set();
-      this.items.forEach(i => {
-          if (i.getFlag(MODULE_ID, "disable10x")) disabledItemNames.add(i.name.toLowerCase());
-      });
-
-      const applyModifierDiff = (targetObj, totalKey) => {
-          if (targetObj && targetObj.modifiers && Array.isArray(targetObj.modifiers)) {
+      // ─── NEW: DICTIONARY SYNC FOR CORE CONDITIONS (Tooltips & Totals) ───
+      // Modifies the background ModifierDictionary natively so Panicked & Shaken scale to -20 flawlessly!
+      if (this.modifiers) {
+          for (let [target, modArray] of this.modifiers.entries()) {
               let diff = 0;
-              targetObj.modifiers.forEach(modObj => {
-                  if (modObj.modifier !== undefined && modObj.name !== undefined) {
-                      let val = Number(modObj.modifier);
-                      let name = String(modObj.name).toLowerCase();
-                      
-                      // Completely protects base attributes, skill ranks, and your manual tags!
-                      let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti|nm)\b/i.test(name);
-                      let isDisabled = disabledItemNames.has(name);
-
-                      if (!isExcluded && !isDisabled && !isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+              modArray.forEach(mod => {
+                  if (mod.name && CORE_CONDITIONS.has(mod.name.toLowerCase())) {
+                      let val = Number(mod.modifier);
+                      if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
                           let scaledVal = val * 10;
-                          diff += (scaledVal - val);   // Calculate the mathematical difference
-                          modObj.modifier = scaledVal; // Mutate the visual tooltip array
+                          diff += (scaledVal - val);
+                          mod.modifier = scaledVal; // Perfectly fixes the visual UI tooltip!
                       }
                   }
               });
               
-              // Apply the mathematical difference directly to the sheet's final total!
-              if (diff !== 0 && targetObj[totalKey] !== undefined) {
-                  targetObj[totalKey] += diff;
+              if (diff !== 0) {
+                  // Re-route the physical math difference to the correct character sheet location!
+                  let paths = [];
+                  if (target.startsWith("skills.")) paths.push(`skills.${target.split(".")[1]}.mod`);
+                  else if (target === "ac") paths.push("attributes.ac.normal.total", "attributes.ac.touch.total", "attributes.ac.flatFooted.total");
+                  else if (target === "cmd") paths.push("attributes.cmd.total");
+                  else if (target === "cmb") paths.push("attributes.cmb.total");
+                  else if (target === "attack") paths.push("attributes.attack.total");
+                  else if (target.startsWith("saves.")) paths.push(`attributes.savingThrows.${target.split(".")[1]}.total`);
+                  
+                  paths.forEach(p => {
+                      let current = foundry.utils.getProperty(this.system, p);
+                      if (current !== undefined) foundry.utils.setProperty(this.system, p, current + diff);
+                  });
               }
-          }
-      };
-
-      // 1. Scrub & Sync Skills
-      if (this.system.skills) {
-          for (let sk of Object.values(this.system.skills)) {
-              applyModifierDiff(sk, "mod");
-          }
-      }
-
-      // 2. Scrub & Sync Saves & Combat Attributes
-      if (this.system.attributes) {
-          if (this.system.attributes.savingThrows) {
-              for (let sv of Object.values(this.system.attributes.savingThrows)) {
-                  applyModifierDiff(sv, "total");
-              }
-          }
-          ['cmd', 'cmb', 'attack', 'damage'].forEach(attr => {
-              applyModifierDiff(this.system.attributes[attr], "total");
-          });
-          
-          // Re-sync AC penalties (like AC drops from specific debuffs)
-          if (this.system.attributes.ac) {
-              ['normal', 'touch', 'flatFooted'].forEach(type => {
-                   applyModifierDiff(this.system.attributes.ac[type], "total");
-              });
           }
       }
     }
@@ -565,7 +539,6 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     }
 
     let injectedData = {};
-    
     if (agnosticResult !== null) {
         injectedData["flags.aeris.d200Result"] = agnosticResult;
         injectedData["flags.aeris.isFumble"] = isFumble;
@@ -574,24 +547,6 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
 
     // ─── SHIELD 5 & 6: STRICT VISUAL TOOLTIP CATCHER & EXCLUDERS ───
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.system) {
-        
-        let msgActor = null;
-        if (message.speaker) {
-            msgActor = game.actors.get(message.speaker.actor);
-            if (!msgActor && message.speaker.token && message.speaker.scene) {
-                msgActor = game.scenes.get(message.speaker.scene)?.tokens.get(message.speaker.token)?.actor;
-            }
-        }
-        
-        let disabledItemNames = new Set();
-        if (msgActor) {
-            msgActor.items.forEach(i => {
-                if (i.getFlag(MODULE_ID, "disable10x")) {
-                    disabledItemNames.add(i.name.toLowerCase());
-                }
-            });
-        }
-
         let metaClone = foundry.utils.deepClone(message.system);
         const scaleModifiersStrictly = (obj, visited = new Set()) => {
             if (!obj || typeof obj !== 'object') return;
@@ -602,15 +557,12 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
                 obj.forEach(i => scaleModifiersStrictly(i, visited));
             } else {
                 if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined && obj.formula === undefined) {
-                    
                     let val = Number(obj.modifier);
                     let name = String(obj.name).toLowerCase();
                     
-                    // Excludes natively scaled core attributes/BAB, Skill Ranks, and your manual [nomulti] tags!
-                    let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti|nm)\b/i.test(name);
-                    let isDisabled = disabledItemNames.has(name);
-
-                    if (!isExcluded && !isDisabled && !isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+                    // We only strictly scale CORE CONDITIONS here. 
+                    // This protects all custom items and manually tagged buffs!
+                    if (CORE_CONDITIONS.has(name) && !isNaN(val) && val !== 0 && Math.abs(val) < 10) {
                         obj.modifier = val * 10;
                     }
                 }
