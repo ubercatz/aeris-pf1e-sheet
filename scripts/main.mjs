@@ -165,11 +165,6 @@ Hooks.once("init", () => {
         // 1. SCALE DICE (1d20 -> 1d200)
         if (term.faces && term.faces <= 20 && !term.options._pf1arScaled) {
           term.faces *= 10;
-          
-          // CRITICAL FIX: We completely stripped the logic that multiplied term.results!
-          // By leaving evaluated results strictly alone, any manual Check Override
-          // (like explicitly typing '9' or '90') remains EXACTLY what you typed.
-
           term.options._pf1arScaled = true;
         }
 
@@ -487,19 +482,29 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.flags?.pf1?.metadata) {
         let metaClone = foundry.utils.deepClone(message.flags.pf1.metadata);
         
-        const scaleModifiersStrictly = (obj) => {
+        // Use a Set to track and prevent infinitely looping circular references!
+        const scaleModifiersStrictly = (obj, visited = new Set()) => {
             if (!obj || typeof obj !== 'object') return;
+            // Prevent circular reference crash
+            if (visited.has(obj)) return;
+            visited.add(obj);
+
             if (Array.isArray(obj)) {
-                obj.forEach(i => scaleModifiersStrictly(i));
+                obj.forEach(i => scaleModifiersStrictly(i, visited));
             } else {
-                if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined) {
+                if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined && obj.formula === undefined) {
                     let val = Number(obj.modifier);
                     if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
                         obj.modifier = val * 10;
                     }
                 }
                 for (let key in obj) {
-                    if (typeof obj[key] === 'object') scaleModifiersStrictly(obj[key]);
+                    // Skip massive unneeded Foundry structures for speed and safety
+                    if (['parent', 'document', 'actor', 'item', 'token', 'target', 'roll', 'scene', 'combatant'].includes(key)) continue;
+                    if (typeof obj[key] === 'object') {
+                        // THIS WAS THE FIX: Passing the 'visited' memory down the chain!
+                        scaleModifiersStrictly(obj[key], visited);
+                    }
                 }
             }
         };
