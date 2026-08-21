@@ -163,33 +163,38 @@ Hooks.once("init", () => {
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
           if (term._evaluated && term.results) {
-              term.results.forEach(r => r.result *= 10);
-              term.total *= 10;
+              term.results.forEach(r => { if (r.result !== undefined) r.result *= 10; });
+              // Protected to prevent V12 Getter crashes
+              try { term.total = term.results.reduce((acc, r) => acc + (r.result || 0), 0); } catch(e) {}
           }
           term._pf1arScaled = true;
         }
 
-        // 2. SURGICAL MATH CATCHER (Protects "Take X" and Damage Dice)
+        // 2. SURGICAL MATH CATCHER
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
         if (isNumericTerm && !term._pf1arScaled) {
             
-            // RULE 1: Never touch the first term (Index 0). Protects Take 9, base multipliers, etc.
-            if (i > 0) {
-                let prevTerm = this.terms[i-1];
-                let nextTerm = i < this.terms.length - 1 ? this.terms[i+1] : null;
+            let prevTerm = i > 0 ? this.terms[i-1] : null;
+            let nextTerm = i < this.terms.length - 1 ? this.terms[i+1] : null;
 
-                // RULE 2: Term MUST be preceded by an additive operator (+ or -)
-                let prevIsAdditive = prevTerm && prevTerm.operator && ["+", "-"].includes(prevTerm.operator);
-                let nextIsSafe = !nextTerm || (nextTerm.operator && ["+", "-"].includes(nextTerm.operator));
+            // Must be sandwiched between + or -, or be at the absolute beginning/end
+            let prevIsAdditive = !prevTerm || (prevTerm.operator && ["+", "-"].includes(prevTerm.operator));
+            let nextIsSafe = !nextTerm || (nextTerm.operator && ["+", "-"].includes(nextTerm.operator));
 
-                if (prevIsAdditive && nextIsSafe) {
-                    let val = term.number;
-                    // Catch rogue buffs/debuffs that bypassed item scaling (e.g., hardcoded conditions)
-                    if (val !== 0 && Math.abs(val) < 10) {
-                        term.number = val * 10;
-                        if (term._evaluated) term.total = term.number;
-                        term._pf1arScaled = true;
+            if (prevIsAdditive && nextIsSafe) {
+                let val = term.number;
+                
+                // If it's Index 0, it is substituting a d20 roll (Take X). Scale up to 20.
+                // If it's > 0, it's a trailing buff modifier. Scale strictly < 10.
+                let limit = (i === 0) ? 20 : 9;
+                
+                if (val !== 0 && Math.abs(val) <= limit) {
+                    term.number = val * 10;
+                    if (term._evaluated) {
+                        // Protected to prevent V12 Getter crashes
+                        try { term.total = term.number; } catch(e) {}
                     }
+                    term._pf1arScaled = true;
                 }
             }
         }
@@ -198,7 +203,10 @@ Hooks.once("init", () => {
       try {
           this._formula = this.constructor.getFormula(this.terms);
       } catch (e) {
-          try { this._formula = this.terms.map(t => t.expression || t.formula || t.number).join(""); } catch(e2) {}
+          // Bulletproof string fallback so Foundry never reads "undefined"
+          try { 
+              this._formula = this.terms.map(t => t.expression ?? t.formula ?? t.operator ?? t.number ?? "").join(" "); 
+          } catch(e2) {}
       }
     }
 
@@ -251,7 +259,7 @@ Hooks.once("init", () => {
             return key;
         };
 
-        // NEW: Hides base dice even if they have [flavor text] or spaces! (e.g. 1[fire] d80)
+        // Hides base dice even if they have [flavor text] or spaces! (e.g. 1[fire] d80)
         res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
             let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
             return hide(`${count || ""}${middle || ""}d${scaledFaces}`);
@@ -301,7 +309,7 @@ Hooks.once("init", () => {
             return `${sign}(${variable} * 10)`;
         });
 
-        // ─── BUFF INTERCEPTOR LOGIC (Integrated from Broken Version) ───
+        // ─── BUFF INTERCEPTOR LOGIC ───
         res = res.replace(/(^|[-+]\s*)(\d+)\b(?!\s*(?:\[.*?\])?\s*[*\/xd])/gi, (m, sign, num) => {
             let val = Number(num);
             if (isBuff && restrictBuffs && val >= 10) return m; 
@@ -485,7 +493,7 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
     }
 
-    // ─── THE BRUTE-FORCE VISUAL TOOLTIP CATCHER (From Broken Version) ───
+    // ─── THE BRUTE-FORCE VISUAL TOOLTIP CATCHER ───
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.flags?.pf1?.metadata) {
         let metaClone = foundry.utils.deepClone(message.flags.pf1.metadata);
         
