@@ -72,30 +72,43 @@ Hooks.once("init", () => {
 // ─── CUSTOM UI INJECTOR ───────────────────────────────────────────────────
 
 Hooks.on("renderItemSheet", (app, html, data) => {
-    if (!["weapon", "spell", "attack"].includes(app.item.type)) return;
+    let $advancedTab = html.find('.tab[data-tab="advanced"]');
+    let $target = $advancedTab.length > 0 ? $advancedTab : html.find('.sheet-body');
 
-    let currentFumble = app.item.getFlag(MODULE_ID, "fumbleRange");
-    if (currentFumble === undefined) currentFumble = 10;
+    // 1. Fumble Range Injection (Restricted to Weapons/Spells/Attacks)
+    if (["weapon", "spell", "attack"].includes(app.item.type)) {
+        let currentFumble = app.item.getFlag(MODULE_ID, "fumbleRange");
+        if (currentFumble === undefined) currentFumble = 10;
 
-    let fumbleHtml = `
-        <div class="form-group">
-            <label>10x Fumble Range</label>
-            <div class="form-fields">
-                <input type="number" 
-                       name="flags.${MODULE_ID}.fumbleRange" 
-                       value="${currentFumble}" 
-                       data-dtype="Number">
+        let fumbleHtml = `
+            <div class="form-group">
+                <label>10x Fumble Range</label>
+                <div class="form-fields">
+                    <input type="number" 
+                           name="flags.${MODULE_ID}.fumbleRange" 
+                           value="${currentFumble}" 
+                           data-dtype="Number">
+                </div>
+                <p class="notes">Any d200 roll equal to or below this number is a fumble.</p>
             </div>
-            <p class="notes">Any d200 roll equal to or below this number is a fumble.</p>
+        `;
+        $target.append(fumbleHtml);
+    }
+
+    // 2. Disable 10x Scaling Injection (Available on EVERY Item)
+    let disable10x = app.item.getFlag(MODULE_ID, "disable10x");
+    if (disable10x === undefined) disable10x = false;
+
+    let toggleHtml = `
+        <div class="form-group">
+            <label>Disable 10x Scaling</label>
+            <div class="form-fields">
+                <input type="checkbox" name="flags.${MODULE_ID}.disable10x" ${disable10x ? "checked" : ""}>
+            </div>
+            <p class="notes">If checked, this item's bonuses and formulas will NOT be multiplied by 10.</p>
         </div>
     `;
-
-    let $advancedTab = html.find('.tab[data-tab="advanced"]');
-    if ($advancedTab.length > 0) {
-        $advancedTab.append(fumbleHtml);
-    } else {
-        html.find('.sheet-body').append(fumbleHtml);
-    }
+    $target.append(toggleHtml);
 });
 
 // ─── READY: SYSTEM OVERRIDES ──────────────────────────────────────────────
@@ -175,15 +188,29 @@ Hooks.once("init", () => {
           let prevTerm = i > 0 ? this.terms[i-1] : null;
           let nextTerm = i < this.terms.length - 1 ? this.terms[i+1] : null;
           
-          // SHIELD 1 & 2: Protects multiplication damage dice (e.g. 2 * 1d6)
           let isMultiplier = false;
           if (prevTerm && prevTerm.operator !== undefined && ["*", "/"].includes(prevTerm.operator)) isMultiplier = true;
           if (nextTerm && nextTerm.operator !== undefined && ["*", "/"].includes(nextTerm.operator)) isMultiplier = true;
-
-          // SHIELD 4: Protects pure Check Overrides fed directly as flat variables (Index 0)
           let isFirstTerm = (i === 0);
 
-          if (!isMultiplier && !isFirstTerm) {
+          let flavor = String(term.options?.flavor || "").toLowerCase();
+          
+          // ─── SHIELD 6: COMPREHENSIVE ATTRIBUTE EXCLUDER ───
+          let isAttribute = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus)\b/i.test(flavor);
+
+          // ─── SHIELD 7: INDIVIDUAL ITEM OPT-OUT CHECK ───
+          // Scans actors to see if this flavor text matches an Item where the user checked "Disable 10x"
+          let isDisabledItem = false;
+          if (flavor) {
+              for (const actor of game.actors.values()) {
+                  if (actor.items.some(i => i.name.toLowerCase() === flavor && i.getFlag(MODULE_ID, "disable10x"))) {
+                      isDisabledItem = true;
+                      break;
+                  }
+              }
+          }
+
+          if (!isMultiplier && !isFirstTerm && !isAttribute && !isDisabledItem) {
              let val = term.number;
              
              if (val !== 0 && Math.abs(val) < 10) {
@@ -239,6 +266,10 @@ Hooks.once("init", () => {
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
+      // ─── MASTER OPT-OUT CHECK ───
+      // If the user checked "Disable 10x" on this item, immediately abort scaling its formulas!
+      if (this.getFlag(MODULE_ID, "disable10x")) return;
+
       const restrictBuffs = game.settings.get(MODULE_ID, "scaleSmallBuffs");
       const isBuff = this.type === "buff";
 
@@ -475,10 +506,28 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
     }
 
-    // ─── SHIELD 5: STRICT VISUAL TOOLTIP CATCHER (V11+ COMPLIANT) ───
+    // ─── SHIELD 5 & 6: STRICT VISUAL TOOLTIP CATCHER & EXCLUDERS ───
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.system) {
-        let metaClone = foundry.utils.deepClone(message.system);
         
+        // Find the actor associated with the roll so we can check their opted-out items
+        let msgActor = null;
+        if (message.speaker) {
+            msgActor = game.actors.get(message.speaker.actor);
+            if (!msgActor && message.speaker.token && message.speaker.scene) {
+                msgActor = game.scenes.get(message.speaker.scene)?.tokens.get(message.speaker.token)?.actor;
+            }
+        }
+        
+        let disabledItemNames = new Set();
+        if (msgActor) {
+            msgActor.items.forEach(i => {
+                if (i.getFlag(MODULE_ID, "disable10x")) {
+                    disabledItemNames.add(i.name.toLowerCase());
+                }
+            });
+        }
+
+        let metaClone = foundry.utils.deepClone(message.system);
         const scaleModifiersStrictly = (obj, visited = new Set()) => {
             if (!obj || typeof obj !== 'object') return;
             if (visited.has(obj)) return;
@@ -488,8 +537,15 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
                 obj.forEach(i => scaleModifiersStrictly(i, visited));
             } else {
                 if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined && obj.formula === undefined) {
+                    
                     let val = Number(obj.modifier);
-                    if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+                    let name = String(obj.name).toLowerCase();
+                    
+                    // Exclude natively scaled core attributes/BAB AND specific items flagged by the user!
+                    let isAttribute = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus)\b/i.test(name);
+                    let isDisabled = disabledItemNames.has(name);
+
+                    if (!isAttribute && !isDisabled && !isNaN(val) && val !== 0 && Math.abs(val) < 10) {
                         obj.modifier = val * 10;
                     }
                 }
