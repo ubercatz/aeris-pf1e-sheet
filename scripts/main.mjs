@@ -426,15 +426,27 @@ Hooks.once("init", () => {
 
   libWrapper.register(MODULE_ID, "CONFIG.Actor.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     
-    // ─── NEW: THE HOLY GRAIL OF UI SYNC ───
-    // We intercept the Actor's raw changes Collection BEFORE the system does any math!
+    // ─── THE HOLY GRAIL OF UI SYNC ───
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
+        
+        // Define the set locally so it can NEVER be undefined
+        const CORE_CONDITIONS = new Set([
+          "panicked", "shaken", "sickened", "fatigued", "exhausted", "entangled", 
+          "grappled", "prone", "frightened", "cowering", "dazzled", "blinded", 
+          "deafened", "stunned", "staggered", "paralyzed", "pinned", "invisible", 
+          "squeezing", "negative level"
+        ]);
+
         if (this.changes) {
             this.changes.forEach(change => {
-                // Find the name of the change (e.g., "Panicked", "Shaken")
-                let name = String(change.name || change.source?.name || change.flavor || "").toLowerCase();
+                // Safely extract name without triggering PF1e's deprecation warnings
+                let name = "";
+                try {
+                    name = change.name || change.flavor || change.parent?.name || change.effect?.name || "";
+                } catch (e) {}
                 
-                // If this change is from a core condition, scale its raw values!
+                name = String(name).toLowerCase();
+                
                 if (CORE_CONDITIONS.has(name)) {
                     let val = Number(change.value);
                     if (isNaN(val)) val = Number(change.formula);
@@ -442,14 +454,14 @@ Hooks.once("init", () => {
                     if (!isNaN(val) && val !== 0 && Math.abs(val) < 10 && !change._pf1arScaled) {
                         change.value = val * 10;
                         if (change.formula) change.formula = String(val * 10);
-                        change._pf1arScaled = true; // Flag to prevent loops
+                        change._pf1arScaled = true; 
                     }
                 }
             });
         }
     }
 
-    wrapped(...args); // NOW we let the system calculate the sheet totals with our scaled numbers!
+    wrapped(...args); 
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
