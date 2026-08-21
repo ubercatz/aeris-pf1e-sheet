@@ -162,10 +162,9 @@ Hooks.once("init", () => {
         // 1. SCALE DICE
         if (term.faces && term.faces <= 20 && !term._pf1arScaled) {
           term.faces *= 10;
+          // Cleanly scale the evaluated results WITHOUT touching the locked .total getter!
           if (term._evaluated && term.results) {
               term.results.forEach(r => { if (r.result !== undefined) r.result *= 10; });
-              // Protected to prevent V12 Getter crashes
-              try { term.total = term.results.reduce((acc, r) => acc + (r.result || 0), 0); } catch(e) {}
           }
           term._pf1arScaled = true;
         }
@@ -190,10 +189,7 @@ Hooks.once("init", () => {
                 
                 if (val !== 0 && Math.abs(val) <= limit) {
                     term.number = val * 10;
-                    if (term._evaluated) {
-                        // Protected to prevent V12 Getter crashes
-                        try { term.total = term.number; } catch(e) {}
-                    }
+                    // Note: We completely avoid setting term.total to stop the V12 crash!
                     term._pf1arScaled = true;
                 }
             }
@@ -203,7 +199,6 @@ Hooks.once("init", () => {
       try {
           this._formula = this.constructor.getFormula(this.terms);
       } catch (e) {
-          // Bulletproof string fallback so Foundry never reads "undefined"
           try { 
               this._formula = this.terms.map(t => t.expression ?? t.formula ?? t.operator ?? t.number ?? "").join(" "); 
           } catch(e2) {}
@@ -455,7 +450,6 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     let agnosticResult = null;
     let isFumble = false;
 
-    // Process Attack Rolls 
     const attacks = message?.system?.rolls?.attacks;
     if (attacks && Array.isArray(attacks) && attacks.length > 0) {
         attacks.forEach(attackGroup => {
@@ -471,7 +465,6 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         });
     }
 
-    // Process Skill Checks & Saves
     const stdRolls = message.rolls;
     if (stdRolls && Array.isArray(stdRolls) && stdRolls.length > 0) {
         stdRolls.forEach(roll => {
@@ -493,24 +486,32 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
     }
 
-    // ─── THE BRUTE-FORCE VISUAL TOOLTIP CATCHER ───
+    // ─── THE AIRTIGHT VISUAL TOOLTIP CATCHER ───
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.flags?.pf1?.metadata) {
         let metaClone = foundry.utils.deepClone(message.flags.pf1.metadata);
         
-        const scaleModifiersRecursively = (obj) => {
+        // Use a Set to track and prevent infinitely looping circular references!
+        const scaleModifiersRecursively = (obj, visited = new Set()) => {
             if (!obj || typeof obj !== 'object') return;
+            if (visited.has(obj)) return;
+            visited.add(obj);
+
             if (Array.isArray(obj)) {
-                obj.forEach(i => scaleModifiersRecursively(i));
+                obj.forEach(i => scaleModifiersRecursively(i, visited));
             } else {
-                // If it's a modifier dictionary, multiply small values by 10
-                if (obj.modifier !== undefined && obj.name !== undefined) {
+                // EXTREMELY STRICT CHECK: Ensure it is a pure modifier and NOT a dice pool metadata object
+                if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined) {
                     let val = Number(obj.modifier);
                     if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
                         obj.modifier = val * 10;
                     }
                 }
                 for (let key in obj) {
-                    if (typeof obj[key] === 'object') scaleModifiersRecursively(obj[key]);
+                    // Shield against navigating into heavy Foundry document/DOM properties
+                    if (['parent', 'document', 'actor', 'item', 'token', 'target', 'roll'].includes(key)) continue;
+                    if (typeof obj[key] === 'object') {
+                        scaleModifiersRecursively(obj[key], visited);
+                    }
                 }
             }
         };
@@ -529,7 +530,6 @@ Hooks.on("renderChatMessage", (message, html, data) => {
 
     const $html = $(html);
     
-    // 1. SURGICALLY STRIP TAMPERED/ABNORMAL WARNINGS
     $html.removeClass('tampered is-tampered validation-failed');
     $html.find('.tampered, .is-tampered, .validation-failed').removeClass('tampered is-tampered validation-failed');
     $html.find('.fa-triangle-exclamation, .validation-failures, .tamper-warning').remove();
@@ -537,7 +537,6 @@ Hooks.on("renderChatMessage", (message, html, data) => {
     
     $html.find('i.abnormal, [data-tooltip="PF1.CustomRollDesc"]').remove();
 
-    // 2. SURGICALLY STYLE PF1e ATTACK ROLLS (100% UNTOUCHED)
     $html.find('.inline-roll[data-roll]').each(function() {
         try {
             const rollData = JSON.parse(decodeURIComponent($(this).attr('data-roll')));
@@ -562,7 +561,6 @@ Hooks.on("renderChatMessage", (message, html, data) => {
         }
     });
 
-    // 3. SURGICALLY STYLE SKILL CHECKS & SAVES
     $html.find('li.die.d200').each(function() {
         if ($(this).closest('.inline-roll').length > 0) return;
 
