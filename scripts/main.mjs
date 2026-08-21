@@ -105,7 +105,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
             <div class="form-fields">
                 <input type="checkbox" name="flags.${MODULE_ID}.disable10x" ${disable10x ? "checked" : ""}>
             </div>
-            <p class="notes">Check to skip scaling. You can also type <strong>[nomulti]</strong> next to any flat number in a formula to manually exclude it!</p>
+            <p class="notes">Check to skip scaling. You can also type <strong>[nomulti]</strong> or <strong>[nm]</strong> next to any flat number in a formula to manually exclude it!</p>
         </div>
     `;
     $target.append(toggleHtml);
@@ -197,7 +197,7 @@ Hooks.once("init", () => {
           
           // ─── SHIELD 6: COMPREHENSIVE ATTRIBUTE & FLAG EXCLUDER ───
           // Now officially ignores 'ranks', 'skill ranks', and your custom 'nomulti' flag!
-          let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti)\b/i.test(flavor);
+          let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti|nm)\b/i.test(flavor);
 
           let isDisabledItem = false;
           if (flavor) {
@@ -321,7 +321,7 @@ Hooks.once("init", () => {
         // ─── FIX: Variables properly check for [nomulti] text before scaling
         res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, variable, flavorWrap, flavorText) => {
             let flavor = String(flavorText || "").toLowerCase();
-            let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti)\b/i.test(flavor);
+            let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti|nm)\b/i.test(flavor);
             
             if (isExcluded) return m;
             return `${sign}(${variable} * 10)${flavorWrap || ""}`;
@@ -464,6 +464,65 @@ Hooks.once("init", () => {
         this.system.attributes.encumbrance.medium = Math.floor((heavy * 2) / 3) * 10;
         this.system.attributes.encumbrance.heavy = heavy * 10;
       }
+
+      // ─── NEW: SHEET UI DATA RE-SYNC (TOOLTIPS & TOTALS) ───
+      let disabledItemNames = new Set();
+      this.items.forEach(i => {
+          if (i.getFlag(MODULE_ID, "disable10x")) disabledItemNames.add(i.name.toLowerCase());
+      });
+
+      const applyModifierDiff = (targetObj, totalKey) => {
+          if (targetObj && targetObj.modifiers && Array.isArray(targetObj.modifiers)) {
+              let diff = 0;
+              targetObj.modifiers.forEach(modObj => {
+                  if (modObj.modifier !== undefined && modObj.name !== undefined) {
+                      let val = Number(modObj.modifier);
+                      let name = String(modObj.name).toLowerCase();
+                      
+                      // Completely protects base attributes, skill ranks, and your manual tags!
+                      let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti|nm)\b/i.test(name);
+                      let isDisabled = disabledItemNames.has(name);
+
+                      if (!isExcluded && !isDisabled && !isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+                          let scaledVal = val * 10;
+                          diff += (scaledVal - val);   // Calculate the mathematical difference
+                          modObj.modifier = scaledVal; // Mutate the visual tooltip array
+                      }
+                  }
+              });
+              
+              // Apply the mathematical difference directly to the sheet's final total!
+              if (diff !== 0 && targetObj[totalKey] !== undefined) {
+                  targetObj[totalKey] += diff;
+              }
+          }
+      };
+
+      // 1. Scrub & Sync Skills
+      if (this.system.skills) {
+          for (let sk of Object.values(this.system.skills)) {
+              applyModifierDiff(sk, "mod");
+          }
+      }
+
+      // 2. Scrub & Sync Saves & Combat Attributes
+      if (this.system.attributes) {
+          if (this.system.attributes.savingThrows) {
+              for (let sv of Object.values(this.system.attributes.savingThrows)) {
+                  applyModifierDiff(sv, "total");
+              }
+          }
+          ['cmd', 'cmb', 'attack', 'damage'].forEach(attr => {
+              applyModifierDiff(this.system.attributes[attr], "total");
+          });
+          
+          // Re-sync AC penalties (like AC drops from specific debuffs)
+          if (this.system.attributes.ac) {
+              ['normal', 'touch', 'flatFooted'].forEach(type => {
+                   applyModifierDiff(this.system.attributes.ac[type], "total");
+              });
+          }
+      }
     }
   }, "WRAPPER");
 });
@@ -548,7 +607,7 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
                     let name = String(obj.name).toLowerCase();
                     
                     // Excludes natively scaled core attributes/BAB, Skill Ranks, and your manual [nomulti] tags!
-                    let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti)\b/i.test(name);
+                    let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|skill ranks|nomulti|nm)\b/i.test(name);
                     let isDisabled = disabledItemNames.has(name);
 
                     if (!isExcluded && !isDisabled && !isNaN(val) && val !== 0 && Math.abs(val) < 10) {
