@@ -11,43 +11,24 @@
 const MODULE_ID = "pf1-altsheet-reworked";
 const M = `modules/${MODULE_ID}`;
 
-// ─── CONTEÚDO DE CONTÊINERES ─────────────────────────────────────────────────
-// O PF1E guarda os itens de um contêiner no próprio item contêiner
-// (`container.system.items`, preparado como `container.items`). Esses itens
-// NÃO são embedded items diretos do Actor, então os controles padrão da sheet
-// não os alcançam — por isso preparamos aqui um render model próprio
-// (leitura/escrita) e fazemos o binding de controles dedicados logo abaixo.
+const CORE_CONDITIONS = new Set([
+  "panicked", "shaken", "sickened", "fatigued", "exhausted", "entangled", 
+  "grappled", "prone", "frightened", "cowering", "dazzled", "blinded", 
+  "deafened", "stunned", "staggered", "paralyzed", "pinned", "invisible", 
+  "squeezing", "negative level"
+]);
 
-/**
- * Formata um valor em moedas separadas (po/pp/pc…) usando o formatador de
- * moeda do próprio sistema PF1E.
- * @param {number} value - Valor na menor denominação (peças de cobre).
- * @returns {string} Rótulo localizado, ex.: "12 po, 5 pc".
- */
+// ─── CONTEÚDO DE CONTÊINERES ─────────────────────────────────────────────────
+
 function _formatCurrencySplit(value) {
   return game.i18n.format("PF1.SplitValue", pf1.utils.currency.split(value, { pad: true }));
 }
 
-/**
- * Obtém (criando sob demanda) o conjunto de contêineres com o painel inline
- * aberto nesta sheet. Vive na instância da sheet para sobreviver a re-renders
- * (o Application V1 recria o DOM inteiro a cada render).
- * @param {ActorSheetPFCharacter|ActorSheetPFNPC} sheet - A sheet dona do estado.
- * @returns {Set<string>} Ids dos itens contêiner atualmente abertos.
- */
 function _getOpenInlineContainers(sheet) {
   sheet._pf1arOpenContainers ??= new Set();
   return sheet._pf1arOpenContainers;
 }
 
-/**
- * Marca um contêiner como aberto/fechado no estado da sheet, para que o
- * `<details>` re-renderize no mesmo estado em que o jogador o deixou.
- * @param {ActorSheetPFCharacter|ActorSheetPFNPC} sheet - A sheet dona do estado.
- * @param {string|undefined} containerId - Id do item contêiner (ignorado se vazio).
- * @param {boolean} [open] - true para abrir, false para fechar.
- * @returns {void}
- */
 function _setInlineContainerOpen(sheet, containerId, open = true) {
   if (!containerId) return;
   const openContainers = _getOpenInlineContainers(sheet);
@@ -55,16 +36,6 @@ function _setInlineContainerOpen(sheet, containerId, open = true) {
   else openContainers.delete(containerId);
 }
 
-/**
- * Monta o render model do painel inline de conteúdo de um item contêiner.
- * Sempre retorna objeto para itens do tipo contêiner — inclusive vazios
- * (`count: 0`, `sections: []`) — para que o template renderize o `<details>`
- * com o dropzone convidativo de estado vazio em vez de sumir com ele.
- * @param {ActorSheetPFCharacter|ActorSheetPFNPC} sheet - A sheet dona do ator.
- * @param {Item|undefined} container - O documento do item contêiner.
- * @param {object} context - Contexto do getData usado para preparar as seções.
- * @returns {object|null} O render model do conteúdo, ou null se `container` não for contêiner.
- */
 function _prepareContainerContents(sheet, container, context) {
   if (container?.type !== "container") return null;
 
@@ -114,14 +85,6 @@ function _prepareContainerContents(sheet, container, context) {
   };
 }
 
-/**
- * Anota cada item contêiner do inventário preparado pelo getData do sistema
- * com `pf1arIsContainer` e o render model `pf1arContents` (ver
- * {@link _prepareContainerContents}), consumidos pelo `inventory.hbs`.
- * @param {ActorSheetPFCharacter|ActorSheetPFNPC} sheet - A sheet dona do ator.
- * @param {object} data - Contexto retornado pelo getData do sistema (mutado in-place).
- * @returns {void}
- */
 function _prepareInventoryContainers(sheet, data) {
   if (!Array.isArray(data.inventory)) return;
 
@@ -547,6 +510,81 @@ function _bindThemeCycle(sheet, html) {
   });
 }
 
+// ─── 10X GRANULAR DATA SYNC HELPERS ──────────────────────────────────────────
+
+function _apply10xEncumbrance(actor, data) {
+  const strScore = actor.system.abilities?.str?.total || 100;
+  const carryBonus = actor.system.attributes?.carryStrength || 0;
+  const carryMult = actor.system.attributes?.carryMultiplier || 1;
+
+  // Downscale 10x stat to standard PF1e ranges (e.g. 223 -> 22)
+  const effStr = Math.floor((strScore + carryBonus) / 10);
+
+  let heavy = 0;
+  if (effStr <= 10) {
+    heavy = effStr * 10;
+  } else {
+    const base = [100, 115, 130, 150, 175, 200, 230, 260, 300, 350][effStr % 10];
+    heavy = base * Math.pow(4, Math.floor(effStr / 10) - 1);
+  }
+
+  heavy = Math.floor(heavy * carryMult * 10);
+  const medium = Math.floor((heavy * 2) / 3);
+  const light = Math.floor(heavy / 3);
+
+  const encObj = {
+    light,
+    medium,
+    heavy,
+    lift: heavy,
+    heavyLift: heavy * 2,
+    drag: heavy * 5,
+  };
+
+  // Synchronize across every possible location Handlebars templates might inspect
+  if (actor.system?.attributes?.encumbrance) Object.assign(actor.system.attributes.encumbrance, encObj);
+  if (data.system?.attributes?.encumbrance) Object.assign(data.system.attributes.encumbrance, encObj);
+  if (data.actor?.system?.attributes?.encumbrance) Object.assign(data.actor.system.attributes.encumbrance, encObj);
+}
+
+function _sync10xSkills(actor, data) {
+  const syncSkill = (sk, actorSk) => {
+    if (!sk) return;
+    let diff = 0;
+    const modList = sk.modifiers || sk.sources || [];
+    for (const m of modList) {
+      const name = String(m.name || "").toLowerCase();
+      if (CORE_CONDITIONS.has(name)) {
+        const val = Number(m.modifier ?? m.value);
+        if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+          const scaled = val * 10;
+          diff += (scaled - val);
+          if (m.modifier !== undefined) m.modifier = scaled;
+          if (m.value !== undefined) m.value = scaled;
+        }
+      }
+    }
+    if (diff !== 0) {
+      sk.mod = (sk.mod || 0) + diff;
+      if (actorSk && typeof actorSk.mod === "number") {
+        actorSk.mod = sk.mod;
+      }
+    }
+  };
+
+  const skillsData = data.system?.skills || data.skills || {};
+  const actorSkills = actor.system?.skills || {};
+
+  for (const [key, sk] of Object.entries(skillsData)) {
+    syncSkill(sk, actorSkills[key]);
+    if (sk.subSkills) {
+      for (const [subKey, subSk] of Object.entries(sk.subSkills)) {
+        syncSkill(subSk, actorSkills[key]?.subSkills?.[subKey]);
+      }
+    }
+  }
+}
+
 // ─── FICHA DE PERSONAGEM ──────────────────────────────────────────────────────
 
 export class AltCharacterSheetPF extends pf1.applications.actor.ActorSheetPFCharacter {
@@ -596,54 +634,15 @@ export class AltCharacterSheetPF extends pf1.applications.actor.ActorSheetPFChar
   async getData(options) {
     const data = await super.getData(options);
     
-    // --- 10X GRANULAR ENCUMBRANCE INJECTION ---
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      const strScore = this.actor.system.abilities?.str?.total || 100;
-      const carryBonus = this.actor.system.attributes?.carryStrength || 0;
-      const carryMult = this.actor.system.attributes?.carryMultiplier || 1;
-
-      // Downscale the 10x stat to standard PF1e ranges (e.g. 223 -> 22) for the math
-      const effStr = Math.floor((strScore + carryBonus) / 10);
-
-      // Core Pathfinder 1e Heavy Load Progression
-      let heavy = 0;
-      if (effStr <= 10) {
-          heavy = effStr * 10;
-      } else {
-         const base = [100, 115, 130, 150, 175, 200, 230, 260, 300, 350][effStr % 10];
-         heavy = base * Math.pow(4, Math.floor(effStr / 10) - 1);
-      }
-
-      // Re-apply multipliers and scale up by 10x to match your granular item weights
-      heavy = heavy * carryMult * 10;
-
-      // Safely overwrite the sheet's display thresholds
-      const enc = data.system?.attributes?.encumbrance;
-      if (enc) {
-          enc.heavy = heavy;
-          enc.medium = Math.floor((heavy * 2) / 3);
-          enc.light = Math.floor(heavy / 3);
-          enc.lift = heavy;
-          enc.heavyLift = heavy * 2;
-          enc.drag = heavy * 5;
-
-          // Recalculate encumbrance penalty state based on our new granular limits
-          const carried = enc.carriedWeight || 0;
-          if (carried > enc.heavy) enc.level = 4; // Overburdened
-          else if (carried > enc.medium) enc.level = 3; // Heavy
-          else if (carried > enc.light) enc.level = 2; // Medium
-          else enc.level = 1; // Light
-      }
+      _apply10xEncumbrance(this.actor, data);
+      _sync10xSkills(this.actor, data);
     }
 
     data.pf1arDark = game.settings.get(MODULE_ID, "darkMode");
     data.summarySkillsMode = game.settings.get(MODULE_ID, "summarySkills");
     _prepareInventoryContainers(this, data);
     _prepareLinkedFeatChildren(this, data);
-    
-    // NOTE: I see you added this back in your uploaded file! 
-    // Keep an eye out for double-dipping (e.g. 1d600 instead of 1d60) 
-    // since main.mjs is already scaling the data behind the scenes.
 
     return data;
   }
@@ -707,59 +706,18 @@ export class AltNPCSheetPF extends pf1.applications.actor.ActorSheetPFNPC {
   async getData(options) {
     const data = await super.getData(options);
     
-    // --- 10X GRANULAR ENCUMBRANCE INJECTION ---
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      const strScore = this.actor.system.abilities?.str?.total || 100;
-      const carryBonus = this.actor.system.attributes?.carryStrength || 0;
-      const carryMult = this.actor.system.attributes?.carryMultiplier || 1;
-
-      // Downscale the 10x stat to standard PF1e ranges (e.g. 223 -> 22) for the math
-      const effStr = Math.floor((strScore + carryBonus) / 10);
-
-      // Core Pathfinder 1e Heavy Load Progression
-      let heavy = 0;
-      if (effStr <= 10) {
-          heavy = effStr * 10;
-      } else {
-         const base = [100, 115, 130, 150, 175, 200, 230, 260, 300, 350][effStr % 10];
-         heavy = base * Math.pow(4, Math.floor(effStr / 10) - 1);
-      }
-
-      // Re-apply multipliers and scale up by 10x to match your granular item weights
-      heavy = heavy * carryMult * 10;
-
-      // Safely overwrite the sheet's display thresholds
-      const enc = data.system?.attributes?.encumbrance;
-      if (enc) {
-          enc.heavy = heavy;
-          enc.medium = Math.floor((heavy * 2) / 3);
-          enc.light = Math.floor(heavy / 3);
-          enc.lift = heavy;
-          enc.heavyLift = heavy * 2;
-          enc.drag = heavy * 5;
-
-          // Recalculate encumbrance penalty state based on our new granular limits
-          const carried = enc.carriedWeight || 0;
-          if (carried > enc.heavy) enc.level = 4; // Overburdened
-          else if (carried > enc.medium) enc.level = 3; // Heavy
-          else if (carried > enc.light) enc.level = 2; // Medium
-          else enc.level = 1; // Light
-      }
+      _apply10xEncumbrance(this.actor, data);
+      _sync10xSkills(this.actor, data);
     }
 
     data.pf1arDark = game.settings.get(MODULE_ID, "darkMode");
     data.summarySkillsMode = game.settings.get(MODULE_ID, "summarySkills");
     _prepareInventoryContainers(this, data);
     _prepareLinkedFeatChildren(this, data);
-    
-    // NOTE: I see you added this back in your uploaded file! 
-    // Keep an eye out for double-dipping (e.g. 1d600 instead of 1d60) 
-    // since main.mjs is already scaling the data behind the scenes.
-    
 
     return data;
   }
-  
 
   activateListeners(html) {
     super.activateListeners(html);
