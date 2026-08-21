@@ -186,7 +186,6 @@ Hooks.once("init", () => {
           if (!isMultiplier && !isFirstTerm) {
              let val = term.number;
              
-             // If the modifier is a small number (meaning it bypassed the sheet scaling, like -2 Shaken)
              if (val !== 0 && Math.abs(val) < 10) {
                  term.number = val * 10;
                  if (term._evaluated) {
@@ -279,7 +278,6 @@ Hooks.once("init", () => {
             let fcs = Number(faces); return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
 
-        // SHIELD 2: Accommodates spaces in dice strings (like '2 d6') to protect the dice count
         res = res.replace(/\b(\d*)\s*d\s*(\d+)\b/gi, (m, count, faces) => {
             let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
             return hide(`${count || ""}d${scaledFaces}`);
@@ -296,7 +294,6 @@ Hooks.once("init", () => {
             return `${sign}(${variable} * 10)`;
         });
 
-        // SHIELD 3: The negative lookahead strictly ignores ANY number followed by a multiplier or die 'd'
         res = res.replace(/(^|[-+]\s*)(\d+)\b(?!\s*[*\/xd])/gi, (m, sign, num) => {
             let val = Number(num);
             if (isBuff && restrictBuffs && val >= 10) return m; 
@@ -478,14 +475,12 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
     }
 
-    // ─── SHIELD 5: STRICT VISUAL TOOLTIP CATCHER ───
-    if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.flags?.pf1?.metadata) {
-        let metaClone = foundry.utils.deepClone(message.flags.pf1.metadata);
+    // ─── SHIELD 5: STRICT VISUAL TOOLTIP CATCHER (V11+ COMPLIANT) ───
+    if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.system) {
+        let metaClone = foundry.utils.deepClone(message.system);
         
-        // Use a Set to track and prevent infinitely looping circular references!
         const scaleModifiersStrictly = (obj, visited = new Set()) => {
             if (!obj || typeof obj !== 'object') return;
-            // Prevent circular reference crash
             if (visited.has(obj)) return;
             visited.add(obj);
 
@@ -499,10 +494,8 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
                     }
                 }
                 for (let key in obj) {
-                    // Skip massive unneeded Foundry structures for speed and safety
                     if (['parent', 'document', 'actor', 'item', 'token', 'target', 'roll', 'scene', 'combatant'].includes(key)) continue;
                     if (typeof obj[key] === 'object') {
-                        // THIS WAS THE FIX: Passing the 'visited' memory down the chain!
                         scaleModifiersStrictly(obj[key], visited);
                     }
                 }
@@ -510,7 +503,7 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         };
         
         scaleModifiersStrictly(metaClone);
-        injectedData["flags.pf1.metadata"] = metaClone;
+        injectedData["system"] = metaClone;
     }
 
     if (Object.keys(injectedData).length > 0) {
