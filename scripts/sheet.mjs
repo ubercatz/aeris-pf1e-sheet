@@ -18,6 +18,8 @@ const CORE_CONDITIONS = new Set([
   "squeezing", "negative level"
 ]);
 
+// ─── CONTEÚDO DE CONTÊINERES ─────────────────────────────────────────────────
+
 function _formatCurrencySplit(value) {
   return game.i18n.format("PF1.SplitValue", pf1.utils.currency.split(value, { pad: true }));
 }
@@ -100,6 +102,8 @@ function _prepareInventoryContainers(sheet, data) {
     }
   }
 }
+
+// ─── FILHOS DE LINK NA ABA FEATURES ──────────────────────────────────────────
 
 function _prepareLinkedFeatChildren(sheet, data) {
   const sections = Array.isArray(data.features) ? data.features : Object.values(data.features ?? {});
@@ -506,63 +510,82 @@ function _bindThemeCycle(sheet, html) {
   });
 }
 
-// ─── 10X SHEET DATA RESYNC HELPER ──────────────────────────────────────────
+// ─── 10X GRANULAR DATA SYNC HELPERS ──────────────────────────────────────────
 
-function _syncSheetData10x(data) {
-  if (!game.settings.get(MODULE_ID, "enable10xGranularity")) return;
+function _apply10xEncumbrance(actor, data) {
+  const strScore = actor.system.abilities?.str?.total || 100;
+  const carryBonus = actor.system.attributes?.carryStrength || 0;
+  const carryMult = actor.system.attributes?.carryMultiplier || 1;
 
-  // 1. Resync ACP on sheet attributes
-  const acpObj = data.system?.attributes?.acp;
-  if (acpObj && typeof acpObj.total === "number" && Math.abs(acpObj.total) < 10 && acpObj.total !== 0) {
-    const oldVal = acpObj.total;
-    const newVal = oldVal * 10;
-    const diff = newVal - oldVal;
-    acpObj.total = newVal;
+  // Downscale 10x stat to standard PF1e ranges (e.g. 223 -> 22)
+  const effStr = Math.floor((strScore + carryBonus) / 10);
 
-    // Propagate difference to skills relying on ACP
-    if (data.system?.skills) {
-      for (const sk of Object.values(data.system.skills)) {
-        if (sk.acp && typeof sk.mod === "number") sk.mod += diff;
-        if (sk.subSkills) {
-          for (const sub of Object.values(sk.subSkills)) {
-            if (sub.acp && typeof sub.mod === "number") sub.mod += diff;
-          }
-        }
-      }
-    }
+  let heavy = 0;
+  if (effStr <= 10) {
+    heavy = effStr * 10;
+  } else {
+    const base = [100, 115, 130, 150, 175, 200, 230, 260, 300, 350][effStr % 10];
+    heavy = base * Math.pow(4, Math.floor(effStr / 10) - 1);
   }
 
-  // 2. Resync tooltip sources and skill modifiers for core conditions (Panicked, Shaken, etc.)
-  const processModifiersList = (modList) => {
-    if (!Array.isArray(modList)) return;
+  heavy = Math.floor(heavy * carryMult * 10);
+  const medium = Math.floor((heavy * 2) / 3);
+  const light = Math.floor(heavy / 3);
+
+  const encObj = {
+    light,
+    medium,
+    heavy,
+    lift: heavy,
+    heavyLift: heavy * 2,
+    drag: heavy * 5,
+  };
+
+  // Synchronize across every possible location Handlebars templates might inspect
+  if (actor.system?.attributes?.encumbrance) Object.assign(actor.system.attributes.encumbrance, encObj);
+  if (data.system?.attributes?.encumbrance) Object.assign(data.system.attributes.encumbrance, encObj);
+  if (data.actor?.system?.attributes?.encumbrance) Object.assign(data.actor.system.attributes.encumbrance, encObj);
+}
+
+function _sync10xSkills(actor, data) {
+  const syncSkill = (sk, actorSk) => {
+    if (!sk) return;
+    let diff = 0;
+    const modList = sk.modifiers || sk.sources || [];
     for (const m of modList) {
-      const name = String(m.name || m.label || "").toLowerCase();
+      const name = String(m.name || "").toLowerCase();
       if (CORE_CONDITIONS.has(name)) {
         const val = Number(m.modifier ?? m.value);
         if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
           const scaled = val * 10;
+          diff += (scaled - val);
           if (m.modifier !== undefined) m.modifier = scaled;
           if (m.value !== undefined) m.value = scaled;
         }
       }
     }
+    if (diff !== 0) {
+      sk.mod = (sk.mod || 0) + diff;
+      if (actorSk && typeof actorSk.mod === "number") {
+        actorSk.mod = sk.mod;
+      }
+    }
   };
 
-  if (data.system?.skills) {
-    for (const sk of Object.values(data.system.skills)) {
-      processModifiersList(sk.modifiers);
-      processModifiersList(sk.sources);
-      if (sk.subSkills) {
-        for (const sub of Object.values(sk.subSkills)) {
-          processModifiersList(sub.modifiers);
-          processModifiersList(sub.sources);
-        }
+  const skillsData = data.system?.skills || data.skills || {};
+  const actorSkills = actor.system?.skills || {};
+
+  for (const [key, sk] of Object.entries(skillsData)) {
+    syncSkill(sk, actorSkills[key]);
+    if (sk.subSkills) {
+      for (const [subKey, subSk] of Object.entries(sk.subSkills)) {
+        syncSkill(subSk, actorSkills[key]?.subSkills?.[subKey]);
       }
     }
   }
 }
 
-// ─── CHARACTER SHEET ─────────────────────────────────────────────────────────
+// ─── FICHA DE PERSONAGEM ──────────────────────────────────────────────────────
 
 export class AltCharacterSheetPF extends pf1.applications.actor.ActorSheetPFCharacter {
   get template() {
@@ -608,53 +631,19 @@ export class AltCharacterSheetPF extends pf1.applications.actor.ActorSheetPFChar
     });
   }
 
-  _computeEncumbrance(sheetData) {
-    super._computeEncumbrance(sheetData);
-
-    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      const strScore = this.actor.system.abilities?.str?.total || 100;
-      const carryBonus = this.actor.system.attributes?.carryStrength || 0;
-      const carryMult = this.actor.system.attributes?.carryMultiplier || 1;
-
-      const effStr = Math.floor((strScore + carryBonus) / 10);
-
-      let heavy = 0;
-      if (effStr <= 10) {
-        heavy = effStr * 10;
-      } else {
-        const base = [100, 115, 130, 150, 175, 200, 230, 260, 300, 350][effStr % 10];
-        heavy = base * Math.pow(4, Math.floor(effStr / 10) - 1);
-      }
-
-      heavy = Math.floor(heavy * carryMult * 10);
-      const medium = Math.floor((heavy * 2) / 3);
-      const light = Math.floor(heavy / 3);
-
-      const enc = sheetData.system?.attributes?.encumbrance;
-      if (enc) {
-        enc.heavy = heavy;
-        enc.medium = medium;
-        enc.light = light;
-        enc.lift = heavy;
-        enc.heavyLift = heavy * 2;
-        enc.drag = heavy * 5;
-
-        const carried = enc.carriedWeight || 0;
-        if (carried > enc.heavy) enc.level = 4;
-        else if (carried > enc.medium) enc.level = 3;
-        else if (carried > enc.light) enc.level = 2;
-        else enc.level = 1;
-      }
-    }
-  }
-
   async getData(options) {
     const data = await super.getData(options);
-    _syncSheetData10x(data);
+    
+    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+      _apply10xEncumbrance(this.actor, data);
+      _sync10xSkills(this.actor, data);
+    }
+
     data.pf1arDark = game.settings.get(MODULE_ID, "darkMode");
     data.summarySkillsMode = game.settings.get(MODULE_ID, "summarySkills");
     _prepareInventoryContainers(this, data);
     _prepareLinkedFeatChildren(this, data);
+
     return data;
   }
 
@@ -668,7 +657,7 @@ export class AltCharacterSheetPF extends pf1.applications.actor.ActorSheetPFChar
   }
 }
 
-// ─── NPC SHEET ───────────────────────────────────────────────────────────────
+// ─── FICHA DE NPC ─────────────────────────────────────────────────────────────
 
 export class AltNPCSheetPF extends pf1.applications.actor.ActorSheetPFNPC {
   get template() {
@@ -714,53 +703,19 @@ export class AltNPCSheetPF extends pf1.applications.actor.ActorSheetPFNPC {
     });
   }
 
-  _computeEncumbrance(sheetData) {
-    super._computeEncumbrance(sheetData);
-
-    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      const strScore = this.actor.system.abilities?.str?.total || 100;
-      const carryBonus = this.actor.system.attributes?.carryStrength || 0;
-      const carryMult = this.actor.system.attributes?.carryMultiplier || 1;
-
-      const effStr = Math.floor((strScore + carryBonus) / 10);
-
-      let heavy = 0;
-      if (effStr <= 10) {
-        heavy = effStr * 10;
-      } else {
-        const base = [100, 115, 130, 150, 175, 200, 230, 260, 300, 350][effStr % 10];
-        heavy = base * Math.pow(4, Math.floor(effStr / 10) - 1);
-      }
-
-      heavy = Math.floor(heavy * carryMult * 10);
-      const medium = Math.floor((heavy * 2) / 3);
-      const light = Math.floor(heavy / 3);
-
-      const enc = sheetData.system?.attributes?.encumbrance;
-      if (enc) {
-        enc.heavy = heavy;
-        enc.medium = medium;
-        enc.light = light;
-        enc.lift = heavy;
-        enc.heavyLift = heavy * 2;
-        enc.drag = heavy * 5;
-
-        const carried = enc.carriedWeight || 0;
-        if (carried > enc.heavy) enc.level = 4;
-        else if (carried > enc.medium) enc.level = 3;
-        else if (carried > enc.light) enc.level = 2;
-        else enc.level = 1;
-      }
-    }
-  }
-
   async getData(options) {
     const data = await super.getData(options);
-    _syncSheetData10x(data);
+    
+    if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+      _apply10xEncumbrance(this.actor, data);
+      _sync10xSkills(this.actor, data);
+    }
+
     data.pf1arDark = game.settings.get(MODULE_ID, "darkMode");
     data.summarySkillsMode = game.settings.get(MODULE_ID, "summarySkills");
     _prepareInventoryContainers(this, data);
     _prepareLinkedFeatChildren(this, data);
+
     return data;
   }
 
