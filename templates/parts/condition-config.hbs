@@ -1,0 +1,19 @@
+<form class="pf1ar-condition-config-form" autocomplete="off">
+    <p class="notes" style="margin-bottom: 12px;">Adjust the flat penalties applied by Core Pathfinder 1e conditions. Values should be entered as negative numbers (e.g. -20).</p>
+    <div style="max-height: 480px; overflow-y: auto; padding-right: 6px;">
+        {{#each conditions}}
+        <div class="form-group" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px solid rgba(0,0,0,0.1); padding-bottom: 4px;">
+            <div style="flex: 1;">
+                <strong>{{this.name}}</strong>
+                <div style="font-size: 0.8em; color: #666;">Affects: {{this.targets}}</div>
+            </div>
+            <div class="form-fields" style="flex: 0 0 100px;">
+                <input type="number" name="cond_{{this.key}}" value="{{this.formula}}" style="text-align: center;" data-dtype="Number">
+            </div>
+        </div>
+        {{/each}}
+    </div>
+    <div class="form-group" style="margin-top: 12px;">
+        <button type="submit" name="submit"><i class="fas fa-save"></i> Save Condition Modifiers</button>
+    </div>
+</form>
