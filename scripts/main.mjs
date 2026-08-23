@@ -82,14 +82,30 @@ Hooks.once("init", () => {
   ]);
 });
 
-// ─── CUSTOM UI INJECTOR ───────────────────────────────────────────────────
+// ─── CUSTOM UI INJECTOR & FORM INPUT RESTORATION ──────────────────────────
 
 Hooks.on("renderItemSheet", (app, html, data) => {
+  const item = app.item;
+  const is10xEnabled = game.settings.get(MODULE_ID, "enable10xGranularity");
+
+  // Restore unscaled source values in input fields to prevent compounding saves
+  if (is10xEnabled) {
+    if (item._source?.system?.armor?.value !== undefined) {
+      html.find('input[name="system.armor.value"]').val(item._source.system.armor.value);
+    }
+    if (item._source?.system?.armor?.acp !== undefined) {
+      html.find('input[name="system.armor.acp"]').val(item._source.system.armor.acp);
+    }
+    if (item._source?.system?.enh !== undefined) {
+      html.find('input[name="system.enh"]').val(item._source.system.enh);
+    }
+  }
+
   let $advancedTab = html.find('.tab[data-tab="advanced"]');
   let $target = $advancedTab.length > 0 ? $advancedTab : html.find('.sheet-body');
 
-  if (["weapon", "spell", "attack"].includes(app.item.type)) {
-    let currentFumble = app.item.getFlag(MODULE_ID, "fumbleRange") ?? 10;
+  if (["weapon", "spell", "attack"].includes(item.type)) {
+    let currentFumble = item.getFlag(MODULE_ID, "fumbleRange") ?? 10;
     let fumbleHtml = `
       <div class="form-group">
           <label>10x Fumble Range</label>
@@ -102,17 +118,34 @@ Hooks.on("renderItemSheet", (app, html, data) => {
     $target.append(fumbleHtml);
   }
 
-  let disable10x = app.item.getFlag(MODULE_ID, "disable10x") ?? false;
-  let toggleHtml = `
+  let disable10x = item.getFlag(MODULE_ID, "disable10x") ?? false;
+  let disable10xSheet = item.getFlag(MODULE_ID, "disable10xSheet") ?? false;
+  let disable10xCard = item.getFlag(MODULE_ID, "disable10xCard") ?? false;
+
+  let flagsHtml = `
     <div class="form-group">
-        <label>Disable 10x Scaling</label>
+        <label>Disable 10x Scaling (Global)</label>
         <div class="form-fields">
             <input type="checkbox" name="flags.${MODULE_ID}.disable10x" ${disable10x ? "checked" : ""}>
         </div>
-        <p class="notes">Check to skip scaling. You can also type <strong>[nomulti]</strong> next to any flat number in a formula.</p>
+        <p class="notes">Disables scaling everywhere. Formula tags: <strong>[nomulti]</strong> or <strong>[nm]</strong>.</p>
+    </div>
+    <div class="form-group">
+        <label>Disable 10x on Sheet Only</label>
+        <div class="form-fields">
+            <input type="checkbox" name="flags.${MODULE_ID}.disable10xSheet" ${disable10xSheet ? "checked" : ""}>
+        </div>
+        <p class="notes">Raw on sheet, scales in chat rolls. Formula tags: <strong>[nomulti:sheet]</strong>, <strong>[nosheet]</strong>, or <strong>[nms]</strong>.</p>
+    </div>
+    <div class="form-group">
+        <label>Disable 10x on Rolls/Cards Only</label>
+        <div class="form-fields">
+            <input type="checkbox" name="flags.${MODULE_ID}.disable10xCard" ${disable10xCard ? "checked" : ""}>
+        </div>
+        <p class="notes">Scales on sheet, raw in chat rolls. Formula tags: <strong>[nomulti:card]</strong>, <strong>[nocard]</strong>, or <strong>[nmc]</strong>.</p>
     </div>
   `;
-  $target.append(toggleHtml);
+  $target.append(flagsHtml);
 });
 
 // ─── READY: SYSTEM OVERRIDES ──────────────────────────────────────────────
@@ -170,17 +203,24 @@ Hooks.once("init", () => {
   // 1. Roll Evaluation Hook
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
+      const itemData = this.data?.item || this.options?.item || (this.data?.flags ? this.data : null);
+      const isItemGlobalDisabled = itemData?.flags?.[MODULE_ID]?.disable10x === true;
+      const isItemCardDisabled = itemData?.flags?.[MODULE_ID]?.disable10xCard === true;
+      const skipCardScaling = isItemGlobalDisabled || isItemCardDisabled;
+
       for (let i = 0; i < this.terms.length; i++) {
         let term = this.terms[i];
         if (!term.options) term.options = {};
 
-        // Scale d20 to d200
+        // Scale d20 to d200 unless card scaling is bypassed
         if (term.faces && term.faces <= 20 && !term.options._pf1arScaled) {
-          term.faces *= 10;
+          if (!skipCardScaling) {
+            term.faces *= 10;
+          }
           term.options._pf1arScaled = true;
         }
 
-        // Numeric terms: Exclude abilities, BAB, ranks, and manual flags
+        // Numeric terms scaling with full + shorthand tags
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
         if (isNumericTerm && !term.options._pf1arScaled) {
           let prevTerm = i > 0 ? this.terms[i - 1] : null;
@@ -190,7 +230,8 @@ Hooks.once("init", () => {
           let isFirstTerm = (i === 0);
           let flavor = String(term.options?.flavor || "").toLowerCase();
 
-          let isExcluded = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|rank|skill ranks|nomulti|nm)\b/i.test(flavor);
+          // Exclude attributes, BAB, ranks, card opt-outs, and scaled tags
+          let isExcluded = skipCardScaling || /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|rank|skill ranks|nomulti|nm|nomulti:card|nocard|nmcard|nmc|scaled|_pf1arscaled|sc)\b/i.test(flavor);
 
           if (!isMultiplier && !isFirstTerm && !isExcluded) {
             let val = term.number;
@@ -240,7 +281,10 @@ Hooks.once("init", () => {
     wrapped(...args); 
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
-      if (this.getFlag(MODULE_ID, "disable10x")) {
+      const isGlobalDisabled = this.getFlag(MODULE_ID, "disable10x");
+      const isSheetDisabled = this.getFlag(MODULE_ID, "disable10xSheet");
+
+      if (isGlobalDisabled || isSheetDisabled) {
         if (!this.name.includes("[NM]")) this.name = `${this.name} [NM]`;
         return;
       }
@@ -274,15 +318,15 @@ Hooks.once("init", () => {
         });
         res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, variable, flavorWrap, flavorText) => {
           let flavor = String(flavorText || "").toLowerCase();
-          if (/\b(str|dex|con|int|wis|cha|bab|ranks|rank|nomulti|nm)\b/i.test(flavor)) return m;
+          if (/\b(str|dex|con|int|wis|cha|bab|ranks|rank|nomulti|nm|nomulti:sheet|nosheet|nmsheet|nms)\b/i.test(flavor)) return m;
           return `${sign}(${variable} * 10)${flavorWrap || ""}`;
         });
         res = res.replace(/(^|[-+]\s*)(\d+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, num, flavorWrap, flavorText) => {
           let val = Number(num);
           let flavor = String(flavorText || "").toLowerCase();
-          if (/\b(str|dex|con|int|wis|cha|bab|ranks|rank|nomulti|nm)\b/i.test(flavor)) return m;
+          if (/\b(str|dex|con|int|wis|cha|bab|ranks|rank|nomulti|nm|nomulti:sheet|nosheet|nmsheet|nms)\b/i.test(flavor)) return m;
           if (isBuff && restrictBuffs && val >= 10) return m;
-          return `${sign}${val * 10}${flavorWrap || ""}`;
+          return `${sign}${val * 10}${flavorWrap ? flavorWrap.replace(']', ' scaled]') : '[scaled]'}`;
         });
 
         for (const [key, val] of Object.entries(placeholders)) res = res.replace(key, val);
@@ -311,7 +355,10 @@ Hooks.once("init", () => {
           if (srcAction && action.damage?.parts) {
             action.damage.parts.forEach((part, j) => {
               const srcFormula = srcAction.damage.parts[j]?.formula;
-              if (srcFormula) part.formula = scaleCL(String(srcFormula));
+              if (srcFormula && !part._pf1arScaled) {
+                part.formula = scaleCL(String(srcFormula));
+                part._pf1arScaled = true;
+              }
             });
           }
           if (action.actionType) {
@@ -354,7 +401,7 @@ Hooks.once("init", () => {
     return result;
   }, "WRAPPER");
 
-  // 5. Actor Derived Data: Direct UI Tooltip and Modifier Resync
+  // 5. Actor Derived Data Hook
   libWrapper.register(MODULE_ID, "CONFIG.Actor.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args); 
     
@@ -399,8 +446,7 @@ Hooks.once("init", () => {
         this.system.attributes.encumbrance.heavy = heavy * 10;
       }
 
-      // ─── DIRECT SKILLS & SUB-SKILLS UI RESYNC ───
-      // Inspects each skill's modifier tooltip list directly, scaling Panicked/Shaken/etc. to -20 and applying the difference.
+      // Direct Skills & Sub-Skills Modifier Resync
       if (this.system.skills) {
         const processSkillModifiers = (sk) => {
           if (!sk) return;
@@ -408,6 +454,7 @@ Hooks.once("init", () => {
           const modList = sk.modifiers || sk.sources;
           if (Array.isArray(modList)) {
             modList.forEach(m => {
+              if (m._pf1arScaled) return;
               const name = String(m.name || "").toLowerCase();
               if (CORE_CONDITIONS.has(name)) {
                 let val = Number(m.modifier ?? m.value);
@@ -417,31 +464,29 @@ Hooks.once("init", () => {
                   if (m.modifier !== undefined) m.modifier = scaledVal;
                   if (m.value !== undefined) m.value = scaledVal;
                 }
+                m._pf1arScaled = true;
               }
             });
           }
-          if (diff !== 0 && typeof sk.mod === "number") {
-            sk.mod += diff;
-          }
+          if (diff !== 0 && typeof sk.mod === "number") sk.mod += diff;
         };
 
         for (const sk of Object.values(this.system.skills)) {
           processSkillModifiers(sk);
           if (sk.subSkills) {
-            for (const sub of Object.values(sk.subSkills)) {
-              processSkillModifiers(sub);
-            }
+            for (const sub of Object.values(sk.subSkills)) processSkillModifiers(sub);
           }
         }
       }
 
-      // ─── SAVING THROWS & COMBAT ATTRIBUTES RESYNC ───
+      // Saving Throws & Combat Attributes Resync
       if (this.system.attributes?.savingThrows) {
         for (const sv of Object.values(this.system.attributes.savingThrows)) {
           let diff = 0;
           const modList = sv.modifiers || sv.sources;
           if (Array.isArray(modList)) {
             modList.forEach(m => {
+              if (m._pf1arScaled) return;
               const name = String(m.name || "").toLowerCase();
               if (CORE_CONDITIONS.has(name)) {
                 let val = Number(m.modifier ?? m.value);
@@ -451,6 +496,7 @@ Hooks.once("init", () => {
                   if (m.modifier !== undefined) m.modifier = scaledVal;
                   if (m.value !== undefined) m.value = scaledVal;
                 }
+                m._pf1arScaled = true;
               }
             });
           }
@@ -465,6 +511,7 @@ Hooks.once("init", () => {
           const modList = target.modifiers || target.sources;
           if (Array.isArray(modList)) {
             modList.forEach(m => {
+              if (m._pf1arScaled) return;
               const name = String(m.name || "").toLowerCase();
               if (CORE_CONDITIONS.has(name)) {
                 let val = Number(m.modifier ?? m.value);
@@ -474,6 +521,7 @@ Hooks.once("init", () => {
                   if (m.modifier !== undefined) m.modifier = scaledVal;
                   if (m.value !== undefined) m.value = scaledVal;
                 }
+                m._pf1arScaled = true;
               }
             });
           }
@@ -484,7 +532,7 @@ Hooks.once("init", () => {
   }, "WRAPPER");
 });
 
-// ─── CHAT HOOKS: DATA BROADCASTING & JQUERY DOM SCRUBBING ─────────────────
+// ─── CHAT HOOKS: BROADCASTING & JQUERY SCRUBBING ──────────────────────────
 
 Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
   if (game.user.id !== userId) return;
@@ -536,8 +584,9 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
         if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined && obj.formula === undefined) {
           let val = Number(obj.modifier);
           let name = String(obj.name).toLowerCase();
-          if (CORE_CONDITIONS.has(name) && !isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+          if (CORE_CONDITIONS.has(name) && !isNaN(val) && val !== 0 && Math.abs(val) < 10 && !obj._pf1arScaled) {
             obj.modifier = val * 10;
+            obj._pf1arScaled = true;
           }
         }
         for (let key in obj) {
