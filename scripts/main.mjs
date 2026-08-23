@@ -203,7 +203,7 @@ Hooks.once("init", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  const EXCLUDE_TAG_REGEX = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|rank|skill ranks|init|initiative|acp|armor check penalty|nomulti|nm|nomulti:sheet|nosheet|nmsheet|nms|nomulti:card|nocard|nmcard|nmc|sc|scaled|_pf1arscaled)\b/i;
+  const EXCLUDE_TAG_REGEX = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|rank|skill ranks|acp|armor check penalty|nomulti|nm|nomulti:sheet|nosheet|nmsheet|nms|nomulti:card|nocard|nmcard|nmc|sc|scaled|_pf1arscaled)\b/i;
 
   // 1. Roll Evaluation Hook
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
@@ -354,20 +354,17 @@ Hooks.once("init", () => {
         return res;
       };
 
-      // Scale Armor Value, ACP, and Max Dex
+      // Base scaling for armor & enhancements
       if (this.system?.armor) {
-        if (this._source?.system?.armor?.value !== undefined) this.system.armor.value = Number(this._source.system.armor.value) * 10;
-        if (this._source?.system?.armor?.acp !== undefined) this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
-        if (this._source?.system?.armor?.dex !== undefined) {
-          let rawMaxDex = Number(this._source.system.armor.dex);
-          if (!isNaN(rawMaxDex) && rawMaxDex !== null && Math.abs(rawMaxDex) < 10) {
-            this.system.armor.dex = rawMaxDex * 10;
-          }
+        if (this._source?.system?.armor?.value != null) this.system.armor.value = Number(this._source.system.armor.value) * 10;
+        if (this._source?.system?.armor?.acp != null) this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
+        if (this._source?.system?.armor?.dex != null) {
+          let d = Number(this._source.system.armor.dex);
+          if (!isNaN(d) && Math.abs(d) < 10) this.system.armor.dex = d * 10;
         }
       }
 
-      // Scale Enhancement Bonus (< 10)
-      if (this.system?.enh !== undefined) {
+      if (this.system?.enh !== undefined || this._source?.system?.enh !== undefined) {
         let rawEnh = Number(this._source?.system?.enh ?? this.system.enh);
         if (!isNaN(rawEnh) && rawEnh !== 0 && Math.abs(rawEnh) < 10) {
           this.system.enh = rawEnh * 10;
@@ -390,9 +387,7 @@ Hooks.once("init", () => {
           if (srcAction && action.damage?.parts) {
             action.damage.parts.forEach((part, j) => {
               const srcFormula = srcAction.damage.parts[j]?.formula;
-              if (srcFormula) {
-                part.formula = scaleCL(String(srcFormula));
-              }
+              if (srcFormula) part.formula = scaleCL(String(srcFormula));
             });
           }
           if (action.actionType) {
@@ -415,7 +410,47 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
 
-  // 3. Ability Modifier Hook (100-base conversion)
+  // 3. Item Derived Data Hook (Ensures Armor AC, Enhancements & Max Dex are not reset by PF1e)
+  libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
+    wrapped(...args);
+
+    if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
+      const isGlobalDisabled = this.getFlag(MODULE_ID, "disable10x");
+      const isSheetDisabled = this.getFlag(MODULE_ID, "disable10xSheet");
+      if (isGlobalDisabled || isSheetDisabled) return;
+
+      if (this.system?.armor) {
+        if (this._source?.system?.armor?.value != null) {
+          this.system.armor.value = Number(this._source.system.armor.value) * 10;
+        }
+        if (this._source?.system?.armor?.acp != null) {
+          this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
+        }
+        if (this._source?.system?.armor?.dex != null) {
+          let d = Number(this._source.system.armor.dex);
+          if (!isNaN(d) && Math.abs(d) < 10) {
+            this.system.armor.dex = d * 10;
+          }
+        }
+      }
+
+      if (this._source?.system?.enh != null || this.system?.enh != null) {
+        let rawEnh = Number(this._source?.system?.enh ?? this.system.enh);
+        if (!isNaN(rawEnh) && rawEnh !== 0 && Math.abs(rawEnh) < 10) {
+          this.system.enh = rawEnh * 10;
+        }
+      }
+
+      // Re-sum equipment AC total if present
+      if (this.system?.armor && typeof this.system.armor.value === "number") {
+        const enhVal = Number(this.system.enh) || 0;
+        if (this.system.armor.ac !== undefined) this.system.armor.ac = this.system.armor.value + enhVal;
+        if (this.system.armor.total !== undefined) this.system.armor.total = this.system.armor.value + enhVal;
+      }
+    }
+  }, "WRAPPER");
+
+  // 4. Ability Modifier Hook (100-base conversion)
   libWrapper.register(MODULE_ID, "pf1.utils.getAbilityModifier", function (wrapped, score, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && typeof score === "number") {
       return Math.floor((score - 100) / 2);
@@ -423,7 +458,7 @@ Hooks.once("init", () => {
     return wrapped(score, ...args);
   }, "MIXED");
 
-  // 4. DC Hook
+  // 5. DC Hook
   libWrapper.register(MODULE_ID, "pf1.components.ItemAction.prototype.getDC", function(wrapped, ...args) {
     let result = wrapped(...args);
     if (game.settings.get(MODULE_ID, "enable10xGranularity") && result != null) {
@@ -435,7 +470,7 @@ Hooks.once("init", () => {
     return result;
   }, "WRAPPER");
 
-  // 5. Actor Derived Data Hook
+  // 6. Actor Derived Data Hook
   libWrapper.register(MODULE_ID, "CONFIG.Actor.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args); 
     
@@ -448,6 +483,14 @@ Hooks.once("init", () => {
             this.system.attributes.ac[type].total += 90; 
           }
         });
+      }
+
+      // Max Dex Bonus scaling on Actor
+      if (this.system.attributes?.maxDexBonus !== undefined && this.system.attributes.maxDexBonus !== null) {
+        let mdb = Number(this.system.attributes.maxDexBonus);
+        if (!isNaN(mdb) && Math.abs(mdb) < 10) {
+          this.system.attributes.maxDexBonus = mdb * 10;
+        }
       }
 
       // BAB Calculation
@@ -480,28 +523,32 @@ Hooks.once("init", () => {
         this.system.attributes.encumbrance.heavy = heavy * 10;
       }
 
+      // Universal helper to scale condition modifiers in an array
+      const processModList = (modList) => {
+        if (!Array.isArray(modList)) return 0;
+        let diff = 0;
+        modList.forEach(m => {
+          if (!m || m._pf1arScaled) return;
+          const name = String(m.name || "").toLowerCase();
+          if (CORE_CONDITIONS.has(name)) {
+            let val = Number(m.modifier ?? m.value);
+            if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+              let scaledVal = val * 10;
+              diff += (scaledVal - val);
+              if (m.modifier !== undefined) m.modifier = scaledVal;
+              if (m.value !== undefined) m.value = scaledVal;
+            }
+            m._pf1arScaled = true;
+          }
+        });
+        return diff;
+      };
+
       // Direct Skills & Sub-Skills Modifier Resync
       if (this.system.skills) {
         const processSkillModifiers = (sk) => {
           if (!sk) return;
-          let diff = 0;
-          const modList = sk.modifiers || sk.sources;
-          if (Array.isArray(modList)) {
-            modList.forEach(m => {
-              if (m._pf1arScaled) return;
-              const name = String(m.name || "").toLowerCase();
-              if (CORE_CONDITIONS.has(name)) {
-                let val = Number(m.modifier ?? m.value);
-                if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
-                  let scaledVal = val * 10;
-                  diff += (scaledVal - val);
-                  if (m.modifier !== undefined) m.modifier = scaledVal;
-                  if (m.value !== undefined) m.value = scaledVal;
-                }
-                m._pf1arScaled = true;
-              }
-            });
-          }
+          let diff = processModList(sk.modifiers || sk.sources);
           if (diff !== 0 && typeof sk.mod === "number") sk.mod += diff;
         };
 
@@ -516,53 +563,42 @@ Hooks.once("init", () => {
       // Saving Throws Resync
       if (this.system.attributes?.savingThrows) {
         for (const sv of Object.values(this.system.attributes.savingThrows)) {
-          let diff = 0;
-          const modList = sv.modifiers || sv.sources;
-          if (Array.isArray(modList)) {
-            modList.forEach(m => {
-              if (m._pf1arScaled) return;
-              const name = String(m.name || "").toLowerCase();
-              if (CORE_CONDITIONS.has(name)) {
-                let val = Number(m.modifier ?? m.value);
-                if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
-                  let scaledVal = val * 10;
-                  diff += (scaledVal - val);
-                  if (m.modifier !== undefined) m.modifier = scaledVal;
-                  if (m.value !== undefined) m.value = scaledVal;
-                }
-                m._pf1arScaled = true;
-              }
-            });
-          }
+          let diff = processModList(sv.modifiers || sv.sources);
           if (diff !== 0 && typeof sv.total === "number") sv.total += diff;
         }
       }
 
-      // Combat Attributes & Initiative Resync
-      ['cmd', 'cmb', 'attack', 'init'].forEach(attr => {
+      // Combat Attributes Resync (CMD, CMB, Attack)
+      ['cmd', 'cmb', 'attack'].forEach(attr => {
         const target = this.system.attributes?.[attr];
         if (target) {
-          let diff = 0;
-          const modList = target.modifiers || target.sources;
-          if (Array.isArray(modList)) {
-            modList.forEach(m => {
-              if (m._pf1arScaled) return;
-              const name = String(m.name || "").toLowerCase();
-              if (CORE_CONDITIONS.has(name)) {
-                let val = Number(m.modifier ?? m.value);
-                if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
-                  let scaledVal = val * 10;
-                  diff += (scaledVal - val);
-                  if (m.modifier !== undefined) m.modifier = scaledVal;
-                  if (m.value !== undefined) m.value = scaledVal;
-                }
-                m._pf1arScaled = true;
-              }
-            });
-          }
+          let diff = processModList(target.modifiers || target.sources);
           if (diff !== 0 && typeof target.total === "number") target.total += diff;
         }
       });
+
+      // Initiative & Background Modifier Dictionary Resync
+      if (this.system.attributes?.init) {
+        let initDiff = processModList(this.system.attributes.init.modifiers || this.system.attributes.init.sources);
+        if (initDiff !== 0) {
+          if (typeof this.system.attributes.init.total === "number") this.system.attributes.init.total += initDiff;
+          if (typeof this.system.attributes.init.value === "number") this.system.attributes.init.value += initDiff;
+        }
+      }
+
+      if (this.modifiers) {
+        let entries = typeof this.modifiers.entries === "function" ? this.modifiers.entries() : Object.entries(this.modifiers);
+        for (let [key, modArray] of entries) {
+          if (Array.isArray(modArray)) {
+            let diff = processModList(modArray);
+            if (diff !== 0 && (key === "init" || key === "initiative")) {
+              if (this.system.attributes?.init && typeof this.system.attributes.init.total === "number") {
+                this.system.attributes.init.total += diff;
+              }
+            }
+          }
+        }
+      }
     }
   }, "WRAPPER");
 });
