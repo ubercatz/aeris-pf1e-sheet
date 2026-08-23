@@ -1,5 +1,6 @@
 import { registerHandlebarsHelpers } from "./helpers.mjs";
 import { AltCharacterSheetPF, AltNPCSheetPF } from "./sheet.mjs";
+import { apply10xConditionRegistry } from "./conditions.mjs";
 
 const MODULE_ID = "pf1-altsheet-reworked";
 
@@ -9,93 +10,12 @@ function _rerenderOpenAltSheets() {
   }
 }
 
-// ─── CUSTOM CONDITION REGISTRY ENGINE ──────────────────────────────────────
-
-function _registerConditionSettings() {
-  game.settings.register(MODULE_ID, "customConditionScaling", {
-    name: "Enable Custom Condition Scaling",
-    hint: "Replaces default PF1e condition penalties with custom granular values across the system.",
-    scope: "world",
-    config: true,
-    type: Boolean,
-    default: true,
-    onChange: () => _patchConditionRegistry(),
-  });
-
-  game.settings.register(MODULE_ID, "conditionScaleMultiplier", {
-    name: "Condition Penalty Multiplier",
-    hint: "Global multiplier applied to core condition penalties (e.g., 10x turns -2 into -20).",
-    scope: "world",
-    config: true,
-    type: Number,
-    default: 10,
-    onChange: () => _patchConditionRegistry(),
-  });
-}
-
-function _patchConditionRegistry() {
-  if (!game.settings.get(MODULE_ID, "customConditionScaling")) return;
-  const mult = game.settings.get(MODULE_ID, "conditionScaleMultiplier") || 10;
-
-  // 1. Patch static condition config
-  if (pf1.config?.conditionDetails) {
-    for (const [key, details] of Object.entries(pf1.config.conditionDetails)) {
-      if (details.changes && Array.isArray(details.changes)) {
-        details.changes.forEach(change => {
-          let val = Number(change.formula);
-          if (!isNaN(val) && val !== 0 && !change._pf1arConfigured) {
-            change.formula = String(val * mult);
-            change._pf1arConfigured = true;
-          }
-        });
-
-        // Ensure conditions affecting checks explicitly debuff Initiative
-        if (["shaken", "frightened", "panicked"].includes(key)) {
-          const hasInit = details.changes.some(c => c.target === "init" || c.target === "attributes.init");
-          if (!hasInit) {
-            details.changes.push({
-              formula: String(-2 * mult),
-              target: "init",
-              type: "untyped",
-              _pf1arConfigured: true
-            });
-          }
-        }
-      }
-    }
-  }
-
-  // 2. Patch active registry documents
-  if (pf1.registry?.conditions?.contents) {
-    pf1.registry.conditions.contents.forEach(cond => {
-      const changes = cond.system?.changes || cond.changes;
-      if (Array.isArray(changes)) {
-        changes.forEach(change => {
-          let val = Number(change.formula);
-          if (!isNaN(val) && val !== 0 && !change._pf1arConfigured) {
-            change.formula = String(val * mult);
-            change._pf1arConfigured = true;
-          }
-        });
-      }
-    });
-  }
-
-  // 3. Reset existing actors to trigger a fresh data pass with scaled conditions
-  for (const actor of game.actors.contents) {
-    try {
-      actor.reset();
-    } catch (e) {}
-  }
-}
-
 // ─── INIT: CONFIG, HELPERS & SETTINGS ──────────────────────────────────────
 
 Hooks.once("init", () => {
   if (game.system?.id !== "pf1") return;
 
   registerHandlebarsHelpers();
-  _registerConditionSettings();
 
   game.settings.register(MODULE_ID, "enable10xGranularity", {
     name: "Enable 10x Granularity Engine",
@@ -104,7 +24,10 @@ Hooks.once("init", () => {
     config: true,
     type: Boolean,
     default: true,
-    onChange: _rerenderOpenAltSheets,
+    onChange: () => {
+      apply10xConditionRegistry();
+      _rerenderOpenAltSheets();
+    },
   });
 
   game.settings.register(MODULE_ID, "enableFractionalProgression", {
@@ -119,7 +42,7 @@ Hooks.once("init", () => {
 
   game.settings.register(MODULE_ID, "scaleSmallBuffs", {
     name: "Scale Small Buffs/Debuffs (<10)",
-    hint: "When enabled, conditions and buffs (e.g., Shaken) will only scale flat modifiers under 10.",
+    hint: "When enabled, conditions and buffs will only scale flat modifiers under 10.",
     scope: "world",
     config: true,
     type: Boolean,
@@ -155,12 +78,18 @@ Hooks.once("init", () => {
   ]);
 });
 
-// ─── CUSTOM UI INJECTOR & FORM INPUT RESTORATION ──────────────────────────
+// Hook into system registry initialization
+Hooks.on("pf1RegisterConditions", () => {
+  apply10xConditionRegistry();
+});
+
+// ─── CUSTOM UI INJECTOR & FORM RESTORATION ────────────────────────────────
 
 Hooks.on("renderItemSheet", (app, html, data) => {
   const item = app.item;
   const is10xEnabled = game.settings.get(MODULE_ID, "enable10xGranularity");
 
+  // Restore unscaled source values in inputs to avoid multi-compounding saves
   if (is10xEnabled) {
     if (item._source?.system?.armor?.value !== undefined) {
       html.find('input[name="system.armor.value"]').val(item._source.system.armor.value);
@@ -223,7 +152,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
   $target.append(flagsHtml);
 });
 
-// ─── READY: SYSTEM OVERRIDES & REGISTRY PATCH ─────────────────────────────
+// ─── READY: SYSTEM OVERRIDES & REGISTRY SYNC ───────────────────────────────
 
 Hooks.once("ready", () => {
   if (game.system?.id !== "pf1") return;
@@ -237,7 +166,7 @@ Hooks.once("ready", () => {
     pf1.config.nonProficiencyPenalty = -40;
   }
 
-  _patchConditionRegistry();
+  apply10xConditionRegistry();
 });
 
 // ─── STYLESHEET INJECTION ─────────────────────────────────────────────────
@@ -291,6 +220,7 @@ Hooks.once("init", () => {
         let term = this.terms[i];
         if (!term.options) term.options = {};
 
+        // Scale d20 to d200 unless card scaling is bypassed
         if (term.faces && term.faces <= 20 && !term.options._pf1arScaled) {
           if (!skipCardScaling) {
             term.faces *= 10;
@@ -298,6 +228,7 @@ Hooks.once("init", () => {
           term.options._pf1arScaled = true;
         }
 
+        // Numeric terms scaling
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
         if (isNumericTerm && !term.options._pf1arScaled) {
           let prevTerm = i > 0 ? this.terms[i - 1] : null;
@@ -379,6 +310,7 @@ Hooks.once("init", () => {
           return key;
         };
 
+        // Capped & Variable Dice
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
           let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
@@ -389,11 +321,13 @@ Hooks.once("init", () => {
           let fcs = Number(faces); return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
         
+        // Standard Dice
         res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
           let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
           return hide(`${count || ""}${middle || ""}d${scaledFaces}`);
         });
 
+        // Flat Variables
         res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, variable, flavorWrap, flavorText) => {
           let flavor = String(flavorText || "").toLowerCase();
           if (EXCLUDE_TAG_REGEX.test(flavor)) return m;
@@ -404,6 +338,7 @@ Hooks.once("init", () => {
           return `${sign}(${variable} * 10)${newFlavor}`;
         });
 
+        // Flat Numbers (< 10)
         res = res.replace(/(^|[-+]\s*)(\d+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, num, flavorWrap, flavorText) => {
           let val = Number(num);
           let flavor = String(flavorText || "").toLowerCase();
@@ -477,7 +412,7 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
 
-  // 3. Item Derived Data Hook
+  // 3. Item Derived Data Hook (Ensures armor & enh bonuses persist)
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args);
 
@@ -542,6 +477,7 @@ Hooks.once("init", () => {
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
+      // Base AC Adjustment (10 -> 100)
       if (this.system.attributes?.ac) {
         ["normal", "touch", "flatFooted"].forEach(type => {
           if (this.system.attributes.ac[type]?.total !== undefined) {
@@ -550,6 +486,7 @@ Hooks.once("init", () => {
         });
       }
 
+      // Max Dex Bonus scaling on Actor
       if (this.system.attributes?.maxDexBonus !== undefined && this.system.attributes.maxDexBonus !== null) {
         let mdb = Number(this.system.attributes.maxDexBonus);
         if (!isNaN(mdb) && Math.abs(mdb) < 10) {
@@ -557,6 +494,7 @@ Hooks.once("init", () => {
         }
       }
 
+      // BAB Calculation
       if (game.settings.get(MODULE_ID, "enableFractionalProgression")) {
         let granularBab = 0;
         for (const item of this.items) {
@@ -572,6 +510,7 @@ Hooks.once("init", () => {
         this.system.attributes.bab.total *= 10;
       }
 
+      // Encumbrance Limits
       if (this.system.attributes?.encumbrance && this.system.abilities?.str?.total) {
         const str = Math.floor(this.system.abilities.str.total / 10); 
         let heavy = 0;
