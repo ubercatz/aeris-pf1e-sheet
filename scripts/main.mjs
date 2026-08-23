@@ -3,17 +3,89 @@ import { AltCharacterSheetPF, AltNPCSheetPF } from "./sheet.mjs";
 
 const MODULE_ID = "pf1-altsheet-reworked";
 
-// Core hardcoded PF1e conditions that bypass item formula scaling
-const CORE_CONDITIONS = new Set([
-  "panicked", "shaken", "sickened", "fatigued", "exhausted", "entangled", 
-  "grappled", "prone", "frightened", "cowering", "dazzled", "blinded", 
-  "deafened", "stunned", "staggered", "paralyzed", "pinned", "invisible", 
-  "squeezing", "negative level"
-]);
-
 function _rerenderOpenAltSheets() {
   for (const app of Object.values(ui.windows)) {
     if (app?.element?.[0]?.classList?.contains("pf1ar-sheet")) app.render(false);
+  }
+}
+
+// ─── CUSTOM CONDITION REGISTRY ENGINE ──────────────────────────────────────
+
+function _registerConditionSettings() {
+  game.settings.register(MODULE_ID, "customConditionScaling", {
+    name: "Enable Custom Condition Scaling",
+    hint: "Replaces default PF1e condition penalties with custom granular values across the system.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+    onChange: () => _patchConditionRegistry(),
+  });
+
+  game.settings.register(MODULE_ID, "conditionScaleMultiplier", {
+    name: "Condition Penalty Multiplier",
+    hint: "Global multiplier applied to core condition penalties (e.g., 10x turns -2 into -20).",
+    scope: "world",
+    config: true,
+    type: Number,
+    default: 10,
+    onChange: () => _patchConditionRegistry(),
+  });
+}
+
+function _patchConditionRegistry() {
+  if (!game.settings.get(MODULE_ID, "customConditionScaling")) return;
+  const mult = game.settings.get(MODULE_ID, "conditionScaleMultiplier") || 10;
+
+  // 1. Patch static condition config
+  if (pf1.config?.conditionDetails) {
+    for (const [key, details] of Object.entries(pf1.config.conditionDetails)) {
+      if (details.changes && Array.isArray(details.changes)) {
+        details.changes.forEach(change => {
+          let val = Number(change.formula);
+          if (!isNaN(val) && val !== 0 && !change._pf1arConfigured) {
+            change.formula = String(val * mult);
+            change._pf1arConfigured = true;
+          }
+        });
+
+        // Ensure conditions affecting checks explicitly debuff Initiative
+        if (["shaken", "frightened", "panicked"].includes(key)) {
+          const hasInit = details.changes.some(c => c.target === "init" || c.target === "attributes.init");
+          if (!hasInit) {
+            details.changes.push({
+              formula: String(-2 * mult),
+              target: "init",
+              type: "untyped",
+              _pf1arConfigured: true
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Patch active registry documents
+  if (pf1.registry?.conditions?.contents) {
+    pf1.registry.conditions.contents.forEach(cond => {
+      const changes = cond.system?.changes || cond.changes;
+      if (Array.isArray(changes)) {
+        changes.forEach(change => {
+          let val = Number(change.formula);
+          if (!isNaN(val) && val !== 0 && !change._pf1arConfigured) {
+            change.formula = String(val * mult);
+            change._pf1arConfigured = true;
+          }
+        });
+      }
+    });
+  }
+
+  // 3. Reset existing actors to trigger a fresh data pass with scaled conditions
+  for (const actor of game.actors.contents) {
+    try {
+      actor.reset();
+    } catch (e) {}
   }
 }
 
@@ -23,6 +95,7 @@ Hooks.once("init", () => {
   if (game.system?.id !== "pf1") return;
 
   registerHandlebarsHelpers();
+  _registerConditionSettings();
 
   game.settings.register(MODULE_ID, "enable10xGranularity", {
     name: "Enable 10x Granularity Engine",
@@ -88,7 +161,6 @@ Hooks.on("renderItemSheet", (app, html, data) => {
   const item = app.item;
   const is10xEnabled = game.settings.get(MODULE_ID, "enable10xGranularity");
 
-  // Restore unscaled source values in inputs to avoid multi-compounding saves
   if (is10xEnabled) {
     if (item._source?.system?.armor?.value !== undefined) {
       html.find('input[name="system.armor.value"]').val(item._source.system.armor.value);
@@ -151,7 +223,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
   $target.append(flagsHtml);
 });
 
-// ─── READY: SYSTEM OVERRIDES ──────────────────────────────────────────────
+// ─── READY: SYSTEM OVERRIDES & REGISTRY PATCH ─────────────────────────────
 
 Hooks.once("ready", () => {
   if (game.system?.id !== "pf1") return;
@@ -164,6 +236,8 @@ Hooks.once("ready", () => {
     pf1.config.classSkillBonus = 30;
     pf1.config.nonProficiencyPenalty = -40;
   }
+
+  _patchConditionRegistry();
 });
 
 // ─── STYLESHEET INJECTION ─────────────────────────────────────────────────
@@ -217,7 +291,6 @@ Hooks.once("init", () => {
         let term = this.terms[i];
         if (!term.options) term.options = {};
 
-        // Scale d20 to d200 unless card scaling is bypassed
         if (term.faces && term.faces <= 20 && !term.options._pf1arScaled) {
           if (!skipCardScaling) {
             term.faces *= 10;
@@ -225,7 +298,6 @@ Hooks.once("init", () => {
           term.options._pf1arScaled = true;
         }
 
-        // Numeric terms scaling
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
         if (isNumericTerm && !term.options._pf1arScaled) {
           let prevTerm = i > 0 ? this.terms[i - 1] : null;
@@ -307,7 +379,6 @@ Hooks.once("init", () => {
           return key;
         };
 
-        // Capped & Variable Dice
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
           let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
@@ -318,13 +389,11 @@ Hooks.once("init", () => {
           let fcs = Number(faces); return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
         
-        // Standard Dice
         res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
           let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
           return hide(`${count || ""}${middle || ""}d${scaledFaces}`);
         });
 
-        // Flat Variables
         res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, variable, flavorWrap, flavorText) => {
           let flavor = String(flavorText || "").toLowerCase();
           if (EXCLUDE_TAG_REGEX.test(flavor)) return m;
@@ -335,7 +404,6 @@ Hooks.once("init", () => {
           return `${sign}(${variable} * 10)${newFlavor}`;
         });
 
-        // Flat Numbers (< 10)
         res = res.replace(/(^|[-+]\s*)(\d+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, num, flavorWrap, flavorText) => {
           let val = Number(num);
           let flavor = String(flavorText || "").toLowerCase();
@@ -354,7 +422,6 @@ Hooks.once("init", () => {
         return res;
       };
 
-      // Base scaling for armor & enhancements
       if (this.system?.armor) {
         if (this._source?.system?.armor?.value != null) this.system.armor.value = Number(this._source.system.armor.value) * 10;
         if (this._source?.system?.armor?.acp != null) this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
@@ -410,7 +477,7 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
 
-  // 3. Item Derived Data Hook (Ensures Armor AC, Enhancements & Max Dex are not reset by PF1e)
+  // 3. Item Derived Data Hook
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args);
 
@@ -441,7 +508,6 @@ Hooks.once("init", () => {
         }
       }
 
-      // Re-sum equipment AC total if present
       if (this.system?.armor && typeof this.system.armor.value === "number") {
         const enhVal = Number(this.system.enh) || 0;
         if (this.system.armor.ac !== undefined) this.system.armor.ac = this.system.armor.value + enhVal;
@@ -476,7 +542,6 @@ Hooks.once("init", () => {
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
-      // Base AC Adjustment (10 -> 100)
       if (this.system.attributes?.ac) {
         ["normal", "touch", "flatFooted"].forEach(type => {
           if (this.system.attributes.ac[type]?.total !== undefined) {
@@ -485,7 +550,6 @@ Hooks.once("init", () => {
         });
       }
 
-      // Max Dex Bonus scaling on Actor
       if (this.system.attributes?.maxDexBonus !== undefined && this.system.attributes.maxDexBonus !== null) {
         let mdb = Number(this.system.attributes.maxDexBonus);
         if (!isNaN(mdb) && Math.abs(mdb) < 10) {
@@ -493,7 +557,6 @@ Hooks.once("init", () => {
         }
       }
 
-      // BAB Calculation
       if (game.settings.get(MODULE_ID, "enableFractionalProgression")) {
         let granularBab = 0;
         for (const item of this.items) {
@@ -509,7 +572,6 @@ Hooks.once("init", () => {
         this.system.attributes.bab.total *= 10;
       }
 
-      // Encumbrance Limits
       if (this.system.attributes?.encumbrance && this.system.abilities?.str?.total) {
         const str = Math.floor(this.system.abilities.str.total / 10); 
         let heavy = 0;
@@ -521,83 +583,6 @@ Hooks.once("init", () => {
         this.system.attributes.encumbrance.light = Math.floor(heavy / 3) * 10;
         this.system.attributes.encumbrance.medium = Math.floor((heavy * 2) / 3) * 10;
         this.system.attributes.encumbrance.heavy = heavy * 10;
-      }
-
-      // Universal helper to scale condition modifiers in an array
-      const processModList = (modList) => {
-        if (!Array.isArray(modList)) return 0;
-        let diff = 0;
-        modList.forEach(m => {
-          if (!m || m._pf1arScaled) return;
-          const name = String(m.name || "").toLowerCase();
-          if (CORE_CONDITIONS.has(name)) {
-            let val = Number(m.modifier ?? m.value);
-            if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
-              let scaledVal = val * 10;
-              diff += (scaledVal - val);
-              if (m.modifier !== undefined) m.modifier = scaledVal;
-              if (m.value !== undefined) m.value = scaledVal;
-            }
-            m._pf1arScaled = true;
-          }
-        });
-        return diff;
-      };
-
-      // Direct Skills & Sub-Skills Modifier Resync
-      if (this.system.skills) {
-        const processSkillModifiers = (sk) => {
-          if (!sk) return;
-          let diff = processModList(sk.modifiers || sk.sources);
-          if (diff !== 0 && typeof sk.mod === "number") sk.mod += diff;
-        };
-
-        for (const sk of Object.values(this.system.skills)) {
-          processSkillModifiers(sk);
-          if (sk.subSkills) {
-            for (const sub of Object.values(sk.subSkills)) processSkillModifiers(sub);
-          }
-        }
-      }
-
-      // Saving Throws Resync
-      if (this.system.attributes?.savingThrows) {
-        for (const sv of Object.values(this.system.attributes.savingThrows)) {
-          let diff = processModList(sv.modifiers || sv.sources);
-          if (diff !== 0 && typeof sv.total === "number") sv.total += diff;
-        }
-      }
-
-      // Combat Attributes Resync (CMD, CMB, Attack)
-      ['cmd', 'cmb', 'attack'].forEach(attr => {
-        const target = this.system.attributes?.[attr];
-        if (target) {
-          let diff = processModList(target.modifiers || target.sources);
-          if (diff !== 0 && typeof target.total === "number") target.total += diff;
-        }
-      });
-
-      // Initiative & Background Modifier Dictionary Resync
-      if (this.system.attributes?.init) {
-        let initDiff = processModList(this.system.attributes.init.modifiers || this.system.attributes.init.sources);
-        if (initDiff !== 0) {
-          if (typeof this.system.attributes.init.total === "number") this.system.attributes.init.total += initDiff;
-          if (typeof this.system.attributes.init.value === "number") this.system.attributes.init.value += initDiff;
-        }
-      }
-
-      if (this.modifiers) {
-        let entries = typeof this.modifiers.entries === "function" ? this.modifiers.entries() : Object.entries(this.modifiers);
-        for (let [key, modArray] of entries) {
-          if (Array.isArray(modArray)) {
-            let diff = processModList(modArray);
-            if (diff !== 0 && (key === "init" || key === "initiative")) {
-              if (this.system.attributes?.init && typeof this.system.attributes.init.total === "number") {
-                this.system.attributes.init.total += diff;
-              }
-            }
-          }
-        }
       }
     }
   }, "WRAPPER");
@@ -641,34 +626,6 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     injectedData["flags.aeris.d200Result"] = agnosticResult;
     injectedData["flags.aeris.isFumble"] = isFumble;
     if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
-  }
-
-  if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.system) {
-    let metaClone = foundry.utils.deepClone(message.system);
-    const scaleModifiersStrictly = (obj, visited = new Set()) => {
-      if (!obj || typeof obj !== 'object' || visited.has(obj)) return;
-      visited.add(obj);
-
-      if (Array.isArray(obj)) {
-        obj.forEach(i => scaleModifiersStrictly(i, visited));
-      } else {
-        if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined && obj.formula === undefined) {
-          let val = Number(obj.modifier);
-          let name = String(obj.name).toLowerCase();
-          if (CORE_CONDITIONS.has(name) && !isNaN(val) && val !== 0 && Math.abs(val) < 10 && !obj._pf1arScaled) {
-            obj.modifier = val * 10;
-            obj._pf1arScaled = true;
-          }
-        }
-        for (let key in obj) {
-          if (['parent', 'document', 'actor', 'item', 'token', 'target', 'roll', 'scene', 'combatant'].includes(key)) continue;
-          if (typeof obj[key] === 'object') scaleModifiersStrictly(obj[key], visited);
-        }
-      }
-    };
-    
-    scaleModifiersStrictly(metaClone);
-    injectedData["system"] = metaClone;
   }
 
   if (Object.keys(injectedData).length > 0) {
