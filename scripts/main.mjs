@@ -1,6 +1,5 @@
 import { registerHandlebarsHelpers } from "./helpers.mjs";
 import { AltCharacterSheetPF, AltNPCSheetPF } from "./sheet.mjs";
-import { apply10xConditionRegistry } from "./conditions.mjs";
 
 const MODULE_ID = "pf1-altsheet-reworked";
 
@@ -10,12 +9,93 @@ function _rerenderOpenAltSheets() {
   }
 }
 
-// ─── INIT: HELPERS & SETTINGS ─────────────────────────────────────────────
+// ─── CUSTOM CONDITION REGISTRY ENGINE ──────────────────────────────────────
+
+function _registerConditionSettings() {
+  game.settings.register(MODULE_ID, "customConditionScaling", {
+    name: "Enable Custom Condition Scaling",
+    hint: "Replaces default PF1e condition penalties with custom granular values across the system.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+    onChange: () => _patchConditionRegistry(),
+  });
+
+  game.settings.register(MODULE_ID, "conditionScaleMultiplier", {
+    name: "Condition Penalty Multiplier",
+    hint: "Global multiplier applied to core condition penalties (e.g., 10x turns -2 into -20).",
+    scope: "world",
+    config: true,
+    type: Number,
+    default: 10,
+    onChange: () => _patchConditionRegistry(),
+  });
+}
+
+function _patchConditionRegistry() {
+  if (!game.settings.get(MODULE_ID, "customConditionScaling")) return;
+  const mult = game.settings.get(MODULE_ID, "conditionScaleMultiplier") || 10;
+
+  // 1. Patch static condition config
+  if (pf1.config?.conditionDetails) {
+    for (const [key, details] of Object.entries(pf1.config.conditionDetails)) {
+      if (details.changes && Array.isArray(details.changes)) {
+        details.changes.forEach(change => {
+          let val = Number(change.formula);
+          if (!isNaN(val) && val !== 0 && !change._pf1arConfigured) {
+            change.formula = String(val * mult);
+            change._pf1arConfigured = true;
+          }
+        });
+
+        // Ensure conditions affecting checks explicitly debuff Initiative
+        if (["shaken", "frightened", "panicked"].includes(key)) {
+          const hasInit = details.changes.some(c => c.target === "init" || c.target === "attributes.init");
+          if (!hasInit) {
+            details.changes.push({
+              formula: String(-2 * mult),
+              target: "init",
+              type: "untyped",
+              _pf1arConfigured: true
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Patch active registry documents
+  if (pf1.registry?.conditions?.contents) {
+    pf1.registry.conditions.contents.forEach(cond => {
+      const changes = cond.system?.changes || cond.changes;
+      if (Array.isArray(changes)) {
+        changes.forEach(change => {
+          let val = Number(change.formula);
+          if (!isNaN(val) && val !== 0 && !change._pf1arConfigured) {
+            change.formula = String(val * mult);
+            change._pf1arConfigured = true;
+          }
+        });
+      }
+    });
+  }
+
+  // 3. Reset existing actors to trigger a fresh data pass with scaled conditions
+  for (const actor of game.actors.contents) {
+    try {
+      actor.reset();
+    } catch (e) {}
+  }
+}
+
+// ─── INIT: CONFIG, HELPERS & SETTINGS ──────────────────────────────────────
 
 Hooks.once("init", () => {
   if (game.system?.id !== "pf1") return;
 
   registerHandlebarsHelpers();
+  _registerConditionSettings();
 
   game.settings.register(MODULE_ID, "enable10xGranularity", {
     name: "Enable 10x Granularity Engine",
@@ -24,10 +104,7 @@ Hooks.once("init", () => {
     config: true,
     type: Boolean,
     default: true,
-    onChange: () => {
-      apply10xConditionRegistry();
-      _rerenderOpenAltSheets();
-    },
+    onChange: _rerenderOpenAltSheets,
   });
 
   game.settings.register(MODULE_ID, "enableFractionalProgression", {
@@ -55,6 +132,11 @@ Hooks.once("init", () => {
   game.settings.register(MODULE_ID, "compact", { name: "PF1AR.Settings.Compact", scope: "client", config: true, type: Boolean, default: false, onChange: _rerenderOpenAltSheets });
   game.settings.register(MODULE_ID, "summarySkills", { name: "PF1AR.Settings.SummarySkills", scope: "client", config: true, type: String, default: "ranked", choices: { ranked: "PF1AR.Labels.Ranked", class: "PF1AR.Labels.SkillsClass", all: "PF1AR.Labels.SkillsAll" }, onChange: _rerenderOpenAltSheets });
 
+  if (pf1.config) {
+    pf1.config.classSkillBonus = 30;
+    pf1.config.nonProficiencyPenalty = -40;
+  }
+
   loadTemplates([
     `modules/${MODULE_ID}/templates/character-sheet.hbs`,
     `modules/${MODULE_ID}/templates/npc-sheet.hbs`,
@@ -71,11 +153,6 @@ Hooks.once("init", () => {
     `modules/${MODULE_ID}/templates/parts/notes.hbs`,
     `modules/${MODULE_ID}/templates/parts/settings.hbs`,
   ]);
-});
-
-// Hook into system registry initialization
-Hooks.on("pf1RegisterConditions", () => {
-  apply10xConditionRegistry();
 });
 
 // ─── CUSTOM UI INJECTOR & FORM INPUT RESTORATION ──────────────────────────
@@ -146,7 +223,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
   $target.append(flagsHtml);
 });
 
-// ─── READY: SYSTEM OVERRIDES & REGISTRY SYNC ───────────────────────────────
+// ─── READY: SYSTEM OVERRIDES & REGISTRY PATCH ─────────────────────────────
 
 Hooks.once("ready", () => {
   if (game.system?.id !== "pf1") return;
@@ -160,7 +237,7 @@ Hooks.once("ready", () => {
     pf1.config.nonProficiencyPenalty = -40;
   }
 
-  apply10xConditionRegistry();
+  _patchConditionRegistry();
 });
 
 // ─── STYLESHEET INJECTION ─────────────────────────────────────────────────
@@ -226,14 +303,13 @@ Hooks.once("init", () => {
           let prevTerm = i > 0 ? this.terms[i - 1] : null;
           let nextTerm = i < this.terms.length - 1 ? this.terms[i + 1] : null;
           
-          let isMultiplierPrev = prevTerm && prevTerm.operator !== undefined && ["*", "/"].includes(prevTerm.operator);
-          let isMultiplierNext = nextTerm && nextTerm.operator !== undefined && ["*", "/"].includes(nextTerm.operator);
+          let isMultiplier = (prevTerm && ["*", "/"].includes(prevTerm.operator)) || (nextTerm && ["*", "/"].includes(nextTerm.operator));
           let isFirstTerm = (i === 0);
           let flavor = String(term.options?.flavor || "").toLowerCase();
 
           let isExcluded = skipCardScaling || EXCLUDE_TAG_REGEX.test(flavor);
 
-          if (!isMultiplierPrev && !isMultiplierNext && !isFirstTerm && !isExcluded) {
+          if (!isMultiplier && !isFirstTerm && !isExcluded) {
             let val = term.number;
             if (val !== 0 && Math.abs(val) < 10) {
               term.number = val * 10;
@@ -276,7 +352,7 @@ Hooks.once("init", () => {
     return evaluatedRoll;
   }, "WRAPPER");
 
-  // 2. Base Item Data Hook (Using Proven 1.1.0 Dice Pool Parser)
+  // 2. Base Item Data Hook
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareBaseData", function (wrapped, ...args) {
     wrapped(...args); 
     
@@ -303,33 +379,21 @@ Hooks.once("init", () => {
           return key;
         };
 
-        // Prong 1: Explicit Capped Dice Pools (Fireball, Snowball, etc.)
-        res = res.replace(/(min|max)(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*)\s*d(\d+)/gi, (m, func, num, variable, faces) => {
-          return hide(`${func}(${num}, ${variable})d${Number(faces) * 10}`);
+        res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
+          let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
-        res = res.replace(/(\s*(min|max)(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*)\s*)\s*d(\d+)/gi, (m, func, num, variable, faces) => {
-          return hide(`(${func}(${num}, ${variable}))d${Number(faces) * 10}`);
+        res = res.replace(/(min|max)\(\s*([^,]+)\s*,\s*(\d+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, num, middle, faces) => {
+          let fcs = Number(faces); return hide(`${func}(${variable}, ${num})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
-        res = res.replace(/(\s*(min|max)(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*)\s*)\s*\*\s*(\d*)d(\d+)/gi, (m, func, num, variable, count, faces) => {
-          return hide(`(${func}(${num}, ${variable})) * ${count || ""}d${Number(faces) * 10}`);
+        res = res.replace(/(@[a-zA-Z0-9_.]+)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, variable, middle, faces) => {
+          let fcs = Number(faces); return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
-        res = res.replace(/(min|max)(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*)\s*\*\s*(\d*)d(\d+)/gi, (m, func, num, variable, count, faces) => {
-          return hide(`${func}(${num}, ${variable}) * ${count || ""}d${Number(faces) * 10}`);
-        });
-        res = res.replace(/(min|max)(\s*(@[a-zA-Z0-9_.]+)\s*,\s*(\d+)\s*)\s*d(\d+)/gi, (m, func, variable, num, faces) => {
-          return hide(`${func}(${variable}, ${num})d${Number(faces) * 10}`);
-        });
-        res = res.replace(/(@[a-zA-Z0-9_.]+)\s*d(\d+)/gi, (m, variable, faces) => {
-          return hide(`${variable}d${Number(faces) * 10}`);
-        });
-
-        // Prong 2: Isolate Standard Dice
-        res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, count, faces) => {
+        
+        res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
           let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
-          return hide(`${count || ""}d${scaledFaces}`);
+          return hide(`${count || ""}${middle || ""}d${scaledFaces}`);
         });
 
-        // Flat Variables (@cl -> (@cl * 10))
         res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, variable, flavorWrap, flavorText) => {
           let flavor = String(flavorText || "").toLowerCase();
           if (EXCLUDE_TAG_REGEX.test(flavor)) return m;
@@ -340,7 +404,6 @@ Hooks.once("init", () => {
           return `${sign}(${variable} * 10)${newFlavor}`;
         });
 
-        // Flat Numbers (< 10)
         res = res.replace(/(^|[-+]\s*)(\d+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, num, flavorWrap, flavorText) => {
           let val = Number(num);
           let flavor = String(flavorText || "").toLowerCase();
@@ -360,9 +423,9 @@ Hooks.once("init", () => {
       };
 
       if (this.system?.armor) {
-        if (this._source?.system?.armor?.value !== undefined) this.system.armor.value = Number(this._source.system.armor.value) * 10;
-        if (this._source?.system?.armor?.acp !== undefined) this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
-        if (this._source?.system?.armor?.dex !== undefined) {
+        if (this._source?.system?.armor?.value != null) this.system.armor.value = Number(this._source.system.armor.value) * 10;
+        if (this._source?.system?.armor?.acp != null) this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
+        if (this._source?.system?.armor?.dex != null) {
           let d = Number(this._source.system.armor.dex);
           if (!isNaN(d) && Math.abs(d) < 10) this.system.armor.dex = d * 10;
         }
@@ -525,7 +588,7 @@ Hooks.once("init", () => {
   }, "WRAPPER");
 });
 
-// ─── CHAT HOOKS: DATA BROADCASTING & JQUERY SCRUBBING ──────────────────────────
+// ─── CHAT HOOKS: BROADCASTING & JQUERY SCRUBBING ──────────────────────────
 
 Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
   if (game.user.id !== userId) return;
@@ -563,28 +626,6 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     injectedData["flags.aeris.d200Result"] = agnosticResult;
     injectedData["flags.aeris.isFumble"] = isFumble;
     if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
-  }
-
-  if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.flags?.pf1?.metadata) {
-    let metaClone = foundry.utils.deepClone(message.flags.pf1.metadata);
-    const scaleModifiersRecursively = (obj) => {
-      if (!obj || typeof obj !== 'object') return;
-      if (Array.isArray(obj)) {
-        obj.forEach(i => scaleModifiersRecursively(i));
-      } else {
-        if (obj.modifier !== undefined && obj.name !== undefined) {
-          let val = Number(obj.modifier);
-          if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
-            obj.modifier = val * 10;
-          }
-        }
-        for (let key in obj) {
-          if (typeof obj[key] === 'object') scaleModifiersRecursively(obj[key]);
-        }
-      }
-    };
-    scaleModifiersRecursively(metaClone);
-    injectedData["flags.pf1.metadata"] = metaClone;
   }
 
   if (Object.keys(injectedData).length > 0) {
