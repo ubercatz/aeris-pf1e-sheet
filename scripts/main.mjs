@@ -88,7 +88,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
   const item = app.item;
   const is10xEnabled = game.settings.get(MODULE_ID, "enable10xGranularity");
 
-  // Restore unscaled source values in input fields to prevent compounding saves
+  // Restore unscaled source values in inputs to avoid multi-compounding saves
   if (is10xEnabled) {
     if (item._source?.system?.armor?.value !== undefined) {
       html.find('input[name="system.armor.value"]').val(item._source.system.armor.value);
@@ -128,21 +128,21 @@ Hooks.on("renderItemSheet", (app, html, data) => {
         <div class="form-fields">
             <input type="checkbox" name="flags.${MODULE_ID}.disable10x" ${disable10x ? "checked" : ""}>
         </div>
-        <p class="notes">Disables scaling everywhere. Formula tags: <strong>[nomulti]</strong> or <strong>[nm]</strong>.</p>
+        <p class="notes">Disables scaling everywhere. Tags: <strong>[nomulti]</strong> or <strong>[nm]</strong>.</p>
     </div>
     <div class="form-group">
         <label>Disable 10x on Sheet Only</label>
         <div class="form-fields">
             <input type="checkbox" name="flags.${MODULE_ID}.disable10xSheet" ${disable10xSheet ? "checked" : ""}>
         </div>
-        <p class="notes">Raw on sheet, scales in chat rolls. Formula tags: <strong>[nomulti:sheet]</strong>, <strong>[nosheet]</strong>, or <strong>[nms]</strong>.</p>
+        <p class="notes">Raw on sheet, scales in chat rolls. Tags: <strong>[nomulti:sheet]</strong>, <strong>[nosheet]</strong>, or <strong>[nms]</strong>.</p>
     </div>
     <div class="form-group">
         <label>Disable 10x on Rolls/Cards Only</label>
         <div class="form-fields">
             <input type="checkbox" name="flags.${MODULE_ID}.disable10xCard" ${disable10xCard ? "checked" : ""}>
         </div>
-        <p class="notes">Scales on sheet, raw in chat rolls. Formula tags: <strong>[nomulti:card]</strong>, <strong>[nocard]</strong>, or <strong>[nmc]</strong>.</p>
+        <p class="notes">Scales on sheet, raw in chat rolls. Tags: <strong>[nomulti:card]</strong>, <strong>[nocard]</strong>, or <strong>[nmc]</strong>.</p>
     </div>
   `;
   $target.append(flagsHtml);
@@ -200,6 +200,8 @@ Hooks.once("init", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
+  const EXCLUDE_TAG_REGEX = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|rank|skill ranks|nomulti|nm|nomulti:sheet|nosheet|nmsheet|nms|nomulti:card|nocard|nmcard|nmc|sc|scaled|_pf1arscaled)\b/i;
+
   // 1. Roll Evaluation Hook
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
@@ -220,7 +222,7 @@ Hooks.once("init", () => {
           term.options._pf1arScaled = true;
         }
 
-        // Numeric terms scaling with full + shorthand tags
+        // Numeric terms scaling
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
         if (isNumericTerm && !term.options._pf1arScaled) {
           let prevTerm = i > 0 ? this.terms[i - 1] : null;
@@ -230,8 +232,7 @@ Hooks.once("init", () => {
           let isFirstTerm = (i === 0);
           let flavor = String(term.options?.flavor || "").toLowerCase();
 
-          // Exclude attributes, BAB, ranks, card opt-outs, and scaled tags
-          let isExcluded = skipCardScaling || /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|rank|skill ranks|nomulti|nm|nomulti:card|nocard|nmcard|nmc|scaled|_pf1arscaled|sc)\b/i.test(flavor);
+          let isExcluded = skipCardScaling || EXCLUDE_TAG_REGEX.test(flavor);
 
           if (!isMultiplier && !isFirstTerm && !isExcluded) {
             let val = term.number;
@@ -303,6 +304,7 @@ Hooks.once("init", () => {
           return key;
         };
 
+        // 1. Capped and Variable Dice Pools
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
           let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
@@ -312,21 +314,38 @@ Hooks.once("init", () => {
         res = res.replace(/(@[a-zA-Z0-9_.]+)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, variable, middle, faces) => {
           let fcs = Number(faces); return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
+        
+        // 2. Standard Dice (1d6 -> 1d60)
         res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
           let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
           return hide(`${count || ""}${middle || ""}d${scaledFaces}`);
         });
+
+        // 3. Flat Variables (@cl -> (@cl * 10))
         res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, variable, flavorWrap, flavorText) => {
           let flavor = String(flavorText || "").toLowerCase();
-          if (/\b(str|dex|con|int|wis|cha|bab|ranks|rank|nomulti|nm|nomulti:sheet|nosheet|nmsheet|nms)\b/i.test(flavor)) return m;
-          return `${sign}(${variable} * 10)${flavorWrap || ""}`;
+          if (EXCLUDE_TAG_REGEX.test(flavor)) return m;
+          
+          let newFlavor = flavorWrap 
+            ? (/\b(sc|scaled)\b/i.test(flavor) ? flavorWrap : flavorWrap.replace(/\]$/, ' sc]'))
+            : '[sc]';
+          return `${sign}(${variable} * 10)${newFlavor}`;
         });
+
+        // 4. Flat Numbers (+2 -> +20[sc]) with <10 constraint
         res = res.replace(/(^|[-+]\s*)(\d+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, num, flavorWrap, flavorText) => {
           let val = Number(num);
           let flavor = String(flavorText || "").toLowerCase();
-          if (/\b(str|dex|con|int|wis|cha|bab|ranks|rank|nomulti|nm|nomulti:sheet|nosheet|nmsheet|nms)\b/i.test(flavor)) return m;
+          
+          // Skip if already tagged or if number is >= 10
+          if (EXCLUDE_TAG_REGEX.test(flavor)) return m;
+          if (Math.abs(val) >= 10) return m;
           if (isBuff && restrictBuffs && val >= 10) return m;
-          return `${sign}${val * 10}${flavorWrap ? flavorWrap.replace(']', ' scaled]') : '[scaled]'}`;
+          
+          let newFlavor = flavorWrap 
+            ? (/\b(sc|scaled)\b/i.test(flavor) ? flavorWrap : flavorWrap.replace(/\]$/, ' sc]'))
+            : '[sc]';
+          return `${sign}${val * 10}${newFlavor}`;
         });
 
         for (const [key, val] of Object.entries(placeholders)) res = res.replace(key, val);
@@ -355,9 +374,8 @@ Hooks.once("init", () => {
           if (srcAction && action.damage?.parts) {
             action.damage.parts.forEach((part, j) => {
               const srcFormula = srcAction.damage.parts[j]?.formula;
-              if (srcFormula && !part._pf1arScaled) {
+              if (srcFormula) {
                 part.formula = scaleCL(String(srcFormula));
-                part._pf1arScaled = true;
               }
             });
           }
