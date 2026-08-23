@@ -10,7 +10,7 @@ function _rerenderOpenAltSheets() {
   }
 }
 
-// ─── INIT: CONFIG, HELPERS & SETTINGS ──────────────────────────────────────
+// ─── INIT: HELPERS & SETTINGS ─────────────────────────────────────────────
 
 Hooks.once("init", () => {
   if (game.system?.id !== "pf1") return;
@@ -42,7 +42,7 @@ Hooks.once("init", () => {
 
   game.settings.register(MODULE_ID, "scaleSmallBuffs", {
     name: "Scale Small Buffs/Debuffs (<10)",
-    hint: "When enabled, conditions and buffs will only scale flat modifiers under 10.",
+    hint: "When enabled, conditions and buffs (e.g., Shaken) will only scale flat modifiers under 10.",
     scope: "world",
     config: true,
     type: Boolean,
@@ -54,11 +54,6 @@ Hooks.once("init", () => {
   game.settings.register(MODULE_ID, "theme", { name: "PF1AR.Settings.Theme", scope: "client", config: true, type: String, default: "parchment", choices: { parchment: "PF1AR.Theme.Parchment", hybrid: "PF1AR.Theme.Hybrid", slate: "PF1AR.Theme.Slate" }, onChange: _rerenderOpenAltSheets });
   game.settings.register(MODULE_ID, "compact", { name: "PF1AR.Settings.Compact", scope: "client", config: true, type: Boolean, default: false, onChange: _rerenderOpenAltSheets });
   game.settings.register(MODULE_ID, "summarySkills", { name: "PF1AR.Settings.SummarySkills", scope: "client", config: true, type: String, default: "ranked", choices: { ranked: "PF1AR.Labels.Ranked", class: "PF1AR.Labels.SkillsClass", all: "PF1AR.Labels.SkillsAll" }, onChange: _rerenderOpenAltSheets });
-
-  if (pf1.config) {
-    pf1.config.classSkillBonus = 30;
-    pf1.config.nonProficiencyPenalty = -40;
-  }
 
   loadTemplates([
     `modules/${MODULE_ID}/templates/character-sheet.hbs`,
@@ -83,13 +78,12 @@ Hooks.on("pf1RegisterConditions", () => {
   apply10xConditionRegistry();
 });
 
-// ─── CUSTOM UI INJECTOR & FORM RESTORATION ────────────────────────────────
+// ─── CUSTOM UI INJECTOR & FORM INPUT RESTORATION ──────────────────────────
 
 Hooks.on("renderItemSheet", (app, html, data) => {
   const item = app.item;
   const is10xEnabled = game.settings.get(MODULE_ID, "enable10xGranularity");
 
-  // Restore unscaled source values in inputs to avoid multi-compounding saves
   if (is10xEnabled) {
     if (item._source?.system?.armor?.value !== undefined) {
       html.find('input[name="system.armor.value"]').val(item._source.system.armor.value);
@@ -220,7 +214,6 @@ Hooks.once("init", () => {
         let term = this.terms[i];
         if (!term.options) term.options = {};
 
-        // Scale d20 to d200 unless card scaling is bypassed
         if (term.faces && term.faces <= 20 && !term.options._pf1arScaled) {
           if (!skipCardScaling) {
             term.faces *= 10;
@@ -228,19 +221,19 @@ Hooks.once("init", () => {
           term.options._pf1arScaled = true;
         }
 
-        // Numeric terms scaling
         const isNumericTerm = term.number !== undefined && term.faces === undefined;
         if (isNumericTerm && !term.options._pf1arScaled) {
           let prevTerm = i > 0 ? this.terms[i - 1] : null;
           let nextTerm = i < this.terms.length - 1 ? this.terms[i + 1] : null;
           
-          let isMultiplier = (prevTerm && ["*", "/"].includes(prevTerm.operator)) || (nextTerm && ["*", "/"].includes(nextTerm.operator));
+          let isMultiplierPrev = prevTerm && prevTerm.operator !== undefined && ["*", "/"].includes(prevTerm.operator);
+          let isMultiplierNext = nextTerm && nextTerm.operator !== undefined && ["*", "/"].includes(nextTerm.operator);
           let isFirstTerm = (i === 0);
           let flavor = String(term.options?.flavor || "").toLowerCase();
 
           let isExcluded = skipCardScaling || EXCLUDE_TAG_REGEX.test(flavor);
 
-          if (!isMultiplier && !isFirstTerm && !isExcluded) {
+          if (!isMultiplierPrev && !isMultiplierNext && !isFirstTerm && !isExcluded) {
             let val = term.number;
             if (val !== 0 && Math.abs(val) < 10) {
               term.number = val * 10;
@@ -283,7 +276,7 @@ Hooks.once("init", () => {
     return evaluatedRoll;
   }, "WRAPPER");
 
-  // 2. Base Item Data Hook
+  // 2. Base Item Data Hook (Using Proven 1.1.0 Dice Pool Parser)
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareBaseData", function (wrapped, ...args) {
     wrapped(...args); 
     
@@ -310,24 +303,33 @@ Hooks.once("init", () => {
           return key;
         };
 
-        // Capped & Variable Dice
-        res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
-          let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
+        // Prong 1: Explicit Capped Dice Pools (Fireball, Snowball, etc.)
+        res = res.replace(/(min|max)(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*)\s*d(\d+)/gi, (m, func, num, variable, faces) => {
+          return hide(`${func}(${num}, ${variable})d${Number(faces) * 10}`);
         });
-        res = res.replace(/(min|max)\(\s*([^,]+)\s*,\s*(\d+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, variable, num, middle, faces) => {
-          let fcs = Number(faces); return hide(`${func}(${variable}, ${num})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
+        res = res.replace(/(\s*(min|max)(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*)\s*)\s*d(\d+)/gi, (m, func, num, variable, faces) => {
+          return hide(`(${func}(${num}, ${variable}))d${Number(faces) * 10}`);
         });
-        res = res.replace(/(@[a-zA-Z0-9_.]+)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, variable, middle, faces) => {
-          let fcs = Number(faces); return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
+        res = res.replace(/(\s*(min|max)(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*)\s*)\s*\*\s*(\d*)d(\d+)/gi, (m, func, num, variable, count, faces) => {
+          return hide(`(${func}(${num}, ${variable})) * ${count || ""}d${Number(faces) * 10}`);
         });
-        
-        // Standard Dice
-        res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
-          let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
-          return hide(`${count || ""}${middle || ""}d${scaledFaces}`);
+        res = res.replace(/(min|max)(\s*(\d+)\s*,\s*(@[a-zA-Z0-9_.]+)\s*)\s*\*\s*(\d*)d(\d+)/gi, (m, func, num, variable, count, faces) => {
+          return hide(`${func}(${num}, ${variable}) * ${count || ""}d${Number(faces) * 10}`);
+        });
+        res = res.replace(/(min|max)(\s*(@[a-zA-Z0-9_.]+)\s*,\s*(\d+)\s*)\s*d(\d+)/gi, (m, func, variable, num, faces) => {
+          return hide(`${func}(${variable}, ${num})d${Number(faces) * 10}`);
+        });
+        res = res.replace(/(@[a-zA-Z0-9_.]+)\s*d(\d+)/gi, (m, variable, faces) => {
+          return hide(`${variable}d${Number(faces) * 10}`);
         });
 
-        // Flat Variables
+        // Prong 2: Isolate Standard Dice
+        res = res.replace(/\b(\d*)d(\d+)\b/gi, (m, count, faces) => {
+          let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
+          return hide(`${count || ""}d${scaledFaces}`);
+        });
+
+        // Flat Variables (@cl -> (@cl * 10))
         res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, variable, flavorWrap, flavorText) => {
           let flavor = String(flavorText || "").toLowerCase();
           if (EXCLUDE_TAG_REGEX.test(flavor)) return m;
@@ -358,9 +360,9 @@ Hooks.once("init", () => {
       };
 
       if (this.system?.armor) {
-        if (this._source?.system?.armor?.value != null) this.system.armor.value = Number(this._source.system.armor.value) * 10;
-        if (this._source?.system?.armor?.acp != null) this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
-        if (this._source?.system?.armor?.dex != null) {
+        if (this._source?.system?.armor?.value !== undefined) this.system.armor.value = Number(this._source.system.armor.value) * 10;
+        if (this._source?.system?.armor?.acp !== undefined) this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
+        if (this._source?.system?.armor?.dex !== undefined) {
           let d = Number(this._source.system.armor.dex);
           if (!isNaN(d) && Math.abs(d) < 10) this.system.armor.dex = d * 10;
         }
@@ -412,7 +414,7 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
 
-  // 3. Item Derived Data Hook (Ensures armor & enh bonuses persist)
+  // 3. Item Derived Data Hook
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args);
 
@@ -477,7 +479,6 @@ Hooks.once("init", () => {
     
     if (game.system.id === "pf1" && game.settings.get(MODULE_ID, "enable10xGranularity")) {
       
-      // Base AC Adjustment (10 -> 100)
       if (this.system.attributes?.ac) {
         ["normal", "touch", "flatFooted"].forEach(type => {
           if (this.system.attributes.ac[type]?.total !== undefined) {
@@ -486,7 +487,6 @@ Hooks.once("init", () => {
         });
       }
 
-      // Max Dex Bonus scaling on Actor
       if (this.system.attributes?.maxDexBonus !== undefined && this.system.attributes.maxDexBonus !== null) {
         let mdb = Number(this.system.attributes.maxDexBonus);
         if (!isNaN(mdb) && Math.abs(mdb) < 10) {
@@ -494,7 +494,6 @@ Hooks.once("init", () => {
         }
       }
 
-      // BAB Calculation
       if (game.settings.get(MODULE_ID, "enableFractionalProgression")) {
         let granularBab = 0;
         for (const item of this.items) {
@@ -510,7 +509,6 @@ Hooks.once("init", () => {
         this.system.attributes.bab.total *= 10;
       }
 
-      // Encumbrance Limits
       if (this.system.attributes?.encumbrance && this.system.abilities?.str?.total) {
         const str = Math.floor(this.system.abilities.str.total / 10); 
         let heavy = 0;
@@ -527,7 +525,7 @@ Hooks.once("init", () => {
   }, "WRAPPER");
 });
 
-// ─── CHAT HOOKS: BROADCASTING & JQUERY SCRUBBING ──────────────────────────
+// ─── CHAT HOOKS: DATA BROADCASTING & JQUERY SCRUBBING ──────────────────────────
 
 Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
   if (game.user.id !== userId) return;
@@ -565,6 +563,28 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     injectedData["flags.aeris.d200Result"] = agnosticResult;
     injectedData["flags.aeris.isFumble"] = isFumble;
     if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
+  }
+
+  if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.flags?.pf1?.metadata) {
+    let metaClone = foundry.utils.deepClone(message.flags.pf1.metadata);
+    const scaleModifiersRecursively = (obj) => {
+      if (!obj || typeof obj !== 'object') return;
+      if (Array.isArray(obj)) {
+        obj.forEach(i => scaleModifiersRecursively(i));
+      } else {
+        if (obj.modifier !== undefined && obj.name !== undefined) {
+          let val = Number(obj.modifier);
+          if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+            obj.modifier = val * 10;
+          }
+        }
+        for (let key in obj) {
+          if (typeof obj[key] === 'object') scaleModifiersRecursively(obj[key]);
+        }
+      }
+    };
+    scaleModifiersRecursively(metaClone);
+    injectedData["flags.pf1.metadata"] = metaClone;
   }
 
   if (Object.keys(injectedData).length > 0) {
