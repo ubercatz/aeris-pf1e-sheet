@@ -96,6 +96,9 @@ Hooks.on("renderItemSheet", (app, html, data) => {
     if (item._source?.system?.armor?.acp !== undefined) {
       html.find('input[name="system.armor.acp"]').val(item._source.system.armor.acp);
     }
+    if (item._source?.system?.armor?.dex !== undefined) {
+      html.find('input[name="system.armor.dex"]').val(item._source.system.armor.dex);
+    }
     if (item._source?.system?.enh !== undefined) {
       html.find('input[name="system.enh"]').val(item._source.system.enh);
     }
@@ -200,7 +203,7 @@ Hooks.once("init", () => {
 Hooks.once("init", () => {
   if (typeof libWrapper === "undefined") return;
 
-  const EXCLUDE_TAG_REGEX = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|rank|skill ranks|nomulti|nm|nomulti:sheet|nosheet|nmsheet|nms|nomulti:card|nocard|nmcard|nmc|sc|scaled|_pf1arscaled)\b/i;
+  const EXCLUDE_TAG_REGEX = /\b(str|dex|con|int|wis|cha|strength|dexterity|constitution|intelligence|wisdom|charisma|bab|base attack bonus|ranks|rank|skill ranks|init|initiative|acp|armor check penalty|nomulti|nm|nomulti:sheet|nosheet|nmsheet|nms|nomulti:card|nocard|nmcard|nmc|sc|scaled|_pf1arscaled)\b/i;
 
   // 1. Roll Evaluation Hook
   libWrapper.register(MODULE_ID, "Roll.prototype._evaluate", async function (wrapped, ...args) {
@@ -304,7 +307,7 @@ Hooks.once("init", () => {
           return key;
         };
 
-        // 1. Capped and Variable Dice Pools
+        // Capped & Variable Dice
         res = res.replace(/(min|max)\(\s*(\d+)\s*,\s*([^)]+)\s*\)(\s*(?:\[.*?\])?\s*)d(\d+)/gi, (m, func, num, variable, middle, faces) => {
           let fcs = Number(faces); return hide(`${func}(${num}, ${variable})${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
@@ -315,13 +318,13 @@ Hooks.once("init", () => {
           let fcs = Number(faces); return hide(`${variable}${middle}d${fcs <= 20 ? fcs * 10 : fcs}`);
         });
         
-        // 2. Standard Dice (1d6 -> 1d60)
+        // Standard Dice
         res = res.replace(/\b(\d*)(\s*(?:\[.*?\])?\s*)d(\d+)\b/gi, (m, count, middle, faces) => {
           let scaledFaces = Number(faces) <= 20 ? Number(faces) * 10 : faces;
           return hide(`${count || ""}${middle || ""}d${scaledFaces}`);
         });
 
-        // 3. Flat Variables (@cl -> (@cl * 10))
+        // Flat Variables
         res = res.replace(/(^|[-+]\s*)(@[a-zA-Z0-9_.]+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, variable, flavorWrap, flavorText) => {
           let flavor = String(flavorText || "").toLowerCase();
           if (EXCLUDE_TAG_REGEX.test(flavor)) return m;
@@ -332,12 +335,11 @@ Hooks.once("init", () => {
           return `${sign}(${variable} * 10)${newFlavor}`;
         });
 
-        // 4. Flat Numbers (+2 -> +20[sc]) with <10 constraint
+        // Flat Numbers (< 10)
         res = res.replace(/(^|[-+]\s*)(\d+)(\s*(?:\[(.*?)\])?)(?!\s*[*\/xd])/gi, (m, sign, num, flavorWrap, flavorText) => {
           let val = Number(num);
           let flavor = String(flavorText || "").toLowerCase();
           
-          // Skip if already tagged or if number is >= 10
           if (EXCLUDE_TAG_REGEX.test(flavor)) return m;
           if (Math.abs(val) >= 10) return m;
           if (isBuff && restrictBuffs && val >= 10) return m;
@@ -352,11 +354,25 @@ Hooks.once("init", () => {
         return res;
       };
 
+      // Scale Armor Value, ACP, and Max Dex
       if (this.system?.armor) {
         if (this._source?.system?.armor?.value !== undefined) this.system.armor.value = Number(this._source.system.armor.value) * 10;
         if (this._source?.system?.armor?.acp !== undefined) this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
+        if (this._source?.system?.armor?.dex !== undefined) {
+          let rawMaxDex = Number(this._source.system.armor.dex);
+          if (!isNaN(rawMaxDex) && rawMaxDex !== null && Math.abs(rawMaxDex) < 10) {
+            this.system.armor.dex = rawMaxDex * 10;
+          }
+        }
       }
-      if (this.system?.enh !== undefined && this._source?.system?.enh !== undefined) this.system.enh = Number(this._source.system.enh) * 10;
+
+      // Scale Enhancement Bonus (< 10)
+      if (this.system?.enh !== undefined) {
+        let rawEnh = Number(this._source?.system?.enh ?? this.system.enh);
+        if (!isNaN(rawEnh) && rawEnh !== 0 && Math.abs(rawEnh) < 10) {
+          this.system.enh = rawEnh * 10;
+        }
+      }
 
       if (this.system?.changes) {
         this.system.changes.forEach((change, i) => {
@@ -497,7 +513,7 @@ Hooks.once("init", () => {
         }
       }
 
-      // Saving Throws & Combat Attributes Resync
+      // Saving Throws Resync
       if (this.system.attributes?.savingThrows) {
         for (const sv of Object.values(this.system.attributes.savingThrows)) {
           let diff = 0;
@@ -522,7 +538,8 @@ Hooks.once("init", () => {
         }
       }
 
-      ['cmd', 'cmb', 'attack'].forEach(attr => {
+      // Combat Attributes & Initiative Resync
+      ['cmd', 'cmb', 'attack', 'init'].forEach(attr => {
         const target = this.system.attributes?.[attr];
         if (target) {
           let diff = 0;
