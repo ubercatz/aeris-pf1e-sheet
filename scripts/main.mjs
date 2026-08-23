@@ -1,8 +1,15 @@
 import { registerHandlebarsHelpers } from "./helpers.mjs";
 import { AltCharacterSheetPF, AltNPCSheetPF } from "./sheet.mjs";
-import { apply10xConditionRegistry } from "./conditions.mjs";
 
 const MODULE_ID = "pf1-altsheet-reworked";
+
+// Core hardcoded PF1e conditions that bypass item formula scaling
+const CORE_CONDITIONS = new Set([
+  "panicked", "shaken", "sickened", "fatigued", "exhausted", "entangled", 
+  "grappled", "prone", "frightened", "cowering", "dazzled", "blinded", 
+  "deafened", "stunned", "staggered", "paralyzed", "pinned", "invisible", 
+  "squeezing", "negative level"
+]);
 
 function _rerenderOpenAltSheets() {
   for (const app of Object.values(ui.windows)) {
@@ -24,10 +31,7 @@ Hooks.once("init", () => {
     config: true,
     type: Boolean,
     default: true,
-    onChange: () => {
-      apply10xConditionRegistry();
-      _rerenderOpenAltSheets();
-    },
+    onChange: _rerenderOpenAltSheets,
   });
 
   game.settings.register(MODULE_ID, "enableFractionalProgression", {
@@ -42,7 +46,7 @@ Hooks.once("init", () => {
 
   game.settings.register(MODULE_ID, "scaleSmallBuffs", {
     name: "Scale Small Buffs/Debuffs (<10)",
-    hint: "When enabled, conditions and buffs will only scale flat modifiers under 10.",
+    hint: "When enabled, conditions and buffs (e.g., Shaken) will only scale flat modifiers under 10.",
     scope: "world",
     config: true,
     type: Boolean,
@@ -78,12 +82,7 @@ Hooks.once("init", () => {
   ]);
 });
 
-// Hook into system registry initialization
-Hooks.on("pf1RegisterConditions", () => {
-  apply10xConditionRegistry();
-});
-
-// ─── CUSTOM UI INJECTOR & FORM RESTORATION ────────────────────────────────
+// ─── CUSTOM UI INJECTOR & FORM INPUT RESTORATION ──────────────────────────
 
 Hooks.on("renderItemSheet", (app, html, data) => {
   const item = app.item;
@@ -152,7 +151,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
   $target.append(flagsHtml);
 });
 
-// ─── READY: SYSTEM OVERRIDES & REGISTRY SYNC ───────────────────────────────
+// ─── READY: SYSTEM OVERRIDES ──────────────────────────────────────────────
 
 Hooks.once("ready", () => {
   if (game.system?.id !== "pf1") return;
@@ -165,8 +164,6 @@ Hooks.once("ready", () => {
     pf1.config.classSkillBonus = 30;
     pf1.config.nonProficiencyPenalty = -40;
   }
-
-  apply10xConditionRegistry();
 });
 
 // ─── STYLESHEET INJECTION ─────────────────────────────────────────────────
@@ -357,6 +354,7 @@ Hooks.once("init", () => {
         return res;
       };
 
+      // Base scaling for armor & enhancements
       if (this.system?.armor) {
         if (this._source?.system?.armor?.value != null) this.system.armor.value = Number(this._source.system.armor.value) * 10;
         if (this._source?.system?.armor?.acp != null) this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
@@ -412,7 +410,7 @@ Hooks.once("init", () => {
     }
   }, "WRAPPER");
 
-  // 3. Item Derived Data Hook (Ensures armor & enh bonuses persist)
+  // 3. Item Derived Data Hook (Ensures Armor AC, Enhancements & Max Dex are not reset by PF1e)
   libWrapper.register(MODULE_ID, "CONFIG.Item.documentClass.prototype.prepareDerivedData", function (wrapped, ...args) {
     wrapped(...args);
 
@@ -443,6 +441,7 @@ Hooks.once("init", () => {
         }
       }
 
+      // Re-sum equipment AC total if present
       if (this.system?.armor && typeof this.system.armor.value === "number") {
         const enhVal = Number(this.system.enh) || 0;
         if (this.system.armor.ac !== undefined) this.system.armor.ac = this.system.armor.value + enhVal;
@@ -523,6 +522,83 @@ Hooks.once("init", () => {
         this.system.attributes.encumbrance.medium = Math.floor((heavy * 2) / 3) * 10;
         this.system.attributes.encumbrance.heavy = heavy * 10;
       }
+
+      // Universal helper to scale condition modifiers in an array
+      const processModList = (modList) => {
+        if (!Array.isArray(modList)) return 0;
+        let diff = 0;
+        modList.forEach(m => {
+          if (!m || m._pf1arScaled) return;
+          const name = String(m.name || "").toLowerCase();
+          if (CORE_CONDITIONS.has(name)) {
+            let val = Number(m.modifier ?? m.value);
+            if (!isNaN(val) && val !== 0 && Math.abs(val) < 10) {
+              let scaledVal = val * 10;
+              diff += (scaledVal - val);
+              if (m.modifier !== undefined) m.modifier = scaledVal;
+              if (m.value !== undefined) m.value = scaledVal;
+            }
+            m._pf1arScaled = true;
+          }
+        });
+        return diff;
+      };
+
+      // Direct Skills & Sub-Skills Modifier Resync
+      if (this.system.skills) {
+        const processSkillModifiers = (sk) => {
+          if (!sk) return;
+          let diff = processModList(sk.modifiers || sk.sources);
+          if (diff !== 0 && typeof sk.mod === "number") sk.mod += diff;
+        };
+
+        for (const sk of Object.values(this.system.skills)) {
+          processSkillModifiers(sk);
+          if (sk.subSkills) {
+            for (const sub of Object.values(sk.subSkills)) processSkillModifiers(sub);
+          }
+        }
+      }
+
+      // Saving Throws Resync
+      if (this.system.attributes?.savingThrows) {
+        for (const sv of Object.values(this.system.attributes.savingThrows)) {
+          let diff = processModList(sv.modifiers || sv.sources);
+          if (diff !== 0 && typeof sv.total === "number") sv.total += diff;
+        }
+      }
+
+      // Combat Attributes Resync (CMD, CMB, Attack)
+      ['cmd', 'cmb', 'attack'].forEach(attr => {
+        const target = this.system.attributes?.[attr];
+        if (target) {
+          let diff = processModList(target.modifiers || target.sources);
+          if (diff !== 0 && typeof target.total === "number") target.total += diff;
+        }
+      });
+
+      // Initiative & Background Modifier Dictionary Resync
+      if (this.system.attributes?.init) {
+        let initDiff = processModList(this.system.attributes.init.modifiers || this.system.attributes.init.sources);
+        if (initDiff !== 0) {
+          if (typeof this.system.attributes.init.total === "number") this.system.attributes.init.total += initDiff;
+          if (typeof this.system.attributes.init.value === "number") this.system.attributes.init.value += initDiff;
+        }
+      }
+
+      if (this.modifiers) {
+        let entries = typeof this.modifiers.entries === "function" ? this.modifiers.entries() : Object.entries(this.modifiers);
+        for (let [key, modArray] of entries) {
+          if (Array.isArray(modArray)) {
+            let diff = processModList(modArray);
+            if (diff !== 0 && (key === "init" || key === "initiative")) {
+              if (this.system.attributes?.init && typeof this.system.attributes.init.total === "number") {
+                this.system.attributes.init.total += diff;
+              }
+            }
+          }
+        }
+      }
     }
   }, "WRAPPER");
 });
@@ -565,6 +641,34 @@ Hooks.on("preCreateChatMessage", (message, updateData, options, userId) => {
     injectedData["flags.aeris.d200Result"] = agnosticResult;
     injectedData["flags.aeris.isFumble"] = isFumble;
     if (exportedRolls.length > 0) injectedData.rolls = exportedRolls;
+  }
+
+  if (game.settings.get(MODULE_ID, "enable10xGranularity") && message.system) {
+    let metaClone = foundry.utils.deepClone(message.system);
+    const scaleModifiersStrictly = (obj, visited = new Set()) => {
+      if (!obj || typeof obj !== 'object' || visited.has(obj)) return;
+      visited.add(obj);
+
+      if (Array.isArray(obj)) {
+        obj.forEach(i => scaleModifiersStrictly(i, visited));
+      } else {
+        if (obj.modifier !== undefined && obj.name !== undefined && obj.dice === undefined && obj.faces === undefined && obj.formula === undefined) {
+          let val = Number(obj.modifier);
+          let name = String(obj.name).toLowerCase();
+          if (CORE_CONDITIONS.has(name) && !isNaN(val) && val !== 0 && Math.abs(val) < 10 && !obj._pf1arScaled) {
+            obj.modifier = val * 10;
+            obj._pf1arScaled = true;
+          }
+        }
+        for (let key in obj) {
+          if (['parent', 'document', 'actor', 'item', 'token', 'target', 'roll', 'scene', 'combatant'].includes(key)) continue;
+          if (typeof obj[key] === 'object') scaleModifiersStrictly(obj[key], visited);
+        }
+      }
+    };
+    
+    scaleModifiersStrictly(metaClone);
+    injectedData["system"] = metaClone;
   }
 
   if (Object.keys(injectedData).length > 0) {
