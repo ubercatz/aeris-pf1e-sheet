@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch: # Allows manual one-click trigger from the Actions tab
 
 jobs:
   release:
@@ -15,16 +16,16 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Reads version and exports it via standard GitHub Actions step outputs
+      # Read version from module.json
       - name: Read Version from module.json
         id: get_version
         run: echo "version=$(node -p 'require("./module.json").version')" >> "$GITHUB_OUTPUT"
 
-      # Zips the module files using the step output reference
+      # Zip module files into release artifact
       - name: Zip Files
         run: zip -r module-v${{ steps.get_version.outputs.version }}.zip module.json lang/ scripts/ styles/ templates/ README.md
 
-      # Publishes to GitHub Releases
+      # Publish to GitHub Releases
       - name: Publish to GitHub Releases
         uses: ncipollo/release-action@v1
         with:
