@@ -179,10 +179,11 @@ export class GranularForgeApp extends Application {
       const tagsList = [];
       const identifiedTraits = [];
 
-      // 1. Auto-inject Card Protection Flag[cite: 2]
+      // 1. Auto-inject Card Protection Flag & is10xScaled Data Flag
       newItemData.flags = newItemData.flags || {};
       newItemData.flags[MODULE_ID] = newItemData.flags[MODULE_ID] || {};
-      newItemData.flags[MODULE_ID].disable10xCard = true; // Protects rolled chat card math[cite: 2]
+      newItemData.flags[MODULE_ID].disable10xCard = true; 
+      newItemData.flags[MODULE_ID].is10xScaled = true; // NEW: Protects against prepareBaseData double-scaling
 
       // Independent 8-tier rolling resolver
       const rollStat = (label) => {
