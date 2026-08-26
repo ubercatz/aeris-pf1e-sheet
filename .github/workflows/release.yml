@@ -15,20 +15,22 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Reads the version directly from your module.json
+      # Reads version and exports it via standard GitHub Actions step outputs
       - name: Read Version from module.json
-        run: echo "VERSION=$(node -p "require('./module.json').version")" >> $GITHUB_ENV
+        id: get_version
+        run: echo "version=$(node -p 'require("./module.json").version')" >> "$GITHUB_OUTPUT"
 
-      # Zips the new folder structure instead of the old dist/ folder
+      # Zips the module files using the step output reference
       - name: Zip Files
-        run: zip -r module-v${{ env.VERSION }}.zip module.json lang/ scripts/ styles/ templates/ README.md
+        run: zip -r module-v${{ steps.get_version.outputs.version }}.zip module.json lang/ scripts/ styles/ templates/ README.md
 
+      # Publishes to GitHub Releases
       - name: Publish to GitHub Releases
         uses: ncipollo/release-action@v1
         with:
-          tag: v${{ env.VERSION }}
-          name: Version ${{ env.VERSION }}
-          artifacts: "module-v${{ env.VERSION }}.zip"
+          tag: v${{ steps.get_version.outputs.version }}
+          name: Version ${{ steps.get_version.outputs.version }}
+          artifacts: "module-v${{ steps.get_version.outputs.version }}.zip"
           allowUpdates: true
           replacesArtifacts: true
           token: ${{ secrets.GITHUB_TOKEN }}
