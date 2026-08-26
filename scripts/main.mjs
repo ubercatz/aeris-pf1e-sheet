@@ -1,6 +1,7 @@
 import { registerHandlebarsHelpers } from "./helpers.mjs";
 import { AltCharacterSheetPF, AltNPCSheetPF } from "./sheet.mjs";
 import { apply10xConditionRegistry } from "./conditions.mjs";
+import { GearForgeApp } from "./gear-forge.mjs";
 
 const MODULE_ID = "pf1-altsheet-reworked";
 
@@ -165,7 +166,10 @@ Hooks.once("ready", () => {
     pf1.config.classSkillBonus = 30;
     pf1.config.nonProficiencyPenalty = -40;
   }
-
+// Expose Forge globally for macros and button shortcuts
+  game.aeris = game.aeris || {};
+  game.aeris.GranularForgeApp = GranularForgeApp;
+  game.aeris.openForge = () => new GranularForgeApp().render(true);
   apply10xConditionRegistry();
 });
 
