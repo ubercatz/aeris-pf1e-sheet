@@ -19,6 +19,7 @@ export class GranularForgeApp extends Application {
     this.selectedMaterial = "steel";
     this.propertyMode = "random";
     this.useShortCompoundNames = true;
+    this.searchTerm = ""; // NEW: Stores search bar state
   }
 
   static get defaultOptions() {
@@ -26,8 +27,8 @@ export class GranularForgeApp extends Application {
       id: "aeris-granular-forge",
       title: "10x Procedural Gear & Enchantment Forge",
       template: "",
-      width: 940,
-      height: 680,
+      width: 960,
+      height: 700,
       resizable: true,
       classes: ["aeris-gear-gen-app"]
     });
@@ -58,7 +59,8 @@ export class GranularForgeApp extends Application {
       propertyMode: this.propertyMode,
       properties: availableProperties,
       isWeapon,
-      useShortNames: this.useShortCompoundNames
+      useShortNames: this.useShortCompoundNames,
+      searchTerm: this.searchTerm
     };
   }
 
@@ -79,6 +81,24 @@ export class GranularForgeApp extends Application {
       ${Object.entries(data.properties).map(([k, v]) => `<option value="${k}" ${data.propertyMode === k ? "selected" : ""}>${v.baseName} (+${v.cost})</option>`).join("")}
     `;
 
+    // NEW: Base Item Preview Panel
+    const previewHtml = data.selectedItem ? `
+      <div style="background: rgba(0,0,0,0.03); border: 1px solid var(--color-border-light-1); border-radius: 4px; padding: 6px; margin-bottom: 8px; font-size: 0.8em; line-height: 1.4;">
+          <strong style="font-size: 1.1em; color: var(--color-text-dark-primary);"><i class="fas fa-cube"></i> Base Item: ${data.selectedItem.name}</strong><br/>
+          ${data.isWeapon ? `
+              <strong>Damage:</strong> ${data.selectedItem.system.actions?.[0]?.damage?.parts?.[0]?.formula || "N/A"} | 
+              <strong>Crit:</strong> ${data.selectedItem.system.actions?.[0]?.ability?.critRange ?? data.selectedItem.system.actions?.[0]?.critRange ?? 20}-20/x${data.selectedItem.system.actions?.[0]?.ability?.critMult ?? data.selectedItem.system.actions?.[0]?.critMult ?? 2}<br/>
+          ` : ""}
+          ${data.selectedItem.system.armor ? `
+              <strong>AC:</strong> +${data.selectedItem.system.armor.value || 0} | 
+              <strong>ACP:</strong> ${data.selectedItem.system.armor.acp || 0} | 
+              <strong>Max Dex:</strong> ${data.selectedItem.system.armor.dex ?? "∞"}<br/>
+          ` : ""}
+          <strong>Hardness:</strong> ${data.selectedItem.system.hardness || 0} | 
+          <strong>Base HP:</strong> ${data.selectedItem.system.hp?.base ?? data.selectedItem.system.hp?.max ?? 0}
+      </div>
+    ` : `<div style="background: rgba(0,0,0,0.03); border: 1px dashed var(--color-border-light-2); border-radius: 4px; padding: 8px; margin-bottom: 8px; font-size: 0.8em; color: #777; text-align: center;">Select a base item to view stats.</div>`;
+
     const html = `
       <div style="display:flex;height:100%;gap:10px;padding:6px;font-family:var(--font-primary);">
         
@@ -86,14 +106,16 @@ export class GranularForgeApp extends Application {
         <div style="flex:1;display:flex;flex-direction:column;border-right:1px solid var(--color-border-light-2);padding-right:6px;">
           <label style="font-weight:bold;font-size:0.8em;margin-bottom:2px;">Compendium Pack</label>
           <select id="forge-pack-select" style="margin-bottom:6px;font-size:0.85em;padding:3px;">${packOpts}</select>
-          <input type="text" id="forge-item-search" placeholder="🔍 Search items..." style="margin-bottom:6px;font-size:0.85em;padding:4px;border:1px solid var(--color-border-light-1);border-radius:3px;">
-          <div style="flex-grow:1;overflow-y:auto;border:1px solid var(--color-border-light-1);border-radius:4px;max-height:500px;">${itemRows || '<p style="padding:8px;color:#777;">No items found.</p>'}</div>
+          <input type="text" id="forge-item-search" value="${data.searchTerm}" placeholder="🔍 Search items..." style="margin-bottom:6px;font-size:0.85em;padding:4px;border:1px solid var(--color-border-light-1);border-radius:3px;">
+          <div style="flex-grow:1;overflow-y:auto;border:1px solid var(--color-border-light-1);border-radius:4px;max-height:480px;">${itemRows || '<p style="padding:8px;color:#777;">No items found.</p>'}</div>
         </div>
 
-        <!-- COLUMN 2: INDEPENDENT VARIANCE MATRIX -->
+        <!-- COLUMN 2: INDEPENDENT VARIANCE MATRIX & PREVIEW -->
         <div style="flex:1.2;display:flex;flex-direction:column;gap:8px;border-right:1px solid var(--color-border-light-2);padding-right:6px;overflow-y:auto;">
-          <strong style="font-size:0.9em;border-bottom:1px solid var(--color-border-light-2);padding-bottom:2px;">Independent Rolls Matrix</strong>
           
+          ${previewHtml}
+          
+          <strong style="font-size:0.9em;border-bottom:1px solid var(--color-border-light-2);padding-bottom:2px;">Independent Rolls Matrix</strong>
           <div style="display:flex;gap:6px;">
             <div style="flex:1;">
               <label style="font-size:0.8em;font-weight:bold;">Roll Variance (±%)</label>
@@ -157,14 +179,22 @@ export class GranularForgeApp extends Application {
   activateListeners(html) {
     super.activateListeners(html);
     
-    // Live Search Filter
+    // Live Search Filter & Persistence
     html.find('#forge-item-search').on('input', e => {
-      const term = e.target.value.toLowerCase();
-      html.find('.gear-row').each(function() {
-        const text = $(this).text().toLowerCase();
-        $(this).toggle(text.includes(term));
+      this.searchTerm = e.target.value.toLowerCase();
+      html.find('.gear-row').each((i, el) => {
+        const text = $(el).text().toLowerCase();
+        $(el).toggle(text.includes(this.searchTerm));
       });
     });
+    
+    // Restore search filter immediately on render
+    if (this.searchTerm) {
+      html.find('.gear-row').each((i, el) => {
+        const text = $(el).text().toLowerCase();
+        $(el).toggle(text.includes(this.searchTerm));
+      });
+    }
 
     html.find('#forge-pack-select').change(e => { this.selectedCompendium = e.target.value; this.selectedBaseItem = null; this.render(); });
     
@@ -220,16 +250,23 @@ export class GranularForgeApp extends Application {
       const prefix = tierPrefixes[craftRoll.tier];
       identifiedTraits.push(`<strong>Craftsmanship (${prefix}):</strong> Forged to ${prefix.toLowerCase()} standards.`);
 
-      // 3. Roll Durability & Hardness
+      // 3. Roll Durability & Hardness (NEW: Strictly targets hp.base!)
       const hardRoll = rollStat("Hardness");
       const hpRoll = rollStat("Hit Points");
-      const baseHardness = (newItemData.system.hardness || 10) * 10;
-      const baseHp = (newItemData.system.hp?.max || 10) * 10;
+      const baseHardness = (newItemData.system.hardness || 0);
+      const baseHp = (newItemData.system.hp?.base ?? newItemData.system.hp?.max ?? 0); // Target base HP!
 
-      newItemData.system.hardness = Math.max(0, Math.round((baseHardness + mat.hardnessMod) * hardRoll.mult));
+      // Scale 10x FIRST, then apply Material & Tier rolls
+      let initialHardness10x = baseHardness * 10;
+      let initialHp10x = baseHp * 10;
+
+      newItemData.system.hardness = Math.max(0, Math.round((initialHardness10x + mat.hardnessMod) * hardRoll.mult));
+      
+      const finalHp = Math.max(1, Math.round((initialHp10x * mat.hpMult) * hpRoll.mult));
       newItemData.system.hp = newItemData.system.hp || {};
-      newItemData.system.hp.max = Math.max(10, Math.round((baseHp * mat.hpMult) * hpRoll.mult));
-      newItemData.system.hp.value = newItemData.system.hp.max;
+      newItemData.system.hp.base = finalHp; // PF1e recalculates Max from this!
+      newItemData.system.hp.max = finalHp;
+      newItemData.system.hp.value = finalHp;
 
       if (mat.name !== "Steel") {
         identifiedTraits.push(`<strong>Material (${mat.name}):</strong> Hardness ${newItemData.system.hardness}, HP ${newItemData.system.hp.max}. ${mat.desc}`);
@@ -274,12 +311,31 @@ export class GranularForgeApp extends Application {
         const critMultRoll = rollStat("Crit Mult");
 
         newItemData.system.actions.forEach(action => {
-          let critBase = action.critRange && action.critRange <= 20 ? (action.critRange * 10) - 9 : (action.critRange || 191);
-          action.critRange = Math.min(199, Math.max(100, Math.round(critBase - (critRangeRoll.tier * 1.5))));
+          action.ability = action.ability || {}; // Guarantee ability object exists
+          
+          let critBase = action.ability.critRange ?? action.critRange;
+          if (critBase === undefined || critBase === null || critBase === "") {
+              critBase = 191; // Convert standard blank default to 191
+          } else {
+              critBase = Number(critBase);
+              if (!isNaN(critBase) && critBase <= 20) {
+                  critBase = (critBase * 10) - 9; // Scale 20 to 191
+              }
+          }
 
-          let baseMult = action.critMult || 2.0;
+          let finalCrit = Math.min(199, Math.max(100, Math.round(critBase - (critRangeRoll.tier * 1.5))));
+          
+          // NEW: Ensure we overwrite BOTH to satisfy the V11 architecture!
+          action.critRange = finalCrit;
+          action.ability.critRange = finalCrit;
+
+          let baseMult = action.ability.critMult ?? action.critMult ?? 2.0;
           let multDelta = (critMultRoll.tier / 4) * 0.5;
-          action.critMult = Math.max(1.0, Math.round((baseMult + multDelta) * 100) / 100);
+          let finalMult = Math.max(1.0, Math.round((Number(baseMult) + multDelta) * 100) / 100);
+
+          // NEW: Ensure we overwrite BOTH multipliers!
+          action.critMult = finalMult;
+          action.ability.critMult = finalMult;
 
           identifiedTraits.push(`<strong>Precision:</strong> Crit range ${action.critRange}–200, multiplier ×${action.critMult}.`);
 
@@ -395,7 +451,7 @@ export class GranularForgeApp extends Application {
       this.render();
     });
 
-    // Native Foundry Drag Event routing through memory instead of HTML
+    // Native Foundry Drag Event routing safely through memory
     html.find('.forge-drag-card').on('dragstart', e => {
       if (this.generatedItemData) {
         e.originalEvent.dataTransfer.setData('text/plain', JSON.stringify({ 

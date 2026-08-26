@@ -90,7 +90,7 @@ Hooks.on("renderItemSheet", (app, html, data) => {
   const is10xEnabled = game.settings.get(MODULE_ID, "enable10xGranularity");
 
   // Restore unscaled source values in inputs to avoid multi-compounding saves
-  if (is10xEnabled) {
+  if (is10xEnabled && !item.getFlag(MODULE_ID, "is10xScaled")) {
     if (item._source?.system?.armor?.value !== undefined) {
       html.find('input[name="system.armor.value"]').val(item._source.system.armor.value);
     }
@@ -102,6 +102,12 @@ Hooks.on("renderItemSheet", (app, html, data) => {
     }
     if (item._source?.system?.enh !== undefined) {
       html.find('input[name="system.enh"]').val(item._source.system.enh);
+    }
+    if (item._source?.system?.hp?.base !== undefined) {
+      html.find('input[name="system.hp.base"]').val(item._source.system.hp.base);
+    }
+    if (item._source?.system?.hardness !== undefined) {
+      html.find('input[name="system.hardness"]').val(item._source.system.hardness);
     }
   }
 
@@ -360,20 +366,24 @@ Hooks.once("init", () => {
         return res;
       };
 
-      if (this.system?.armor) {
-        if (this._source?.system?.armor?.value != null) this.system.armor.value = Number(this._source.system.armor.value) * 10;
-        if (this._source?.system?.armor?.acp != null) this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
-        if (this._source?.system?.armor?.dex != null) {
-          let d = Number(this._source.system.armor.dex);
-          if (!isNaN(d) && Math.abs(d) < 10) this.system.armor.dex = d * 10;
-        }
-      }
-
-      if (this.system?.enh !== undefined || this._source?.system?.enh !== undefined) {
-        let rawEnh = Number(this._source?.system?.enh ?? this.system.enh);
-        if (!isNaN(rawEnh) && rawEnh !== 0 && Math.abs(rawEnh) < 10) {
-          this.system.enh = rawEnh * 10;
-        }
+      const isAlreadyScaled = this.getFlag(MODULE_ID, "is10xScaled");
+      if (!isAlreadyScaled) {
+          if (this.system?.armor) {
+            if (this._source?.system?.armor?.value !== undefined) this.system.armor.value = Number(this._source.system.armor.value) * 10;
+            if (this._source?.system?.armor?.acp !== undefined) this.system.armor.acp = Number(this._source.system.armor.acp) * 10;
+          }
+          if (this.system?.enh !== undefined && this._source?.system?.enh !== undefined) {
+              this.system.enh = Number(this._source.system.enh) * 10;
+          }
+          if (this.system?.hp && this._source?.system?.hp?.base !== undefined) {
+              let rawHpBase = Number(this._source.system.hp.base);
+              // Uncapped check allowing large siege items to scale properly
+              if (!isNaN(rawHpBase)) this.system.hp.base = rawHpBase * 10;
+          }
+          if (this._source?.system?.hardness !== undefined) {
+              let rawHardness = Number(this._source.system.hardness);
+              if (!isNaN(rawHardness)) this.system.hardness = rawHardness * 10;
+          }
       }
 
       if (this.system?.changes) {
