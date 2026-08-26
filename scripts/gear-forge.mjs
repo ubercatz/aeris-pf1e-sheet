@@ -82,10 +82,11 @@ export class GranularForgeApp extends Application {
     const html = `
       <div style="display:flex;height:100%;gap:10px;padding:6px;font-family:var(--font-primary);">
         
-        <!-- COLUMN 1: COMPENDIUM SELECTION -->
+        <!-- COLUMN 1: COMPENDIUM SELECTION & SEARCH -->
         <div style="flex:1;display:flex;flex-direction:column;border-right:1px solid var(--color-border-light-2);padding-right:6px;">
           <label style="font-weight:bold;font-size:0.8em;margin-bottom:2px;">Compendium Pack</label>
           <select id="forge-pack-select" style="margin-bottom:6px;font-size:0.85em;padding:3px;">${packOpts}</select>
+          <input type="text" id="forge-item-search" placeholder="🔍 Search items..." style="margin-bottom:6px;font-size:0.85em;padding:4px;border:1px solid var(--color-border-light-1);border-radius:3px;">
           <div style="flex-grow:1;overflow-y:auto;border:1px solid var(--color-border-light-1);border-radius:4px;max-height:500px;">${itemRows || '<p style="padding:8px;color:#777;">No items found.</p>'}</div>
         </div>
 
@@ -143,7 +144,7 @@ export class GranularForgeApp extends Application {
                 <div><strong>Hardness:</strong> ${data.generated.system.hardness} | <strong>HP:</strong> ${data.generated.system.hp?.max}</div>
                 <div><strong>Enhancement:</strong> +${data.generated.system.enh || 0}</div>
               </div>
-              <div class="forge-drag-card" draggable="true" data-item-json='${JSON.stringify(data.generated)}' style="margin-top:8px;padding:4px 10px;background:#dfe4ea;border:1px solid #747d8c;border-radius:4px;cursor:grab;font-weight:bold;font-size:0.8em;">📦 Drag to Sheet</div>
+              <div class="forge-drag-card" draggable="true" style="margin-top:8px;padding:4px 10px;background:#dfe4ea;border:1px solid #747d8c;border-radius:4px;cursor:grab;font-weight:bold;font-size:0.8em;">📦 Drag to Sheet</div>
             ` : '<span style="color:#777;font-size:0.8em;">Select base item and configure parameters to forge.</span>'}
           </div>
         </div>
@@ -155,7 +156,18 @@ export class GranularForgeApp extends Application {
 
   activateListeners(html) {
     super.activateListeners(html);
+    
+    // Live Search Filter
+    html.find('#forge-item-search').on('input', e => {
+      const term = e.target.value.toLowerCase();
+      html.find('.gear-row').each(function() {
+        const text = $(this).text().toLowerCase();
+        $(this).toggle(text.includes(term));
+      });
+    });
+
     html.find('#forge-pack-select').change(e => { this.selectedCompendium = e.target.value; this.selectedBaseItem = null; this.render(); });
+    
     html.find('.gear-row').click(async e => {
       const id = $(e.currentTarget).data('id');
       const pack = game.packs.get(this.selectedCompendium);
@@ -183,7 +195,7 @@ export class GranularForgeApp extends Application {
       newItemData.flags = newItemData.flags || {};
       newItemData.flags[MODULE_ID] = newItemData.flags[MODULE_ID] || {};
       newItemData.flags[MODULE_ID].disable10xCard = true; 
-      newItemData.flags[MODULE_ID].is10xScaled = true; // NEW: Protects against prepareBaseData double-scaling
+      newItemData.flags[MODULE_ID].is10xScaled = true; 
 
       // Independent 8-tier rolling resolver
       const rollStat = (label) => {
@@ -383,9 +395,14 @@ export class GranularForgeApp extends Application {
       this.render();
     });
 
+    // Native Foundry Drag Event routing through memory instead of HTML
     html.find('.forge-drag-card').on('dragstart', e => {
-      const itemJson = $(e.currentTarget).attr('data-item-json');
-      if (itemJson) e.originalEvent.dataTransfer.setData('text/plain', JSON.stringify({ type: "Item", data: JSON.parse(itemJson) }));
+      if (this.generatedItemData) {
+        e.originalEvent.dataTransfer.setData('text/plain', JSON.stringify({ 
+          type: "Item", 
+          data: this.generatedItemData 
+        }));
+      }
     });
   }
 }
