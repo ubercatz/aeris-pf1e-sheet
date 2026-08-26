@@ -21,17 +21,17 @@ jobs:
         id: get_version
         run: echo "version=$(node -p 'require("./module.json").version')" >> "$GITHUB_OUTPUT"
 
-      # Zip module files into release artifact
+      # Zips the module files into a consistent release asset
       - name: Zip Files
-        run: zip -r module-v${{ steps.get_version.outputs.version }}.zip module.json lang/ scripts/ styles/ templates/ README.md
+        run: zip -r module.zip module.json lang/ scripts/ styles/ templates/ README.md
 
-      # Publish to GitHub Releases
+      # Publishes to GitHub Releases
       - name: Publish to GitHub Releases
         uses: ncipollo/release-action@v1
         with:
           tag: v${{ steps.get_version.outputs.version }}
           name: Version ${{ steps.get_version.outputs.version }}
-          artifacts: "module-v${{ steps.get_version.outputs.version }}.zip"
+          artifacts: "module.zip"
           allowUpdates: true
           replacesArtifacts: true
           token: ${{ secrets.GITHUB_TOKEN }}

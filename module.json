@@ -10,7 +10,7 @@
   ],
   "url": "https://github.com/ubercatz/aeris-pf1e-sheet",
   "manifest": "https://raw.githubusercontent.com/ubercatz/aeris-pf1e-sheet/main/module.json",
-  "download": "https://github.com/ubercatz/aeris-pf1e-sheet/releases/download/v1.2.1/module-v1.2.1.zip",
+"download": "https://github.com/ubercatz/aeris-pf1e-sheet/releases/latest/download/module.zip",
   "readme": "https://github.com/ubercatz/aeris-pf1e-sheet/blob/main/README.md",
   "bugs": "https://github.com/ubercatz/aeris-pf1e-sheet/issues",
   "compatibility": {
