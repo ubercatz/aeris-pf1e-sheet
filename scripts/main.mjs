@@ -49,6 +49,14 @@ Hooks.once("init", () => {
     default: true,
     onChange: _rerenderOpenAltSheets,
   });
+  // NEW: World Storage for Custom Forge Properties
+  game.settings.register(MODULE_ID, "customProperties", {
+    name: "Custom Forge Properties",
+    scope: "world",
+    config: false,
+    type: Object,
+    default: {}
+  });
 
   game.settings.register(MODULE_ID, "darkMode", { name: "PF1AR.Settings.DarkMode", scope: "client", config: false, type: Boolean, default: false });
   game.settings.register(MODULE_ID, "theme", { name: "PF1AR.Settings.Theme", scope: "client", config: true, type: String, default: "parchment", choices: { parchment: "PF1AR.Theme.Parchment", hybrid: "PF1AR.Theme.Hybrid", slate: "PF1AR.Theme.Slate" }, onChange: _rerenderOpenAltSheets });
