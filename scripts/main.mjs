@@ -100,7 +100,9 @@ Hooks.on("renderItemSheet", (app, html, data) => {
   // Restore unscaled source values in inputs to avoid multi-compounding saves
   if (is10xEnabled && !item.getFlag(MODULE_ID, "is10xScaled")) {
     // NEW: Force the Critical Multiplier input to accept continuous decimals
-  html.find('input[name$="critMult"], input[name*="critMult"]').attr('step', '0.01').attr('data-dtype', 'Number');
+ /* html.find('input[name$="critMult"], input[name*="critMult"]').attr('step', '0.01').attr('data-dtype', 'Number');*/
+  // NEW: Forces the Critical Multiplier inputs to accept decimals without rounding
+  html.find('input[name$="critMult"], input[name*="critMult"]').attr('step', 'any').attr('data-dtype', 'Number');
     if (item._source?.system?.armor?.value !== undefined) {
       html.find('input[name="system.armor.value"]').val(item._source.system.armor.value);
     }
@@ -428,7 +430,13 @@ Hooks.once("init", () => {
                 action.ability.critRange = scaled;
                 action.critRange = scaled;
               }
+              // NEW: Restores Decimal Critical Multipliers from Forge Flags if the database schema rounded them!
+          if (action.flags?.[MODULE_ID]?.critMult !== undefined) {
+              action.critMult = action.flags[MODULE_ID].critMult;
+              action.ability.critMult = action.flags[MODULE_ID].critMult;
+          }
             }
+            
           }
         });
       }
