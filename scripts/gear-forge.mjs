@@ -1,6 +1,6 @@
 /**
  * @file gear-forge.mjs
- * Procedural 10x Gear Forge with Detailed Inspection, Dual Sliders, and Continuous Precision Math
+ * Procedural 10x Gear Forge with True Sliders, Multi-Roll Logging, and Magic Validation
  */
 
 import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS } from "./enchantment-registry.mjs";
@@ -15,7 +15,7 @@ export class GranularForgeApp extends Application {
     this.selectedBaseItem = null;
     this.generatedItemData = null;
     
-    // NEW: Dual Slider State Management
+    // Dual Slider State Management
     this.variances = {
         physical: { min: -25, max: 25 },
         durability: { min: -25, max: 25 },
@@ -28,7 +28,7 @@ export class GranularForgeApp extends Application {
     this.selectedProperties = new Set();
     this.useShortCompoundNames = true;
     this.searchTerm = "";
-    this.rollLogHtml = ""; // Stores exact variance math for display
+    this.rollLogHtml = ""; 
   }
 
   static get defaultOptions() {
@@ -117,13 +117,19 @@ export class GranularForgeApp extends Application {
       </div>
     ` : `<div style="background: rgba(0,0,0,0.03); border: 1px dashed var(--color-border-light-2); border-radius: 4px; padding: 8px; margin-bottom: 8px; font-size: 0.8em; color: #777; text-align: center;">Select a base item to view stats.</div>`;
 
+    // The Custom UI Generator for Dual Sliders
     const createSlider = (label, cat) => `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px; font-size:0.85em;">
-        <strong>${label}</strong>
-        <div style="display:flex; align-items:center; gap:4px;">
-           <input type="number" class="forge-var-min" data-cat="${cat}" value="${data.variances[cat].min}" style="width:50px; padding:2px; text-align:center;">
-           to 
-           <input type="number" class="forge-var-max" data-cat="${cat}" value="${data.variances[cat].max}" style="width:50px; padding:2px; text-align:center;"> %
+      <div style="margin-bottom: 6px; font-size:0.85em; background:rgba(0,0,0,0.02); padding:6px; border-radius:4px; border:1px solid var(--color-border-light-1);">
+        <div style="font-weight:bold; margin-bottom:4px; border-bottom: 1px solid var(--color-border-light-2); padding-bottom: 2px;">${label}</div>
+        <div style="display:flex; align-items:center; gap:6px;">
+           <span style="width:25px; text-align:right; color:#555;">Min</span>
+           <input type="range" class="forge-var-slider forge-var-min" data-cat="${cat}" min="-100" max="100" value="${data.variances[cat].min}" style="flex:1; height: 12px; cursor:pointer;">
+           <span style="width:40px; text-align:left; font-family:monospace;" id="${cat}-min-disp">${data.variances[cat].min > 0 ? '+' : ''}${data.variances[cat].min}%</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
+           <span style="width:25px; text-align:right; color:#555;">Max</span>
+           <input type="range" class="forge-var-slider forge-var-max" data-cat="${cat}" min="-100" max="100" value="${data.variances[cat].max}" style="flex:1; height: 12px; cursor:pointer;">
+           <span style="width:40px; text-align:left; font-family:monospace;" id="${cat}-max-disp">${data.variances[cat].max > 0 ? '+' : ''}${data.variances[cat].max}%</span>
         </div>
       </div>
     `;
@@ -144,15 +150,15 @@ export class GranularForgeApp extends Application {
           
           ${previewHtml}
           
-          <strong style="font-size:0.9em;border-bottom:1px solid var(--color-border-light-2);padding-bottom:2px;">Targeted Variances (Min to Max)</strong>
-          <div style="background:rgba(0,0,0,0.02); padding: 6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
+          <strong style="font-size:0.9em;border-bottom:1px solid var(--color-border-light-2);padding-bottom:2px;">Targeted Variances</strong>
+          <div style="display:flex; flex-direction:column; gap:4px;">
             ${createSlider("Physical (Craft, AC, Damage)", "physical")}
             ${createSlider("Durability (HP, Hardness)", "durability")}
             ${createSlider("Precision (Crit Range, Mult)", "precision")}
-            ${createSlider("Magic (Enhancement, Dice)", "magic")}
+            ${createSlider("Magic (Enhancement, Properties)", "magic")}
           </div>
 
-          <label style="font-size:0.8em;font-weight:bold;">Enhancement Bonus</label>
+          <label style="font-size:0.8em;font-weight:bold; margin-top:4px;">Enhancement Bonus</label>
           <select id="forge-enh-level" style="width:100%;padding:3px;font-size:0.85em;">
             <option value="0" ${data.magicLevel===0?"selected":""}>Mundane (+0)</option>
             <option value="1" ${data.magicLevel===1?"selected":""}>+1 (+10 Scaled)</option>
@@ -219,11 +225,21 @@ export class GranularForgeApp extends Application {
   activateListeners(html) {
     super.activateListeners(html);
     
-    // Updates variances on change
-    html.find('.forge-var-min, .forge-var-max').change(e => {
+    // Live Multi-Slider Collision Protection
+    html.find('.forge-var-slider').on('input', e => {
         const cat = e.target.dataset.cat;
         const isMin = e.target.classList.contains("forge-var-min");
-        this.variances[cat][isMin ? "min" : "max"] = parseFloat(e.target.value) || 0;
+        let val = parseInt(e.target.value);
+        
+        if (isMin) {
+            if (val > this.variances[cat].max) { val = this.variances[cat].max; e.target.value = val; }
+            this.variances[cat].min = val;
+            html.find(`#${cat}-min-disp`).text(`${val > 0 ? '+' : ''}${val}%`);
+        } else {
+            if (val < this.variances[cat].min) { val = this.variances[cat].min; e.target.value = val; }
+            this.variances[cat].max = val;
+            html.find(`#${cat}-max-disp`).text(`${val > 0 ? '+' : ''}${val}%`);
+        }
     });
 
     html.find('#forge-item-search').on('input', e => {
@@ -259,7 +275,6 @@ export class GranularForgeApp extends Application {
         this.render();
     });
 
-    // Custom Property Dialog
     html.find('#forge-new-custom-prop').click(async () => {
         new Dialog({
             title: "Create Custom Magic Property",
@@ -313,6 +328,13 @@ export class GranularForgeApp extends Application {
       this.selectedMaterial = html.find('#forge-material').val();
       this.useShortCompoundNames = html.find('#forge-short-names').is(':checked');
 
+      // Requirement Enforcer: Magic properties require at least +1 Enhancement
+      if (this.selectedProperties.size > 0 && this.magicLevel < 1) {
+          ui.notifications.info("Magic properties require at least a +1 Enhancement Bonus. Automatically adjusting to +1.");
+          this.magicLevel = 1;
+          html.find('#forge-enh-level').val("1");
+      }
+
       const newItemData = this.selectedBaseItem.toObject();
       const isWeapon = newItemData.type === "weapon";
       const baseProps = isWeapon ? WEAPON_ENCHANTMENTS : ARMOR_ENCHANTMENTS;
@@ -322,19 +344,18 @@ export class GranularForgeApp extends Application {
 
       const tagsList = [];
       const identifiedTraits = [];
-      let logOutput = ""; // Tracks decimal results
+      let logOutput = ""; // Tracks exact decimals for visual inspection
 
       newItemData.flags = newItemData.flags || {};
       newItemData.flags[MODULE_ID] = newItemData.flags[MODULE_ID] || {};
       newItemData.flags[MODULE_ID].disable10xCard = true; 
       newItemData.flags[MODULE_ID].is10xScaled = true; 
 
-      // Native Masterwork Injection
       if (this.magicLevel > 0 || this.selectedProperties.size > 0 || mat.name === "Adamantine" || mat.name === "Mithral") {
           newItemData.system.masterwork = true;
       }
 
-      // Exact Decimal Roller per Category
+      // Exact Decimal Roller hooked to the Dual Sliders
       const rollStat = (label, category) => {
         const min = this.variances[category].min / 100;
         const max = this.variances[category].max / 100;
@@ -359,12 +380,12 @@ export class GranularForgeApp extends Application {
       const craftRoll = rollStat("Craft Quality", "physical");
       const prefix = tierPrefixes[craftRoll.tier];
       identifiedTraits.push(`<strong>Craftsmanship (${prefix}):</strong> Forged to ${prefix.toLowerCase()} standards.`);
-      logOutput += `<div><strong>Physical Multiplier:</strong> ${((craftRoll.mult - 1)*100).toFixed(2)}%</div>`;
+      logOutput += `<div style="padding-bottom: 2px;"><strong>Physical M-plier:</strong> <span style="float:right;">${((craftRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
 
       // Durability & Hardness
       const hardRoll = rollStat("Hardness", "durability");
       const hpRoll = rollStat("Hit Points", "durability");
-      logOutput += `<div><strong>Hardness/HP Multipliers:</strong> ${((hardRoll.mult - 1)*100).toFixed(2)}% / ${((hpRoll.mult - 1)*100).toFixed(2)}%</div>`;
+      logOutput += `<div style="padding-bottom: 2px;"><strong>Hardness / HP:</strong> <span style="float:right;">${((hardRoll.mult - 1)*100).toFixed(2)}% / ${((hpRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
       
       let baseHardness = 0;
       if (newItemData.system.hardness) {
@@ -417,13 +438,11 @@ export class GranularForgeApp extends Application {
       if (newItemData.system?.actions) {
         const critRangeRoll = rollStat("Crit Threat", "precision");
         const critMultRoll = rollStat("Crit Mult", "precision");
-        logOutput += `<div><strong>Crit Range/Mult Multipliers:</strong> ${((critRangeRoll.mult - 1)*100).toFixed(2)}% / ${((critMultRoll.mult - 1)*100).toFixed(2)}%</div>`;
+        logOutput += `<div style="padding-bottom: 2px;"><strong>Crit Rng / Mult:</strong> <span style="float:right;">${((critRangeRoll.mult - 1)*100).toFixed(2)}% / ${((critMultRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
 
         newItemData.system.actions.forEach(action => {
           action.ability = action.ability || {}; 
           
-          // ─── THE NEW 10x ITERATIVE ATTACK INJECTION ───
-          // Bypasses the 40 attacks at high BAB problem!
           action.extraAttacks = [{
               type: "custom",
               name: "10x Iteratives",
@@ -432,7 +451,6 @@ export class GranularForgeApp extends Application {
           }];
           identifiedTraits.push(`<strong>Iterative Form:</strong> Custom 10x progression injected.`);
           
-          // ─── CONTINUOUS CRIT THREAT RANGE (+/- 10 VARIANCE) ───
           let critBase = action.ability.critRange ?? action.critRange;
           if (critBase === undefined || critBase === null || critBase === "") {
               critBase = 191; 
@@ -441,15 +459,13 @@ export class GranularForgeApp extends Application {
               if (!isNaN(critBase) && critBase <= 20) critBase = (critBase * 10) - 9;
           }
 
-          // Exact continuous shift: If delta is +0.25 (25%), shift drops by 10 (e.g. 191 -> 181)
+          // Exact continuous shift: If delta is +0.25 (25%), shift drops by 10
           const rangeShift = (critRangeRoll.mult - 1.0) * 40; 
           let finalCrit = Math.min(199, Math.max(100, Math.round(critBase - rangeShift)));
           action.critRange = finalCrit;
           action.ability.critRange = finalCrit;
 
-          // ─── CONTINUOUS DECIMAL CRIT MULTIPLIER ───
           let baseMult = action.ability.critMult ?? action.critMult ?? 2.0;
-          // Exact continuous shift: If delta is +0.25 (25%), adds +0.5 to multiplier
           let multShift = (critMultRoll.mult - 1.0) * 2; 
           let finalMult = Math.max(1.0, Math.round((Number(baseMult) + multShift) * 100) / 100);
 
@@ -463,15 +479,14 @@ export class GranularForgeApp extends Application {
              if (!prop) continue;
 
              if (prop.isDice) {
+                // EVERY checked property gets an independent variance roll
                 const pRoll = rollStat(`${prop.baseName} Tier`, "magic");
+                logOutput += `<div style="padding-bottom: 2px;"><strong>Magic (${prop.baseName}):</strong> <span style="float:right;">${((pRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
                 
-                // ─── CONTINUOUS EXACT DICE STEPPING (e.g., 1d62, 1d76) ───
                 const numDice = prop.numDice || 1;
-                // Ratio compares the multiplier directly to a 0.25 block.
                 const varianceRatio = (pRoll.mult - 1.0) / 0.25; 
-                // Exactly scales continuous faces (1.0 = 60 faces, 1.25 = 80 faces, 0.75 = 40 faces)
-                let faces = Math.round(60 + (varianceRatio * 20));
-                faces = Math.max(1, faces); // Prevent impossible dice
+                let faces = Math.round(60 + (varianceRatio * 20)); // Continuous face scaling!
+                faces = Math.max(1, faces); 
 
                 let titlePrefix = prop.baseName;
                 if (pRoll.mult > 1.15) titlePrefix = `Supreme ${prop.baseName}`;
@@ -502,6 +517,7 @@ export class GranularForgeApp extends Application {
 
              if (prop.bonusMath) {
                 const pRoll = rollStat(`${prop.baseName} Tier`, "magic");
+                logOutput += `<div style="padding-bottom: 2px;"><strong>Magic (${prop.baseName}):</strong> <span style="float:right;">${((pRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
                 let bonus = prop.bonusMath(pRoll.mult);
                 
                 let titlePrefix = prop.baseName;
@@ -531,17 +547,16 @@ export class GranularForgeApp extends Application {
           }
       }
 
-      // Magical Enhancement
       let enhSuffix = "";
       if (this.magicLevel > 0) {
         const enhRoll = rollStat("Magic Enhancement", "magic");
+        logOutput += `<div style="padding-bottom: 2px;"><strong>Enhancement Bonus:</strong> <span style="float:right;">${((enhRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
         newItemData.system.enh = Math.max(1, Math.round((this.magicLevel * 10) * enhRoll.mult));
         const titles = { 1: "of Flickering Might", 2: "of Resolute Force", 3: "of Striking Power", 4: "of Exalted Dominion", 5: "of Transcendent Power" };
         enhSuffix = titles[this.magicLevel] || "";
         identifiedTraits.push(`<strong>Enhancement Bonus (+${newItemData.system.enh}):</strong> Provides +${newItemData.system.enh} to hit/damage or Armor AC.`);
       }
 
-      // Name Synthesis & Compound Portmanteau Logic
       const matTitle = mat.name !== "Steel" ? `${mat.name} ` : "";
       let finalName = "";
 
