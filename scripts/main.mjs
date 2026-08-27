@@ -99,6 +99,8 @@ Hooks.on("renderItemSheet", (app, html, data) => {
 
   // Restore unscaled source values in inputs to avoid multi-compounding saves
   if (is10xEnabled && !item.getFlag(MODULE_ID, "is10xScaled")) {
+    // NEW: Force the Critical Multiplier input to accept continuous decimals
+  html.find('input[name$="critMult"], input[name*="critMult"]').attr('step', '0.01').attr('data-dtype', 'Number');
     if (item._source?.system?.armor?.value !== undefined) {
       html.find('input[name="system.armor.value"]').val(item._source.system.armor.value);
     }
