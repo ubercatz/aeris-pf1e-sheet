@@ -1,16 +1,16 @@
 /**
  * @file enchantment-registry.mjs
- * Continuous 10x Granular Engine Registry with Ranged/Melee Filtering & Multi-Fusions
+ * Continuous 10x Granular Engine Registry with Material Weight & ASF Modifiers
  */
 
 export const SPECIAL_MATERIALS = {
-  steel: { name: "Steel", hardnessMod: 0, hpMult: 1.0, costMod: 0 },
-  adamantine: { name: "Adamantine", hardnessMod: 100, hpMult: 1.33, costMod: 3000, desc: "Bypasses hardness under 200. DR / adamantine." },
-  mithral: { name: "Mithral", hardnessMod: 0, hpMult: 1.5, costMod: 1000, acpBonus: 30, dexBonus: 20, desc: "Lightened frame; counts as one category lighter." },
-  coldiron: { name: "Cold Iron", hardnessMod: 0, hpMult: 1.0, costMod: 200, desc: "Overcomes DR of fey and demons." },
-  silversheen: { name: "Alchemical Silver", hardnessMod: -20, hpMult: 1.0, costMod: 100, desc: "Overcomes DR of lycanthropes/undead (-10 base damage)." },
-  darkwood: { name: "Darkwood", hardnessMod: -20, hpMult: 1.0, costMod: 300, acpBonus: 20, desc: "Halves weapon/armor weight." },
-  dragonhide: { name: "Dragonhide", hardnessMod: 50, hpMult: 1.25, costMod: 1500, desc: "Immune to specific dragon energy type." }
+  steel: { name: "Steel", hardnessMod: 0, hpMult: 1.0, weightMult: 1.0, costMod: 0, desc: "Standard forged steel." },
+  adamantine: { name: "Adamantine", hardnessMod: 100, hpMult: 1.33, weightMult: 1.0, costMod: 3000, desc: "Bypasses hardness under 200. DR / adamantine." },
+  mithral: { name: "Mithral", hardnessMod: 0, hpMult: 1.5, weightMult: 0.5, costMod: 1000, acpBonus: 30, dexBonus: 20, asfBonus: 10, desc: "Halves weight; counts as one category lighter; -10% ASF; reduces ACP." },
+  coldiron: { name: "Cold Iron", hardnessMod: 0, hpMult: 1.0, weightMult: 1.0, costMod: 200, desc: "Overcomes DR of fey and demons." },
+  silversheen: { name: "Alchemical Silver", hardnessMod: -20, hpMult: 1.0, weightMult: 1.0, costMod: 100, desc: "Overcomes DR of lycanthropes/undead (-10 base damage)." },
+  darkwood: { name: "Darkwood", hardnessMod: -20, hpMult: 1.0, weightMult: 0.5, costMod: 300, acpBonus: 20, asfBonus: 10, desc: "Halves weapon/shield weight; -10% ASF; reduces ACP." },
+  dragonhide: { name: "Dragonhide", hardnessMod: 50, hpMult: 1.25, weightMult: 1.0, costMod: 1500, desc: "Immune to specific dragon energy type." }
 };
 
 export const WEAPON_ENCHANTMENTS = {
@@ -48,7 +48,6 @@ export const ARMOR_ENCHANTMENTS = {
 };
 
 export const COMPOUND_FUSIONS = {
-  // Base enhancements + Single Property
   "1_flaming": "Cinder", "2_flaming": "Sunstrike", "3_flaming": "Pyreforged", "4_flaming": "Hellfire Sovereign", "5_flaming": "Solaris Prime",
   "1_frost": "Hoarfrost", "2_frost": "Winterguard", "3_frost": "Rimevein", "4_frost": "Glacial Monarch", "5_frost": "Absolute Aegis",
   "1_shock": "Spark", "2_shock": "Stormstrike", "3_shock": "Tempestborn", "4_shock": "Thunderlord", "5_shock": "Aether-Voltage",
