@@ -1,6 +1,6 @@
 /**
  * @file gear-forge.mjs
- * Procedural 10x Gear Forge with Granular Loot Pools, Coin Containers, and Multi-Compendium Selection
+ * Procedural 10x Gear Forge with Granular Hoard Quotas, Slot Filters, Budget Caps, and Actor Exporting
  */
 
 import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS, LEVEL_LOOT_TIERS } from "./enchantment-registry.mjs";
@@ -34,45 +34,85 @@ export class GranularForgeApp extends Application {
     // ─── GRANULAR BATCH LOOT CONFIGURATION ───
     this.batchConfig = {
       level: 5,
-      count: 6,
-      grade: "scaled", // "scaled" | "mundane" | "minor" | "medium" | "major"
+      budgetMode: "curve", // "curve" | "custom"
+      customTotalBudget: 1550,
+      customMaxItemPrice: 3000,
+      magicMode: "curve", // "curve" | "mundane" | "magic"
+      customEnhLevel: 1,
       allowCursed: false,
       includeGold: true,
+      customGoldAmount: 0,
       selectedPacks: new Set(),
-      pools: {
-        // Weapons
-        wpnBladesLight: true,
-        wpnBladesHeavy: true,
-        wpnAxes: true,
-        wpnBows: true,
-        wpnCrossbows: true,
-        wpnSpears: true,
-        wpnPolearms: true,
-        wpnHammers: true,
-        wpnThrown: true,
-        wpnFirearms: false,
-        
-        // Armor & Shields
-        armLight: true,
-        armMedium: true,
-        armHeavy: true,
-        shields: true,
-        ammo: true,
-        
-        // Wondrous & Implements
-        wondrous: true,
-        rings: true,
-        rods: false,
-        staves: false,
-        wands: true,
-        scrolls: true,
-        potions: true,
-        
-        // Uniques
-        uniqueWeapons: false,
-        uniqueArmor: false
+      
+      // Category Quotas (Exact item counts per category)
+      quotas: {
+        weapons: 2,
+        armor: 1,
+        ammo: 0,
+        wondrous: 1,
+        rings: 0,
+        potions: 1,
+        scrolls: 0,
+        wands: 0,
+        staves: 1,
+        rods: 0,
+        uniques: 0
+      },
+
+      // Max GP overrides per category (0 = follow global ceiling)
+      categoryMaxGp: {
+        weapons: 0,
+        armor: 0,
+        ammo: 0,
+        wondrous: 0,
+        rings: 0,
+        potions: 0,
+        scrolls: 0,
+        wands: 0,
+        staves: 0,
+        rods: 0,
+        uniques: 0
+      },
+
+      // Granular Wondrous Slot Filters
+      wondrousSlots: {
+        belt: true,
+        body: true,
+        chest: true,
+        eyes: true,
+        feet: true,
+        hands: true,
+        head: true,
+        headband: true,
+        neck: true,
+        shoulders: true,
+        wrists: true,
+        slotless: true
+      },
+
+      // Weapon Fighter Groups
+      weaponGroups: {
+        bladesHeavy: true,
+        bladesLight: true,
+        axes: true,
+        bows: true,
+        crossbows: true,
+        spears: true,
+        polearms: true,
+        hammers: true,
+        thrown: true,
+        firearms: false
+      },
+
+      // Armor Classes
+      armorClasses: {
+        light: true,
+        medium: true,
+        heavy: true,
+        shields: true
       }
     };
+    
     this.batchResults = [];
     this.batchCoins = { pp: 0, gp: 0, sp: 0, cp: 0 };
   }
@@ -82,8 +122,8 @@ export class GranularForgeApp extends Application {
       id: "aeris-granular-forge",
       title: "10x Procedural Gear & Enchantment Forge",
       template: "",
-      width: 1060,
-      height: 860,
+      width: 1080,
+      height: 880,
       resizable: true,
       classes: ["aeris-gear-gen-app"]
     });
@@ -129,7 +169,6 @@ export class GranularForgeApp extends Application {
     const packChoices = packs.reduce((acc, p) => { acc[p.collection] = p.metadata.label; return acc; }, {});
     if (!this.selectedCompendium && packs.length > 0) this.selectedCompendium = packs[0].collection;
     
-    // Default select all valid item packs for batch generation if none are picked
     if (this.batchConfig.selectedPacks.size === 0) {
       packs.forEach(p => this.batchConfig.selectedPacks.add(p.collection));
     }
@@ -153,6 +192,9 @@ export class GranularForgeApp extends Application {
       availableProperties = { ...WEAPON_ENCHANTMENTS, ...customProps };
     }
 
+    const currentLevelTier = LEVEL_LOOT_TIERS[this.batchConfig.level] || LEVEL_LOOT_TIERS[1];
+    const totalSelectedQuota = Object.values(this.batchConfig.quotas).reduce((a, b) => a + Number(b), 0);
+
     return {
       activeTab: this.activeTab,
       packs: packChoices,
@@ -173,7 +215,9 @@ export class GranularForgeApp extends Application {
       rollLogHtml: this.rollLogHtml,
       batchConfig: this.batchConfig,
       batchResults: this.batchResults,
-      batchCoins: this.batchCoins
+      batchCoins: this.batchCoins,
+      currentLevelTier,
+      totalSelectedQuota
     };
   }
 
@@ -252,7 +296,7 @@ export class GranularForgeApp extends Application {
       </div>
     `;
 
-    // ─── GRANULAR BATCH LOOT TAB TEMPLATE ───
+    // ─── BATCH LOOT TAB: GRANULAR INTERFACE ───
     const packCheckboxes = data.rawPacksList.map(p => `
       <label style="display:flex; align-items:center; gap:6px; font-size:0.8em; cursor:pointer; margin-bottom:2px;">
         <input type="checkbox" class="batch-pack-checkbox" value="${p.collection}" ${data.batchConfig.selectedPacks.has(p.collection) ? "checked" : ""}>
@@ -260,44 +304,100 @@ export class GranularForgeApp extends Application {
       </label>
     `).join("");
 
+    const createQuotaRow = (key, label, icon) => `
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:3px 0; border-bottom:1px solid rgba(0,0,0,0.04); font-size:0.85em;">
+        <span style="display:flex; align-items:center; gap:4px;">${icon} ${label}</span>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="font-size:0.75em; color:#777;">Qty:</span>
+          <input type="number" class="batch-quota-val" data-cat="${key}" value="${data.batchConfig.quotas[key]}" min="0" max="50" style="width:45px; padding:2px; text-align:center;">
+          <span style="font-size:0.75em; color:#777; margin-left:4px;">Max GP:</span>
+          <input type="number" class="batch-cat-gp-val" data-cat="${key}" value="${data.batchConfig.categoryMaxGp[key]}" min="0" placeholder="Auto" style="width:55px; padding:2px; text-align:center;">
+        </div>
+      </div>
+    `;
+
     const batchTabHtml = `
       <div style="display:flex; height:100%; gap:12px; overflow:hidden;">
         
-        <!-- BATCH PARAMETERS & FILTER PANELS -->
-        <div style="flex:1.3; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
-          <strong style="font-size:1.0em; border-bottom:1px solid var(--color-border-light-2); padding-bottom:3px;">📦 Hoard Generator Parameters</strong>
+        <!-- LEFT COLUMN: BUDGET & CATEGORY QUOTAS -->
+        <div style="flex:1.35; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
           
-          <div style="display:flex; gap:8px;">
-            <div style="flex:1;">
-              <label style="font-size:0.85em; font-weight:bold;">Party / Encounter Level (CR)</label>
-              <select id="batch-level" style="width:100%; padding:4px;">
-                ${Array.from({length: 20}, (_, i) => `<option value="${i+1}" ${data.batchConfig.level === (i+1) ? "selected" : ""}>Level ${i+1} (CR ${i+1})</option>`).join("")}
-              </select>
+          <!-- LEVEL & WEALTH BUDGET CARD -->
+          <div style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+              <div style="flex:1;">
+                <label style="font-size:0.85em; font-weight:bold;">Encounter Level (CR)</label>
+                <select id="batch-level" style="width:100%; padding:3px;">
+                  ${Array.from({length: 20}, (_, i) => `<option value="${i+1}" ${data.batchConfig.level === (i+1) ? "selected" : ""}>Level ${i+1} (CR ${i+1})</option>`).join("")}
+                </select>
+              </div>
+              <div style="flex:1;">
+                <label style="font-size:0.85em; font-weight:bold;">Budget Mode</label>
+                <select id="batch-budget-mode" style="width:100%; padding:3px;">
+                  <option value="curve" ${data.batchConfig.budgetMode === "curve" ? "selected" : ""}>Match Level Curve</option>
+                  <option value="custom" ${data.batchConfig.budgetMode === "custom" ? "selected" : ""}>Custom Budget Override</option>
+                </select>
+              </div>
             </div>
-            <div style="flex:1;">
-              <label style="font-size:0.85em; font-weight:bold;">Loot Quality Tier</label>
-              <select id="batch-grade" style="width:100%; padding:4px;">
-                <option value="scaled" ${data.batchConfig.grade === "scaled" ? "selected" : ""}>Match Level Curve</option>
-                <option value="mundane" ${data.batchConfig.grade === "mundane" ? "selected" : ""}>Mundane (No Magic)</option>
-                <option value="minor" ${data.batchConfig.grade === "minor" ? "selected" : ""}>Minor Magic (+10 / +1)</option>
-                <option value="medium" ${data.batchConfig.grade === "medium" ? "selected" : ""}>Medium Magic (+20 to +30)</option>
-                <option value="major" ${data.batchConfig.grade === "major" ? "selected" : ""}>Major Magic (+40 to +50)</option>
-              </select>
+
+            <!-- DYNAMIC LEVEL CURVE / CUSTOM GP DISPLAY -->
+            <div style="background:#fff; border:1px solid #ced6e0; border-radius:3px; padding:6px; font-size:0.8em; line-height:1.4;">
+              ${data.batchConfig.budgetMode === "curve" ? `
+                <div style="display:flex; justify-content:space-between;">
+                  <span><strong>Total Hoard Budget:</strong> ~${data.currentLevelTier.goldBase} gp</span>
+                  <span><strong>Max Single Item Cap:</strong> ${data.currentLevelTier.maxItemPrice} gp</span>
+                </div>
+                <div style="color:#666; font-size:0.9em; margin-top:2px;">
+                  Curve Enh: +${data.currentLevelTier.maxEnh * 10} (+${data.currentLevelTier.maxEnh}) | Magic Chance: ${(data.currentLevelTier.propChance * 100).toFixed(0)}%
+                </div>
+              ` : `
+                <div style="display:flex; gap:8px;">
+                  <div style="flex:1;">
+                    <label style="font-weight:bold;">Total Hoard GP Budget:</label>
+                    <input type="number" id="batch-custom-total-gp" value="${data.batchConfig.customTotalBudget}" style="width:100%; padding:2px;">
+                  </div>
+                  <div style="flex:1;">
+                    <label style="font-weight:bold;">Max Single Item GP Cap:</label>
+                    <input type="number" id="batch-custom-max-item-gp" value="${data.batchConfig.customMaxItemPrice}" style="width:100%; padding:2px;">
+                  </div>
+                </div>
+              `}
             </div>
           </div>
 
-          <div style="display:flex; gap:8px; align-items:center;">
-            <label style="font-size:0.85em; font-weight:bold; flex:1;">Total Items to Generate:</label>
-            <input type="number" id="batch-count" value="${data.batchConfig.count}" min="1" max="50" style="width:70px; text-align:center; padding:3px;">
-          </div>
+          <!-- MAGIC GEAR TUNING -->
+          <div style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
+            <div style="display:flex; gap:8px; align-items:center;">
+              <div style="flex:1.2;">
+                <label style="font-size:0.8em; font-weight:bold;">Magic Gear Rules</label>
+                <select id="batch-magic-mode" style="width:100%; padding:3px; font-size:0.85em;">
+                  <option value="curve" ${data.batchConfig.magicMode === "curve" ? "selected" : ""}>Match Level Curve</option>
+                  <option value="mundane" ${data.batchConfig.magicMode === "mundane" ? "selected" : ""}>Force Mundane (No Magic)</option>
+                  <option value="custom" ${data.batchConfig.magicMode === "custom" ? "selected" : ""}>Custom Enhancement Level</option>
+                </select>
+              </div>
+              ${data.batchConfig.magicMode === "custom" ? `
+                <div style="flex:0.8;">
+                  <label style="font-size:0.8em; font-weight:bold;">Enh Level</label>
+                  <select id="batch-custom-enh" style="width:100%; padding:3px; font-size:0.85em;">
+                    <option value="1" ${data.batchConfig.customEnhLevel===1?"selected":""}>+1 (+10)</option>
+                    <option value="2" ${data.batchConfig.customEnhLevel===2?"selected":""}>+2 (+20)</option>
+                    <option value="3" ${data.batchConfig.customEnhLevel===3?"selected":""}>+3 (+30)</option>
+                    <option value="4" ${data.batchConfig.customEnhLevel===4?"selected":""}>+4 (+40)</option>
+                    <option value="5" ${data.batchConfig.customEnhLevel===5?"selected":""}>+5 (+50)</option>
+                  </select>
+                </div>
+              ` : ""}
+            </div>
 
-          <div style="display:flex; gap:12px; margin-top:2px;">
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; cursor:pointer; font-weight:bold;">
-              <input type="checkbox" id="batch-inc-gold" ${data.batchConfig.includeGold ? "checked" : ""}> 💰 Generate Coin Container
-            </label>
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; cursor:pointer; font-weight:bold; color:#c0392b;">
-              <input type="checkbox" id="batch-allow-cursed" ${data.batchConfig.allowCursed ? "checked" : ""}> 💀 Allow Cursed Items
-            </label>
+            <div style="display:flex; gap:12px; margin-top:6px; font-size:0.85em;">
+              <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-weight:bold;">
+                <input type="checkbox" id="batch-inc-gold" ${data.batchConfig.includeGold ? "checked" : ""}> 💰 Generate Coin Container
+              </label>
+              <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-weight:bold; color:#c0392b;">
+                <input type="checkbox" id="batch-allow-cursed" ${data.batchConfig.allowCursed ? "checked" : ""}> 💀 Allow Cursed
+              </label>
+            </div>
           </div>
 
           <!-- COMPENDIUM SOURCE SELECTION -->
@@ -308,60 +408,58 @@ export class GranularForgeApp extends Application {
             </div>
           </details>
 
-          <!-- GRANULAR ITEM POOL SELECTION -->
-          <strong style="font-size:0.85em; margin-top:2px;">Granular Item Pools:</strong>
-          
-          <details open style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
-            <summary style="font-weight:bold; font-size:0.8em; cursor:pointer;">⚔️ Weapons by Fighter Groups</summary>
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px; margin-top:4px; font-size:0.8em;">
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="wpnBladesHeavy" ${data.batchConfig.pools.wpnBladesHeavy ? "checked" : ""}> Heavy Blades</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="wpnBladesLight" ${data.batchConfig.pools.wpnBladesLight ? "checked" : ""}> Light Blades</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="wpnAxes" ${data.batchConfig.pools.wpnAxes ? "checked" : ""}> Axes</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="wpnBows" ${data.batchConfig.pools.wpnBows ? "checked" : ""}> Bows</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="wpnCrossbows" ${data.batchConfig.pools.wpnCrossbows ? "checked" : ""}> Crossbows</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="wpnSpears" ${data.batchConfig.pools.wpnSpears ? "checked" : ""}> Spears</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="wpnPolearms" ${data.batchConfig.pools.wpnPolearms ? "checked" : ""}> Polearms</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="wpnHammers" ${data.batchConfig.pools.wpnHammers ? "checked" : ""}> Hammers & Flails</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="wpnThrown" ${data.batchConfig.pools.wpnThrown ? "checked" : ""}> Thrown Weapons</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="wpnFirearms" ${data.batchConfig.pools.wpnFirearms ? "checked" : ""}> Firearms</label>
+          <!-- CATEGORY QUOTA & ITEM ALLOCATION TABLE -->
+          <strong style="font-size:0.9em; margin-top:2px;">Category Quotas (Total Items: ${data.totalSelectedQuota})</strong>
+          <div style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
+            ${createQuotaRow("weapons", "Weapons", "⚔️")}
+            ${createQuotaRow("armor", "Armor & Shields", "🛡️")}
+            ${createQuotaRow("ammo", "Ammunition Bundles", "🏹")}
+            ${createQuotaRow("wondrous", "Wondrous Items", "✨")}
+            ${createQuotaRow("rings", "Magic Rings", "💍")}
+            ${createQuotaRow("potions", "Potions & Oils", "🧪")}
+            ${createQuotaRow("scrolls", "Scrolls", "📜")}
+            ${createQuotaRow("wands", "Wands", "🪄")}
+            ${createQuotaRow("staves", "Staves", "🦯")}
+            ${createQuotaRow("rods", "Rods", "🔮")}
+            ${createQuotaRow("uniques", "Specific Magic Uniques", "🌟")}
+          </div>
+
+          <!-- WONDROUS SLOTS SUB-FILTER -->
+          <details style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
+            <summary style="font-weight:bold; font-size:0.8em; cursor:pointer;">✨ Wondrous Item Slot Sub-Filters</summary>
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:4px; margin-top:4px; font-size:0.75em;">
+              ${Object.keys(data.batchConfig.wondrousSlots).map(slot => `
+                <label><input type="checkbox" class="batch-wondrous-slot-cb" data-slot="${slot}" ${data.batchConfig.wondrousSlots[slot] ? "checked" : ""}> ${slot.toUpperCase()}</label>
+              `).join("")}
             </div>
           </details>
 
-          <details open style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
-            <summary style="font-weight:bold; font-size:0.8em; cursor:pointer;">🛡️ Armor, Shields & Ammo</summary>
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px; margin-top:4px; font-size:0.8em;">
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="armLight" ${data.batchConfig.pools.armLight ? "checked" : ""}> Light Armor</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="armMedium" ${data.batchConfig.pools.armMedium ? "checked" : ""}> Medium Armor</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="armHeavy" ${data.batchConfig.pools.armHeavy ? "checked" : ""}> Heavy Armor</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="shields" ${data.batchConfig.pools.shields ? "checked" : ""}> Shields</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="ammo" ${data.batchConfig.pools.ammo ? "checked" : ""}> Ammunition Bundles</label>
-            </div>
-          </details>
-
-          <details open style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
-            <summary style="font-weight:bold; font-size:0.8em; cursor:pointer;">✨ Wondrous, Magic Implements & Uniques</summary>
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px; margin-top:4px; font-size:0.8em;">
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="wondrous" ${data.batchConfig.pools.wondrous ? "checked" : ""}> Wondrous Items</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="rings" ${data.batchConfig.pools.rings ? "checked" : ""}> Magic Rings</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="wands" ${data.batchConfig.pools.wands ? "checked" : ""}> Wands</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="scrolls" ${data.batchConfig.pools.scrolls ? "checked" : ""}> Scrolls</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="potions" ${data.batchConfig.pools.potions ? "checked" : ""}> Potions & Elixirs</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="rods" ${data.batchConfig.pools.rods ? "checked" : ""}> Rods</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="staves" ${data.batchConfig.pools.staves ? "checked" : ""}> Staves</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="uniqueWeapons" ${data.batchConfig.pools.uniqueWeapons ? "checked" : ""}> Specific Weapons</label>
-              <label><input type="checkbox" class="batch-pool-cb" data-pool="uniqueArmor" ${data.batchConfig.pools.uniqueArmor ? "checked" : ""}> Specific Armor</label>
+          <!-- WEAPON FIGHTER GROUPS SUB-FILTER -->
+          <details style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
+            <summary style="font-weight:bold; font-size:0.8em; cursor:pointer;">⚔️ Weapon Fighter Group Sub-Filters</summary>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px; margin-top:4px; font-size:0.75em;">
+              <label><input type="checkbox" class="batch-wpn-group-cb" data-group="bladesHeavy" ${data.batchConfig.weaponGroups.bladesHeavy ? "checked" : ""}> Heavy Blades</label>
+              <label><input type="checkbox" class="batch-wpn-group-cb" data-group="bladesLight" ${data.batchConfig.weaponGroups.bladesLight ? "checked" : ""}> Light Blades</label>
+              <label><input type="checkbox" class="batch-wpn-group-cb" data-group="axes" ${data.batchConfig.weaponGroups.axes ? "checked" : ""}> Axes</label>
+              <label><input type="checkbox" class="batch-wpn-group-cb" data-group="bows" ${data.batchConfig.weaponGroups.bows ? "checked" : ""}> Bows</label>
+              <label><input type="checkbox" class="batch-wpn-group-cb" data-group="crossbows" ${data.batchConfig.weaponGroups.crossbows ? "checked" : ""}> Crossbows</label>
+              <label><input type="checkbox" class="batch-wpn-group-cb" data-group="spears" ${data.batchConfig.weaponGroups.spears ? "checked" : ""}> Spears</label>
+              <label><input type="checkbox" class="batch-wpn-group-cb" data-group="polearms" ${data.batchConfig.weaponGroups.polearms ? "checked" : ""}> Polearms</label>
+              <label><input type="checkbox" class="batch-wpn-group-cb" data-group="hammers" ${data.batchConfig.weaponGroups.hammers ? "checked" : ""}> Hammers & Flails</label>
+              <label><input type="checkbox" class="batch-wpn-group-cb" data-group="thrown" ${data.batchConfig.weaponGroups.thrown ? "checked" : ""}> Thrown</label>
+              <label><input type="checkbox" class="batch-wpn-group-cb" data-group="firearms" ${data.batchConfig.weaponGroups.firearms ? "checked" : ""}> Firearms</label>
             </div>
           </details>
 
           <button type="button" id="forge-batch-btn" style="margin-top:auto; padding:10px; font-weight:bold; background:#2f3542; color:#fff; border-radius:4px; cursor:pointer; border:1px solid #1e272e;">
-            🎲 Generate Calibrated Loot Hoard
+            🎲 Generate Calibrated Loot Hoard (${data.totalSelectedQuota} Items)
           </button>
         </div>
 
-        <!-- BATCH OUTPUT DISPLAY -->
-        <div style="flex:1.3; display:flex; flex-direction:column; gap:6px; overflow:hidden;">
+        <!-- RIGHT COLUMN: GENERATED HOARD OUTPUT -->
+        <div style="flex:1.25; display:flex; flex-direction:column; gap:6px; overflow:hidden;">
           <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--color-border-light-2); padding-bottom:3px;">
-            <strong style="font-size:1.0em;">Generated Hoard (${data.batchResults.length} Items)</strong>
+            <strong style="font-size:1.0em;">Generated Hoard Output (${data.batchResults.length} Items)</strong>
             ${data.batchResults.length > 0 ? `
               <button type="button" id="batch-export-actor-btn" style="padding:4px 10px; font-size:0.8em; font-weight:bold; background:#27ae60; color:#fff; border:1px solid #219653; border-radius:3px; cursor:pointer;">
                 📥 Export to Actor
@@ -375,11 +473,11 @@ export class GranularForgeApp extends Application {
                 <img src="${item.img}" width="30" height="30" style="border-radius:3px;" />
                 <div style="flex:1; overflow:hidden;">
                   <strong style="font-size:0.85em; display:block; text-overflow:ellipsis; white-space:nowrap; overflow:hidden;">${item.name}</strong>
-                  <span style="font-size:0.75em; color:#555;">${item.type === "container" ? "Coin Container" : item.system?.armor ? `AC +${item.system.armor.value}` : item.system?.actions?.[0]?.damage?.parts?.[0]?.formula || "Equipment"} | Qty: ${item.system?.quantity ?? 1}</span>
+                  <span style="font-size:0.75em; color:#555;">${item.type === "container" ? "Coin Container" : item.system?.armor ? `AC +${item.system.armor.value}` : item.system?.actions?.[0]?.damage?.parts?.[0]?.formula || (item.system?.slot ? `Slot: ${item.system.slot}` : "Equipment")} | Qty: ${item.system?.quantity ?? 1} | ${item.system?.price || 0} gp</span>
                 </div>
                 <div class="forge-drag-card" draggable="true" data-batch-idx="${idx}" style="padding:3px 8px; background:#dfe4ea; border:1px solid #747d8c; border-radius:3px; cursor:grab; font-size:0.75em; font-weight:bold;">📦 Drag</div>
               </div>
-            `).join("") : '<p style="text-align:center; color:#777; padding:20px; font-size:0.85em;">Configure parameters and click Generate to roll an encounter hoard calibrated to party level.</p>'}
+            `).join("") : '<p style="text-align:center; color:#777; padding:20px; font-size:0.85em;">Set category quotas above and click Generate to produce an authentic encounter treasure hoard.</p>'}
           </div>
         </div>
       </div>
@@ -565,93 +663,50 @@ export class GranularForgeApp extends Application {
       else this.selectedProperties.delete(e.target.value);
     });
 
-    // Batch Compendium Checkbox Listener
+    // ─── BATCH CONFIG LISTENERS ───
     html.find('.batch-pack-checkbox').change(e => {
       const packId = e.target.value;
       if (e.target.checked) this.batchConfig.selectedPacks.add(packId);
       else this.batchConfig.selectedPacks.delete(packId);
     });
 
-    // Batch Pool Checkbox Listener
-    html.find('.batch-pool-cb').change(e => {
-      const pool = e.target.dataset.pool;
-      this.batchConfig.pools[pool] = e.target.checked;
-    });
-
-    html.find('#forge-random-prop').click(async () => {
-      const baseProps = this.activeTab === "armor" ? ARMOR_ENCHANTMENTS : WEAPON_ENCHANTMENTS;
-      const customProps = game.settings.get(MODULE_ID, "customProperties") || {};
-      
-      let validProps = Object.entries({ ...baseProps, ...customProps });
-      if (this.activeTab === "weapons" && this.selectedBaseItem) {
-        const wpn = this.selectedBaseItem.system;
-        const isRanged = wpn?.weaponSubtype === "ranged" || wpn?.properties?.thr;
-        const isMelee = wpn?.weaponSubtype !== "ranged" || wpn?.properties?.thr; 
-        validProps = validProps.filter(([k, v]) => {
-          if (v.allowed === "melee" && !isMelee) return false;
-          if (v.allowed === "ranged" && !isRanged) return false;
-          return true;
-        });
-      } else if (this.activeTab === "ammo") {
-        validProps = validProps.filter(([k, v]) => v.allowed !== "melee");
-      }
-      
-      if (validProps.length === 0) return;
-      const randomProp = validProps[Math.floor(Math.random() * validProps.length)];
-      this.selectedProperties.clear();
-      this.selectedProperties.add(randomProp[0]);
+    html.find('#batch-budget-mode').change(e => {
+      this.batchConfig.budgetMode = e.target.value;
       this.render();
     });
 
-    html.find('#forge-new-custom-prop').click(async () => {
-      new Dialog({
-        title: "Create Custom Magic Property",
-        content: `
-          <form>
-            <div class="form-group"><label>Property Name</label><input type="text" id="cp-name" placeholder="e.g. Sonic, Thundering" required></div>
-            <div class="form-group"><label>Enhancement Cost (+)</label><input type="number" id="cp-cost" value="1" min="0"></div>
-            <div class="form-group"><label>Allowed Category</label><select id="cp-allowed"><option value="both">All Weapons / Ammo</option><option value="melee">Melee Only</option><option value="ranged">Ranged Only</option></select></div>
-            <div class="form-group"><label>Adds Continuous Dice?</label><input type="checkbox" id="cp-isDice" checked></div>
-            <div class="form-group"><label>Number of Dice</label><input type="number" id="cp-numDice" value="1" min="1"></div>
-            <div class="form-group"><label>Damage Type</label><input type="text" id="cp-type" placeholder="e.g. sonic, untyped"></div>
-            <div class="form-group"><label>Special Effect Note</label><textarea id="cp-note" rows="3" placeholder="Effect Description..."></textarea></div>
-          </form>
-        `,
-        buttons: {
-          save: {
-            label: "Save to World",
-            callback: async (dHtml) => {
-              const name = dHtml.find('#cp-name').val().trim();
-              if (!name) return ui.notifications.error("Name is required!");
-              const cost = parseInt(dHtml.find('#cp-cost').val()) || 0;
-              const allowed = dHtml.find('#cp-allowed').val();
-              const isDice = dHtml.find('#cp-isDice').is(':checked');
-              const numDice = parseInt(dHtml.find('#cp-numDice').val()) || 1;
-              const type = dHtml.find('#cp-type').val().trim() || "untyped";
-              const note = dHtml.find('#cp-note').val().trim();
-
-              const newProp = { baseName: name, cost, allowed, note, title: name };
-              if (isDice) {
-                newProp.isDice = true;
-                newProp.type = type;
-                newProp.numDice = numDice;
-              }
-
-              const safeId = name.toLowerCase().replace(/[^a-z0-9]/g, '_');
-              let currentSettings = game.settings.get(MODULE_ID, "customProperties") || {};
-              currentSettings[safeId] = newProp;
-              await game.settings.set(MODULE_ID, "customProperties", currentSettings);
-              ui.notifications.info(`Custom Property '${name}' saved successfully!`);
-              this.selectedProperties.add(safeId);
-              this.render();
-            }
-          }
-        },
-        default: "save"
-      }).render(true);
+    html.find('#batch-magic-mode').change(e => {
+      this.batchConfig.magicMode = e.target.value;
+      this.render();
     });
 
-    // ─── BATCH EXPORT DIRECTLY TO ACTOR (WITH CONTAINER HANDLING) ───
+    html.find('#batch-level').change(e => {
+      this.batchConfig.level = parseInt(e.target.value, 10);
+      this.render();
+    });
+
+    html.find('.batch-quota-val').change(e => {
+      const cat = e.target.dataset.cat;
+      this.batchConfig.quotas[cat] = Math.max(0, parseInt(e.target.value, 10) || 0);
+      this.render();
+    });
+
+    html.find('.batch-cat-gp-val').change(e => {
+      const cat = e.target.dataset.cat;
+      this.batchConfig.categoryMaxGp[cat] = Math.max(0, parseInt(e.target.value, 10) || 0);
+    });
+
+    html.find('.batch-wondrous-slot-cb').change(e => {
+      const slot = e.target.dataset.slot;
+      this.batchConfig.wondrousSlots[slot] = e.target.checked;
+    });
+
+    html.find('.batch-wpn-group-cb').change(e => {
+      const group = e.target.dataset.group;
+      this.batchConfig.weaponGroups[group] = e.target.checked;
+    });
+
+    // ─── BATCH EXPORT DIRECTLY TO ACTOR ───
     html.find('#batch-export-actor-btn').click(async () => {
       if (this.batchResults.length === 0) return ui.notifications.warn("No hoard generated yet!");
       
@@ -678,7 +733,6 @@ export class GranularForgeApp extends Application {
               const targetActor = game.actors.get(actorId);
               if (!targetActor) return;
 
-              // Deposit all generated items (including coin container) directly onto the character sheet
               await targetActor.createEmbeddedDocuments("Item", this.batchResults);
               ui.notifications.info(`Successfully deposited ${this.batchResults.length} items and treasure into ${targetActor.name}!`);
             }
@@ -691,12 +745,23 @@ export class GranularForgeApp extends Application {
     // ─── BATCH LOOT GENERATOR EXECUTION ───
     html.find('#forge-batch-btn').click(async () => {
       this.batchConfig.level = parseInt(html.find('#batch-level').val(), 10) || 1;
-      this.batchConfig.grade = html.find('#batch-grade').val();
-      this.batchConfig.count = parseInt(html.find('#batch-count').val(), 10) || 5;
+      this.batchConfig.budgetMode = html.find('#batch-budget-mode').val();
+      this.batchConfig.magicMode = html.find('#batch-magic-mode').val();
       this.batchConfig.includeGold = html.find('#batch-inc-gold').is(':checked');
       this.batchConfig.allowCursed = html.find('#batch-allow-cursed').is(':checked');
 
+      if (this.batchConfig.budgetMode === "custom") {
+        this.batchConfig.customTotalBudget = parseInt(html.find('#batch-custom-total-gp').val(), 10) || 1500;
+        this.batchConfig.customMaxItemPrice = parseInt(html.find('#batch-custom-max-item-gp').val(), 10) || 3000;
+      }
+      if (this.batchConfig.magicMode === "custom") {
+        this.batchConfig.customEnhLevel = parseInt(html.find('#batch-custom-enh').val(), 10) || 1;
+      }
+
       const tierConfig = LEVEL_LOOT_TIERS[this.batchConfig.level] || LEVEL_LOOT_TIERS[1];
+      const globalMaxPrice = this.batchConfig.budgetMode === "custom" ? this.batchConfig.customMaxItemPrice : tierConfig.maxItemPrice;
+      const totalHoardBudget = this.batchConfig.budgetMode === "custom" ? this.batchConfig.customTotalBudget : tierConfig.goldBase;
+
       this.batchResults = [];
       this.batchCoins = { pp: 0, gp: 0, sp: 0, cp: 0 };
       ui.notifications.info("Generating Calibrated Procedural Hoard...");
@@ -704,7 +769,7 @@ export class GranularForgeApp extends Application {
       // 1. Generate Currency Container (Standard Coinage)
       if (this.batchConfig.includeGold) {
         const goldVariance = 0.85 + Math.random() * 0.3; 
-        const totalGold = Math.round(tierConfig.goldBase * goldVariance);
+        const totalGold = Math.round((tierConfig.goldBase * 0.75) * goldVariance);
         
         const pp = Math.floor((totalGold * 0.1) / 10);
         const gp = Math.floor(totalGold * 0.7);
@@ -716,7 +781,7 @@ export class GranularForgeApp extends Application {
         const coinContainer = {
           name: `Hoard Treasure Chest (CR ${this.batchConfig.level})`,
           type: "container",
-          img: "icons/containers/chest-wooden-ironbound-locked.webp",
+          img: "icons/containers/chest/chest-worn-oak-tan.webp",
           system: {
             description: { value: `<p><strong>Encounter Treasure Chest (CR ${this.batchConfig.level}):</strong> Contains calibrated standard coinage.</p>` },
             quantity: 1,
@@ -743,7 +808,6 @@ export class GranularForgeApp extends Application {
         });
       }
 
-      // Filter Cursed Items if disallowed
       if (!this.batchConfig.allowCursed) {
         fullIndexedPool = fullIndexedPool.filter(i => {
           if (i.system?.cursed === true) return false;
@@ -752,283 +816,216 @@ export class GranularForgeApp extends Application {
         });
       }
 
-      // Categorize Pool based on Granular Checkboxes
-      const eligiblePool = fullIndexedPool.filter(item => {
+      // 3. Category Matcher Function
+      const matchItemCategory = (item, catKey) => {
         const type = item.type;
-        const subType = item.system?.subType || item.system?.weaponSubtype || "";
+        const subType = (item.system?.subType || item.system?.weaponSubtype || "").toLowerCase();
+        const eqType = (item.system?.equipmentType || "").toLowerCase();
+        const slot = (item.system?.slot || "").toLowerCase();
         const wpnGroup = item.system?.weaponGroups || [];
-        const slot = item.system?.slot || "";
-        const price = item.system?.price || 0;
         const baseTypes = item.system?.baseTypes || [];
 
-        // Max item price limit per CR
-        if (price > tierConfig.maxItemPrice && tierConfig.maxItemPrice > 0) return false;
+        const isUnique = baseTypes.length > 0 && !baseTypes.includes(item.name);
+        if (catKey === "uniques") return isUnique && (type === "weapon" || type === "armor" || type === "equipment");
+        if (isUnique) return false; // Exclude uniques from mundane/general categories
 
-        // Specific Magic Uniques detection
-        const isUniqueWeapon = type === "weapon" && baseTypes.length > 0 && !baseTypes.includes(item.name);
-        const isUniqueArmor = (type === "armor" || type === "equipment") && baseTypes.length > 0 && !baseTypes.includes(item.name);
-
-        if (isUniqueWeapon && this.batchConfig.pools.uniqueWeapons) return true;
-        if (isUniqueArmor && this.batchConfig.pools.uniqueArmor) return true;
-        if (isUniqueWeapon || isUniqueArmor) return false;
-
-        // Weapons by Groups
-        if (type === "weapon") {
-          if (this.batchConfig.pools.wpnBladesHeavy && (wpnGroup.includes("bladesHeavy") || /\b(greatsword|bastard sword|longsword|scimitar|falchion)\b/i.test(item.name))) return true;
-          if (this.batchConfig.pools.wpnBladesLight && (wpnGroup.includes("bladesLight") || /\b(dagger|shortsword|kukri|rapier)\b/i.test(item.name))) return true;
-          if (this.batchConfig.pools.wpnAxes && (wpnGroup.includes("axes") || /\b(axe|greataxe|handaxe|battleaxe|hatchet)\b/i.test(item.name))) return true;
-          if (this.batchConfig.pools.wpnBows && (wpnGroup.includes("bows") || /\b(shortbow|longbow|composite)\b/i.test(item.name))) return true;
-          if (this.batchConfig.pools.wpnCrossbows && (wpnGroup.includes("crossbows") || /\b(crossbow|arbalest)\b/i.test(item.name))) return true;
-          if (this.batchConfig.pools.wpnSpears && (wpnGroup.includes("spears") || /\b(spear|lance|trident|javelin)\b/i.test(item.name))) return true;
-          if (this.batchConfig.pools.wpnPolearms && (wpnGroup.includes("polearms") || /\b(halberd|glaive|guisarme|ranseur)\b/i.test(item.name))) return true;
-          if (this.batchConfig.pools.wpnHammers && (wpnGroup.includes("hammers") || wpnGroup.includes("flails") || /\b(hammer|warhammer|mace|flail|club)\b/i.test(item.name))) return true;
-          if (this.batchConfig.pools.wpnThrown && (wpnGroup.includes("thrown") || item.system?.properties?.thr)) return true;
-          if (this.batchConfig.pools.wpnFirearms && (wpnGroup.includes("firearms") || /\b(pistol|musket|rifle|culverin)\b/i.test(item.name))) return true;
+        if (catKey === "weapons") {
+          if (type !== "weapon" || subType === "ammo") return false;
+          // Apply Weapon Fighter Group Filters
+          const g = this.batchConfig.weaponGroups;
+          if (g.bladesHeavy && (wpnGroup.includes("bladesHeavy") || /\b(greatsword|bastard sword|longsword|scimitar|falchion)\b/i.test(item.name))) return true;
+          if (g.bladesLight && (wpnGroup.includes("bladesLight") || /\b(dagger|shortsword|kukri|rapier)\b/i.test(item.name))) return true;
+          if (g.axes && (wpnGroup.includes("axes") || /\b(axe|greataxe|handaxe|battleaxe|hatchet)\b/i.test(item.name))) return true;
+          if (g.bows && (wpnGroup.includes("bows") || /\b(shortbow|longbow|composite)\b/i.test(item.name))) return true;
+          if (g.crossbows && (wpnGroup.includes("crossbows") || /\b(crossbow|arbalest)\b/i.test(item.name))) return true;
+          if (g.spears && (wpnGroup.includes("spears") || /\b(spear|lance|trident|javelin)\b/i.test(item.name))) return true;
+          if (g.polearms && (wpnGroup.includes("polearms") || /\b(halberd|glaive|guisarme|ranseur)\b/i.test(item.name))) return true;
+          if (g.hammers && (wpnGroup.includes("hammers") || wpnGroup.includes("flails") || /\b(hammer|warhammer|mace|flail|club)\b/i.test(item.name))) return true;
+          if (g.thrown && (wpnGroup.includes("thrown") || item.system?.properties?.thr)) return true;
+          if (g.firearms && (wpnGroup.includes("firearms") || /\b(pistol|musket|rifle|culverin)\b/i.test(item.name))) return true;
+          return true;
         }
 
-        // Armor & Shields
-        if (type === "armor" || type === "equipment" || type === "shield") {
-          if (this.batchConfig.pools.armLight && subType === "light") return true;
-          if (this.batchConfig.pools.armMedium && subType === "medium") return true;
-          if (this.batchConfig.pools.armHeavy && subType === "heavy") return true;
-          if (this.batchConfig.pools.shields && (type === "shield" || subType === "shield" || slot === "shield")) return true;
+        if (catKey === "armor") {
+          if (type !== "armor" && type !== "shield" && !["armor", "shield"].includes(eqType) && !["armor", "shield"].includes(subType)) return false;
+          const a = this.batchConfig.armorClasses;
+          if (a.light && subType === "light") return true;
+          if (a.medium && subType === "medium") return true;
+          if (a.heavy && subType === "heavy") return true;
+          if (a.shields && (type === "shield" || subType === "shield" || slot === "shield")) return true;
+          return true;
         }
 
-        // Ammo
-        if (this.batchConfig.pools.ammo && (type === "ammo" || subType === "ammo")) return true;
+        if (catKey === "ammo") return type === "ammo" || subType === "ammo";
+        if (catKey === "rings") return subType === "ring" || slot === "ring" || /\bring\b/i.test(item.name);
+        if (catKey === "potions") return subType === "potion" || /\b(potion|elixir|oil)\b/i.test(item.name);
+        if (catKey === "scrolls") return subType === "scroll" || /\bscroll\b/i.test(item.name);
+        if (catKey === "wands") return subType === "wand" || /\bwand\b/i.test(item.name);
+        if (catKey === "staves") return subType === "staff" || /\bstaff\b/i.test(item.name);
+        if (catKey === "rods") return subType === "rod" || /\brod\b/i.test(item.name);
 
-        // Magic Implements & Consumables
-        if (this.batchConfig.pools.wands && (subType === "wand" || /\bwand\b/i.test(item.name))) return true;
-        if (this.batchConfig.pools.scrolls && (subType === "scroll" || /\bscroll\b/i.test(item.name))) return true;
-        if (this.batchConfig.pools.potions && (subType === "potion" || /\b(potion|elixir|oil)\b/i.test(item.name))) return true;
-        if (this.batchConfig.pools.rods && (subType === "rod" || /\brod\b/i.test(item.name))) return true;
-        if (this.batchConfig.pools.staves && (subType === "staff" || /\bstaff\b/i.test(item.name))) return true;
-        if (this.batchConfig.pools.rings && (subType === "ring" || slot === "ring" || /\bring\b/i.test(item.name))) return true;
-
-        // Wondrous Items
-        if (this.batchConfig.pools.wondrous && (subType === "wondrous" || ["head", "headband", "eyes", "shoulders", "neck", "chest", "body", "belt", "wrists", "hands", "feet", "slotless"].includes(slot))) return true;
+        if (catKey === "wondrous") {
+          const isExplicitWondrous = subType === "wondrous" || eqType === "wondrous" || ["head", "headband", "eyes", "shoulders", "neck", "chest", "body", "belt", "wrists", "hands", "feet", "slotless"].includes(slot);
+          if (!isExplicitWondrous) return false;
+          
+          // Granular Slot Filtering
+          const s = this.batchConfig.wondrousSlots;
+          const activeSlot = slot || "slotless";
+          return s[activeSlot] === true;
+        }
 
         return false;
-      });
+      };
 
-      if (eligiblePool.length === 0) {
-        return ui.notifications.warn("No items match the selected filters and price limits for this level!");
-      }
+      // 4. Process Category Quotas
+      for (const [catKey, quotaCount] of Object.entries(this.batchConfig.quotas)) {
+        if (quotaCount <= 0) continue;
 
-      // 3. Roll Procedural Items
-      for (let i = 0; i < this.batchConfig.count; i++) {
-        const pickedIndexItem = eligiblePool[Math.floor(Math.random() * eligiblePool.length)];
-        const pack = game.packs.get(pickedIndexItem._packCollection);
-        if (!pack) continue;
+        const catPriceCap = this.batchConfig.categoryMaxGp[catKey] > 0 ? this.batchConfig.categoryMaxGp[catKey] : globalMaxPrice;
 
-        const baseDoc = await pack.getDocument(pickedIndexItem._id);
-        if (!baseDoc) continue;
+        const categoryPool = fullIndexedPool.filter(item => {
+          if (!matchItemCategory(item, catKey)) return false;
+          const price = item.system?.price || 0;
+          return price <= catPriceCap;
+        });
 
-        const newItemData = baseDoc.toObject();
-        const isWeapon = newItemData.type === "weapon";
-        const isArmor = newItemData.type === "armor" || newItemData.system?.armor !== undefined;
-        const isAmmo = newItemData.type === "ammo" || newItemData.system?.subType === "ammo";
-        const isWondrousOrConsumable = !isWeapon && !isArmor && !isAmmo;
+        if (categoryPool.length === 0) continue;
 
-        // Wondrous items & consumables stay pristine with zero variance alteration
-        if (isWondrousOrConsumable) {
+        for (let q = 0; q < quotaCount; q++) {
+          const pickedIndexItem = categoryPool[Math.floor(Math.random() * categoryPool.length)];
+          const pack = game.packs.get(pickedIndexItem._packCollection);
+          if (!pack) continue;
+
+          const baseDoc = await pack.getDocument(pickedIndexItem._id);
+          if (!baseDoc) continue;
+
+          const newItemData = baseDoc.toObject();
+          const isProceduralWeapon = catKey === "weapons";
+          const isProceduralArmor = catKey === "armor";
+          const isAmmo = catKey === "ammo";
+          const isPristineItem = !isProceduralWeapon && !isProceduralArmor && !isAmmo;
+
+          // ─── STRICT WONDROUS & CONSUMABLE ISOLATION ───
+          // Zero procedural variance or altered tags applied to pristine items
+          if (isPristineItem) {
+            newItemData.flags = newItemData.flags || {};
+            newItemData.flags[MODULE_ID] = { is10xScaled: true, disable10xSheet: true, disable10xCard: true };
+            this.batchResults.push(newItemData);
+            continue;
+          }
+
+          // Procedural Weapon & Armor Tuning
+          const tagsList = [];
+          const identifiedTraits = [];
+
+          let enhLevel = 0;
+          if (this.batchConfig.magicMode === "mundane") enhLevel = 0;
+          else if (this.batchConfig.magicMode === "custom") enhLevel = this.batchConfig.customEnhLevel;
+          else {
+            if (Math.random() < tierConfig.propChance) enhLevel = Math.max(1, Math.floor(Math.random() * (tierConfig.maxEnh + 1)));
+          }
+
+          let chosenMat = "base";
+          if (Math.random() < tierConfig.matChance) {
+            const mats = isProceduralArmor ? ["mithral", "adamantine", "darkwood", "dragonhide"] : ["adamantine", "coldiron", "silversheen", "mithral"];
+            chosenMat = mats[Math.floor(Math.random() * mats.length)];
+          }
+          const mat = SPECIAL_MATERIALS[chosenMat];
+
+          const propPool = isProceduralArmor ? ARMOR_ENCHANTMENTS : WEAPON_ENCHANTMENTS;
+          const pickedProps = new Set();
+          if (enhLevel > 0 && Math.random() < tierConfig.propChance) {
+            const keys = Object.keys(propPool);
+            pickedProps.add(keys[Math.floor(Math.random() * keys.length)]);
+          }
+
           newItemData.flags = newItemData.flags || {};
-          newItemData.flags[MODULE_ID] = { is10xScaled: true, disable10xSheet: true, disable10xCard: true };
-          this.batchResults.push(newItemData);
-          continue;
-        }
+          newItemData.flags[MODULE_ID] = newItemData.flags[MODULE_ID] || {};
+          newItemData.flags[MODULE_ID].disable10xCard = true;
+          newItemData.flags[MODULE_ID].disable10xSheet = true;
+          newItemData.flags[MODULE_ID].is10xScaled = true;
+          if (enhLevel > 0 || pickedProps.size > 0 || mat.name !== "Base") newItemData.system.masterwork = true;
+          if (isAmmo) newItemData.system.quantity = 20 + (Math.floor(Math.random() * 4) * 10);
 
-        const tagsList = [];
-        const identifiedTraits = [];
+          const rollM = (cat) => 1.0 + ((this.variances[cat].min / 100) + Math.random() * ((this.variances[cat].max - this.variances[cat].min) / 100));
+          const craftM = rollM("physical");
+          const hardM = rollM("durability");
+          const hpM = rollM("durability");
 
-        // Enhancement Bonus Selection
-        let enhLevel = 0;
-        if (this.batchConfig.grade === "mundane") enhLevel = 0;
-        else if (this.batchConfig.grade === "minor") enhLevel = 1;
-        else if (this.batchConfig.grade === "medium") enhLevel = Math.min(3, Math.max(1, tierConfig.maxEnh));
-        else if (this.batchConfig.grade === "major") enhLevel = Math.min(5, Math.max(3, tierConfig.maxEnh));
-        else {
-          if (Math.random() < tierConfig.propChance) enhLevel = Math.max(1, Math.floor(Math.random() * (tierConfig.maxEnh + 1)));
-        }
+          const tierPrefixes = { "-4": "Ruined", "-3": "Flawed", "-2": "Worn", "-1": "Serviceable", "1": "Tempered", "2": "Honed", "3": "Superior", "4": "Mastercraft" };
+          let tier = Math.ceil(((craftM - 1.0) / 0.25) * 4);
+          if (tier === 0) tier = craftM >= 1.0 ? 1 : -1;
+          const prefix = tierPrefixes[Math.max(-4, Math.min(4, tier))];
 
-        // Material Selection
-        let chosenMat = "base";
-        if (Math.random() < tierConfig.matChance) {
-          const mats = isArmor ? ["mithral", "adamantine", "darkwood", "dragonhide"] : ["adamantine", "coldiron", "silversheen", "mithral"];
-          chosenMat = mats[Math.floor(Math.random() * mats.length)];
-        }
-        const mat = SPECIAL_MATERIALS[chosenMat];
+          let bHard = (typeof newItemData.system.hardness === "object" ? newItemData.system.hardness.value : newItemData.system.hardness) || 0;
+          let bHp = (newItemData.system.hp?.base ?? newItemData.system.hp?.max ?? 0);
+          newItemData.system.hardness = Math.max(0, Math.round((bHard * 10 + mat.hardnessMod) * hardM));
+          const fHp = Math.max(1, Math.round((bHp * 10 * mat.hpMult) * hpM));
+          newItemData.system.hp = { base: fHp, max: fHp, value: fHp };
 
-        // Magic Property Selection
-        const propPool = isArmor ? ARMOR_ENCHANTMENTS : WEAPON_ENCHANTMENTS;
-        const pickedProps = new Set();
-        if (enhLevel > 0 && Math.random() < tierConfig.propChance) {
-          const keys = Object.keys(propPool);
-          pickedProps.add(keys[Math.floor(Math.random() * keys.length)]);
-        }
+          let bWeight = newItemData.system.weight?.value ?? 0;
+          if (bWeight > 0) newItemData.system.weight.value = Math.max(0.1, Math.round((bWeight * (mat.weightMult || 1.0) * (2.0 - craftM)) * 100) / 100);
 
-        // Auto Flags & Masterwork
-        newItemData.flags = newItemData.flags || {};
-        newItemData.flags[MODULE_ID] = newItemData.flags[MODULE_ID] || {};
-        newItemData.flags[MODULE_ID].disable10xCard = true;
-        newItemData.flags[MODULE_ID].disable10xSheet = true;
-        newItemData.flags[MODULE_ID].is10xScaled = true;
-        if (enhLevel > 0 || pickedProps.size > 0 || mat.name !== "Base") newItemData.system.masterwork = true;
-        if (isAmmo) newItemData.system.quantity = 20 + (Math.floor(Math.random() * 4) * 10);
+          if (isProceduralArmor && newItemData.system?.armor) {
+            newItemData.system.armor.value = Math.round((newItemData.system.armor.value || 0) * 10 * craftM);
+            let adjAcp = Math.round((newItemData.system.armor.acp || 0) * 10 * (2.0 - craftM));
+            if (mat.acpBonus) adjAcp = Math.min(0, adjAcp + mat.acpBonus);
+            newItemData.system.armor.acp = adjAcp;
+          }
 
-        // 8-Tier Roller Helper with Tag Generator
-        const rollStat = (label, category) => {
-          const min = this.variances[category].min / 100;
-          const max = this.variances[category].max / 100;
-          const rollMult = 1.0 + (min + Math.random() * (max - min));
-          const varianceRatio = (rollMult - 1.0) / 0.25; 
-          let tier = Math.ceil(varianceRatio * 4);
-          if (tier === 0) tier = varianceRatio >= 0 ? 1 : -1;
-          tier = Math.max(-4, Math.min(4, tier));
-          const tierSign = tier > 0 ? `+${tier}` : `${tier}`;
-          if (label) tagsList.push(`${label}: Tier ${tierSign}`);
-          return { mult: rollMult, tier };
-        };
+          let propPrefix = "";
+          if (isProceduralWeapon && newItemData.system?.actions) {
+            const critRM = rollM("precision");
+            const critMM = rollM("precision");
+            newItemData.system.actions.forEach(act => {
+              act.ability = act.ability || {};
+              act.extraAttacks = [{ type: "custom", name: "10x Iteratives", countFormula: "max(0, floor((@attributes.bab.total - 10) / 50))", modifierFormula: "-50 * (@idx + 1)" }];
+              
+              let cBase = act.ability.critRange ?? act.critRange ?? 191;
+              if (cBase <= 20) cBase = (cBase * 10) - 9;
+              act.critRange = Math.min(199, Math.max(100, Math.round(cBase - ((critRM - 1.0) * 40))));
+              act.ability.critRange = act.critRange;
 
-        const tierPrefixes = { "-4": "Ruined", "-3": "Flawed", "-2": "Worn", "-1": "Serviceable", "1": "Tempered", "2": "Honed", "3": "Superior", "4": "Mastercraft" };
-        const craftRoll = rollStat("Craft Quality", "physical");
-        const prefix = tierPrefixes[craftRoll.tier];
-        identifiedTraits.push(`<strong>Craftsmanship (${prefix}):</strong> Forged to ${prefix.toLowerCase()} standards.`);
+              let fMult = Number(act.ability.critMult ?? act.critMult ?? 2);
+              if (critMM >= 1.20) fMult += 1;
+              else if (critMM <= 0.80) fMult = Math.max(1, fMult - 1);
+              act.critMult = fMult;
+              act.ability.critMult = fMult;
 
-        // Weight Scaling
-        const weightRoll = rollStat("Weight", "physical");
-        const rawWeight = newItemData.system?.weight?.value ?? 0;
-        const weightFactor = Math.max(0.1, 2.0 - weightRoll.mult);
-        let calculatedWeight = Math.round((rawWeight * (mat.weightMult || 1.0) * weightFactor) * 100) / 100;
-        if (newItemData.system?.weight) newItemData.system.weight.value = rawWeight === 0 ? 0 : calculatedWeight;
-
-        // Hardness & HP
-        const hardRoll = rollStat("Hardness", "durability");
-        const hpRoll = rollStat("Hit Points", "durability");
-        let bHard = (typeof newItemData.system.hardness === "object" ? newItemData.system.hardness.value : newItemData.system.hardness) || 0;
-        let bHp = (newItemData.system.hp?.base ?? newItemData.system.hp?.max ?? 0);
-        newItemData.system.hardness = Math.max(0, Math.round((bHard * 10 + mat.hardnessMod) * hardRoll.mult));
-        const fHp = Math.max(1, Math.round((bHp * 10 * mat.hpMult) * hpRoll.mult));
-        newItemData.system.hp = { base: fHp, max: fHp, value: fHp };
-
-        if (mat.name !== "Base" && mat.name !== "Steel") {
-          identifiedTraits.push(`<strong>Material (${mat.name}):</strong> Hardness ${newItemData.system.hardness}, HP ${newItemData.system.hp.max}. ${mat.desc || ""}`);
-        }
-
-        // Armor Profile
-        if (isArmor && newItemData.system?.armor) {
-          const acRoll = rollStat("Armor AC", "physical");
-          const acpRoll = rollStat("ACP", "physical");
-          const asfRoll = rollStat("Spell Failure", "magic");
-
-          newItemData.system.armor.value = Math.round((newItemData.system.armor.value || 0) * 10 * acRoll.mult);
-          let adjAcp = Math.round((newItemData.system.armor.acp || 0) * 10 * (2.0 - acpRoll.mult));
-          if (mat.acpBonus) adjAcp = Math.min(0, adjAcp + mat.acpBonus);
-          newItemData.system.armor.acp = adjAcp;
-
-          let adjAsf = Math.round((newItemData.system.armor.spellFailure ?? 0) * (2.0 - asfRoll.mult));
-          if (mat.asfBonus) adjAsf = Math.max(0, adjAsf - mat.asfBonus);
-          newItemData.system.armor.spellFailure = adjAsf;
-          identifiedTraits.push(`<strong>Armor Profile:</strong> AC +${newItemData.system.armor.value}, ACP ${newItemData.system.armor.acp}, Spell Failure ${adjAsf}%.`);
-        }
-
-        let propPrefixes = [];
-        let propSuffixes = [];
-
-        // Weapon Actions & Precision
-        if (isWeapon && newItemData.system?.actions) {
-          const critRangeRoll = rollStat("Crit Threat", "precision");
-          const critMultRoll = rollStat("Crit Mult", "precision");
-          let isFirstAction = true;
-
-          newItemData.system.actions.forEach(action => {
-            action.ability = action.ability || {};
-            action.extraAttacks = [{ type: "custom", name: "10x Iteratives", countFormula: "max(0, floor((@attributes.bab.total - 10) / 50))", modifierFormula: "-50 * (@idx + 1)" }];
-            
-            let cBase = action.ability.critRange ?? action.critRange ?? 191;
-            if (cBase <= 20) cBase = (cBase * 10) - 9;
-            action.critRange = Math.min(199, Math.max(100, Math.round(cBase - ((critRangeRoll.mult - 1.0) * 40))));
-            action.ability.critRange = action.critRange;
-
-            let fMult = Number(action.ability.critMult ?? action.critMult ?? 2);
-            if (critMultRoll.mult >= 1.20) fMult += 1;
-            else if (critMultRoll.mult <= 0.80) fMult = Math.max(1, fMult - 1);
-            action.critMult = fMult;
-            action.ability.critMult = fMult;
-
-            if (isFirstAction) identifiedTraits.push(`<strong>Precision:</strong> Crit range ${action.critRange}–200, multiplier ×${action.critMult}.`);
-
-            for (const pKey of pickedProps) {
-              const prop = propPool[pKey];
-              if (!prop) continue;
-
-              if (prop.isDice) {
-                const pRoll = rollStat(`${prop.baseName} Tier`, "magic");
-                const numDice = prop.numDice || 1;
-                const varianceRatio = (pRoll.mult - 1.0) / 0.25; 
-                let faces = Math.max(1, Math.round(60 + (varianceRatio * 20))); 
-                let titlePrefix = pRoll.mult > 1.15 ? `Supreme ${prop.baseName}` : pRoll.mult < 0.85 ? `Weak ${prop.baseName}` : prop.baseName;
-                if (isFirstAction) propPrefixes.push(titlePrefix);
-
-                action.damage.parts.push({ formula: `${numDice}d${faces}`, type: { values: [prop.type], custom: "" } });
-                if (isFirstAction) identifiedTraits.push(`<strong>${titlePrefix} Property:</strong> Infuses attacks with +${numDice}d${faces} ${prop.type} damage.`);
-              } else {
-                if (isFirstAction) {
-                  tagsList.push(`Property: ${prop.title || prop.baseName}`);
-                  if (prop.title?.startsWith("of ")) propSuffixes.push(prop.title);
-                  else propPrefixes.push(prop.title || prop.baseName);
-                  if (prop.note) identifiedTraits.push(`<strong>${prop.baseName}:</strong> ${prop.note}`);
+              for (const pKey of pickedProps) {
+                const prop = propPool[pKey];
+                if (prop && prop.isDice) {
+                  const pM = rollM("magic");
+                  let faces = Math.max(1, Math.round(60 + (((pM - 1.0) / 0.25) * 20)));
+                  propPrefix = pM > 1.15 ? `Supreme ${prop.baseName}` : pM < 0.85 ? `Weak ${prop.baseName}` : prop.baseName;
+                  act.damage.parts.push({ formula: `${prop.numDice || 1}d${faces}`, type: { values: [prop.type], custom: "" } });
                 }
-                if (prop.actionMod) prop.actionMod(action);
               }
-            }
-            isFirstAction = false;
-          });
+            });
+          }
+
+          let enhSuffix = "";
+          if (enhLevel > 0) {
+            const enhM = rollM("magic");
+            newItemData.system.enh = Math.max(1, Math.round((enhLevel * 10) * enhM));
+            if (newItemData.system.armor) newItemData.system.armor.enh = newItemData.system.enh;
+            const titles = { 1: "of Flickering Might", 2: "of Resolute Force", 3: "of Striking Power", 4: "of Exalted Dominion", 5: "of Transcendent Power" };
+            enhSuffix = ` ${titles[enhLevel] || ""}`;
+          }
+
+          const matTitle = mat.name !== "Base" ? `${mat.name} ` : "";
+          const pPre = propPrefix ? `${propPrefix} ` : "";
+          newItemData.name = `${prefix} ${matTitle}${pPre}${baseDoc.name}${enhSuffix}`.trim();
+          newItemData.system.identified = true;
+
+          this.batchResults.push(newItemData);
         }
-
-        // Enhancement Bonus
-        let enhSuffix = "";
-        if (enhLevel > 0) {
-          const enhRoll = rollStat("Magic Enhancement", "magic");
-          newItemData.system.enh = Math.max(1, Math.round((enhLevel * 10) * enhRoll.mult));
-          if (newItemData.system.armor) newItemData.system.armor.enh = newItemData.system.enh;
-          const titles = { 1: "of Flickering Might", 2: "of Resolute Force", 3: "of Striking Power", 4: "of Exalted Dominion", 5: "of Transcendent Power" };
-          enhSuffix = ` ${titles[enhLevel] || ""}`;
-          identifiedTraits.push(`<strong>Enhancement Bonus (+${newItemData.system.enh}):</strong> Provides +${newItemData.system.enh} to hit/damage/AC.`);
-        }
-
-        // Name Synthesis & Tagging Integration
-        const matTitle = mat.name !== "Base" ? `${mat.name} ` : "";
-        const pPre = propPrefixes.length ? `${propPrefixes.join(" ")} ` : "";
-        const pSuf = propSuffixes.length ? ` ${propSuffixes.join(" ")}` : "";
-        newItemData.name = `${prefix} ${matTitle}${pPre}${baseDoc.name}${pSuf}${enhSuffix}`.trim();
-
-        newItemData.system.tags = Array.isArray(newItemData.system.tags) ? newItemData.system.tags : [];
-        newItemData.system.tags.push(...tagsList);
-
-        const tagHtml = tagsList.map(t => `<span style="background:#2f3542;color:#fff;padding:2px 6px;border-radius:3px;font-size:0.75em;margin:2px;display:inline-block;">${t}</span>`).join(" ");
-        const traitListHtml = identifiedTraits.map(tr => `<li>${tr}</li>`).join("");
-        const originalDesc = newItemData.system.description?.value || "";
-
-        newItemData.system.description = newItemData.system.description || {};
-        newItemData.system.description.value = `
-          ${originalDesc}
-          <hr/>
-          <h3>Identified Properties & Enchantments</h3>
-          <ul style="padding-left:18px;margin:6px 0;font-size:0.9em;line-height:1.4;">
-            ${traitListHtml}
-          </ul>
-          <p><strong>Generation Tags:</strong><br/>${tagHtml}</p>
-        `.trim();
-
-        newItemData.system.identified = true;
-        this.batchResults.push(newItemData);
       }
 
       this.render();
     });
 
-    // ─── STANDARD FORGE GENERATION ───
+    // ─── STANDARD SINGLE FORGE GENERATION ───
     html.find('#forge-gen-btn').click(async () => {
       if (!this.selectedBaseItem) return ui.notifications.warn("Please select a base item first!");
 
@@ -1090,13 +1087,11 @@ export class GranularForgeApp extends Application {
         "1": "Tempered", "2": "Honed", "3": "Superior", "4": "Mastercraft"
       };
 
-      // 1. Craft Quality
       const craftRoll = rollStat("Craft Quality", "physical");
       const prefix = tierPrefixes[craftRoll.tier];
       identifiedTraits.push(`<strong>Craftsmanship (${prefix}):</strong> Forged to ${prefix.toLowerCase()} standards.`);
       logOutput += `<div style="padding-bottom: 2px;"><strong>Physical M-plier:</strong> <span style="float:right;">${((craftRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
 
-      // 2. Weight Scaling
       const weightRoll = rollStat("Weight", "physical");
       const rawWeight = newItemData.system?.weight?.value ?? 0;
       const matWeightMult = mat.weightMult || 1.0;
@@ -1106,7 +1101,6 @@ export class GranularForgeApp extends Application {
       if (newItemData.system?.weight) newItemData.system.weight.value = rawWeight === 0 ? 0 : calculatedWeight;
       logOutput += `<div style="padding-bottom: 2px;"><strong>Weight:</strong> <span style="float:right;">${((weightRoll.mult - 1)*100).toFixed(2)}% (${newItemData.system?.weight?.value ?? 0} lbs)</span></div>`;
 
-      // 3. Durability & Hardness
       const hardRoll = rollStat("Hardness", "durability");
       const hpRoll = rollStat("Hit Points", "durability");
       logOutput += `<div style="padding-bottom: 2px;"><strong>Hardness / HP:</strong> <span style="float:right;">${((hardRoll.mult - 1)*100).toFixed(2)}% / ${((hpRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
@@ -1326,6 +1320,7 @@ export class GranularForgeApp extends Application {
       this.render();
     });
 
+    // ─── DRAG HANDLERS ───
     html.find('.forge-drag-card').on('dragstart', e => {
       const batchIdx = $(e.currentTarget).data('batch-idx');
       if (batchIdx !== undefined && this.batchResults[batchIdx]) {
