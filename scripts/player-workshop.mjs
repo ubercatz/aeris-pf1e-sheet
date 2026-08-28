@@ -1,13 +1,12 @@
 /**
  * @file player-workshop.mjs
- * Player-Facing Procedural Crafting Workbench with Multi-Compendium Support, Material Compatibility, and Generalized Resources
+ * Player-Facing Procedural Crafting Workbench with GM Multi-Compendium Selector and Fallback Matcher
  */
 
 import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS } from "./enchantment-registry.mjs";
 
 const MODULE_ID = "pf1-altsheet-reworked";
 
-// ─── SPECIAL MATERIAL COMPATIBILITY & UNIT METADATA ─────────────────────────
 export const CRAFT_MATERIAL_RULES = {
   base: {
     name: "Base Material",
@@ -76,10 +75,6 @@ export class PlayerWorkshopApp extends Application {
     });
   }
 
-  /* -------------------------------------------- */
-  /* Sub-Skill Detection & Mapping                */
-  /* -------------------------------------------- */
-
   _getAvailableCraftDisciplines() {
     const subSkills = this.actor.system?.skills?.crf?.subSkills || {};
     const disciplines = [];
@@ -144,25 +139,18 @@ export class PlayerWorkshopApp extends Application {
     return disciplines;
   }
 
-  /* -------------------------------------------- */
-  /* Item Material Compatibility Checker          */
-  /* -------------------------------------------- */
-
   _getItemMaterialCategory(item) {
     const type = item.type;
     const subType = (item.system?.subType || item.system?.weaponSubtype || "").toLowerCase();
     const name = item.name.toLowerCase();
 
-    // Wooden weapons
     if (/\b(club|greatclub|quarterstaff|staff|bo staff|nunchaku|bow|crossbow)\b/i.test(name)) {
       if (/\b(bow|crossbow)\b/i.test(name)) return "bow";
       return "wood_weapon";
     }
 
-    // Metal weapons
     if (type === "weapon" && subType !== "ranged") return "metal_weapon";
 
-    // Armor categories
     if (type === "armor" || item.system?.armor !== undefined) {
       if (subType === "light" || /\b(leather|padded|hide|quilted)\b/i.test(name)) return "leather_armor";
       if (type === "shield" || subType === "shield") return "shield";
@@ -186,31 +174,32 @@ export class PlayerWorkshopApp extends Application {
     return valid;
   }
 
-  /* -------------------------------------------- */
-  /* Compendium Query & Multi-Pack Integration    */
-  /* -------------------------------------------- */
-
   async _loadCompendiumItemsForDiscipline(disciplineType) {
     const savedPacksMap = game.settings.get(MODULE_ID, "craftCompendiums") || {};
     let packKeys = savedPacksMap[disciplineType];
 
-    // Fallback: If no GM mapping exists, auto-select matching world packs
-    if (!packKeys || packKeys.length === 0) {
-      const allItemPacks = game.packs.filter(p => p.documentName === "Item");
+    const allItemPacks = game.packs.filter(p => p.documentName === "Item");
+
+    // Case-insensitive resolution + automatic fallback search
+    let targetPacks = [];
+    if (Array.isArray(packKeys) && packKeys.length > 0) {
+      targetPacks = allItemPacks.filter(p => 
+        packKeys.some(k => k.toLowerCase() === p.collection.toLowerCase() || k.toLowerCase() === p.metadata.id?.toLowerCase())
+      );
+    }
+
+    if (targetPacks.length === 0) {
       if (["weapon", "bow", "firearm", "siege"].includes(disciplineType)) {
-        packKeys = allItemPacks.filter(p => p.collection.includes("weapon")).map(p => p.collection);
+        targetPacks = allItemPacks.filter(p => p.collection.includes("weapon") || p.metadata.label.toLowerCase().includes("weapon"));
       } else if (disciplineType === "armor") {
-        packKeys = allItemPacks.filter(p => p.collection.includes("armor")).map(p => p.collection);
+        targetPacks = allItemPacks.filter(p => p.collection.includes("armor") || p.metadata.label.toLowerCase().includes("armor"));
       } else {
-        packKeys = allItemPacks.map(p => p.collection);
+        targetPacks = allItemPacks;
       }
     }
 
     const items = [];
-    for (const key of packKeys) {
-      const pack = game.packs.get(key);
-      if (!pack) continue;
-
+    for (const pack of targetPacks) {
       const index = await pack.getIndex({
         fields: ["system.subType", "system.weaponSubtype", "system.equipmentType", "system.armor", "system.slot", "system.price", "system.weaponGroups", "system.baseTypes"]
       });
@@ -274,10 +263,6 @@ export class PlayerWorkshopApp extends Application {
     return true;
   }
 
-  /* -------------------------------------------- */
-  /* 6 Core Generalized Resource Matcher          */
-  /* -------------------------------------------- */
-
   _calculateRequiredIngredients(baseItem, chosenMaterialKey) {
     const type = baseItem.type;
     const subType = (baseItem.system?.subType || baseItem.system?.weaponSubtype || "").toLowerCase();
@@ -287,7 +272,6 @@ export class PlayerWorkshopApp extends Application {
     const matRule = CRAFT_MATERIAL_RULES[chosenMaterialKey] || CRAFT_MATERIAL_RULES.base;
     const isSpecialMat = chosenMaterialKey !== "base" && chosenMaterialKey !== "steel";
 
-    // 1. Melee & Thrown Weapons
     if (type === "weapon" && subType !== "ranged" && !/\b(bow|crossbow|pistol|musket)\b/i.test(name)) {
       const isWoodWeapon = /\b(club|greatclub|quarterstaff|staff|bo staff|nunchaku)\b/i.test(name);
       
@@ -310,10 +294,7 @@ export class PlayerWorkshopApp extends Application {
           ingredients.push({ label: "Crafting Timber / Wood", pattern: /(wood|timber|lumber|haft)/i, qty: 2 });
         }
       }
-    }
-
-    // 2. Bows & Crossbows
-    else if (type === "weapon" && /\b(bow|crossbow)\b/i.test(name)) {
+    } else if (type === "weapon" && /\b(bow|crossbow)\b/i.test(name)) {
       const woodName = isSpecialMat ? matRule.unitName : "Crafting Timber / Wood";
       const woodPat = isSpecialMat ? new RegExp(matRule.name, "i") : /(wood|timber|lumber|stave|yew)/i;
 
@@ -324,17 +305,11 @@ export class PlayerWorkshopApp extends Application {
         ingredients.push({ label: woodName, pattern: woodPat, qty: 2 });
         ingredients.push({ label: "Mechanical Components / String", pattern: /(string|cord|sinew|wire|mechanism)/i, qty: 1 });
       }
-    }
-
-    // 3. Firearms
-    else if (type === "weapon" && /\b(pistol|musket|rifle|blunderbuss)\b/i.test(name)) {
+    } else if (type === "weapon" && /\b(pistol|musket|rifle|blunderbuss)\b/i.test(name)) {
       ingredients.push({ label: "Refined Metal / Steel", pattern: /(steel|iron|metal|bar|ingot|plate)/i, qty: 3 });
       ingredients.push({ label: "Mechanical Components", pattern: /(mechanism|fittings|lock|gear|scrap|spring)/i, qty: 1 });
       ingredients.push({ label: "Crafting Timber / Wood", pattern: /(wood|timber|lumber|stock)/i, qty: 1 });
-    }
-
-    // 4. Armor & Shields
-    else if (type === "armor" || type === "shield" || baseItem.system?.armor !== undefined) {
+    } else if (type === "armor" || type === "shield" || baseItem.system?.armor !== undefined) {
       if (subType === "light" || /\b(leather|padded|hide|quilted)\b/i.test(name)) {
         const leatherName = isSpecialMat ? matRule.unitName : "Treated Leather";
         const leatherPat = isSpecialMat ? new RegExp(matRule.name, "i") : /(leather|hide|pelt|skin)/i;
@@ -349,30 +324,23 @@ export class PlayerWorkshopApp extends Application {
         const metalPat = isSpecialMat ? new RegExp(matRule.name, "i") : /(steel|iron|metal|bar|ingot|plate)/i;
         ingredients.push({ label: metalName, pattern: metalPat, qty: 6 });
         ingredients.push({ label: "Treated Leather", pattern: /(leather|hide|pelt|skin)/i, qty: 3 });
-      } else { // Shields
+      } else {
         const shieldMatName = isSpecialMat ? matRule.unitName : "Refined Metal / Timber";
         const shieldPat = isSpecialMat ? new RegExp(matRule.name, "i") : /(steel|iron|metal|wood|timber|plate)/i;
         ingredients.push({ label: shieldMatName, pattern: shieldPat, qty: 2 });
         ingredients.push({ label: "Treated Leather", pattern: /(leather|hide|strap|grip)/i, qty: 1 });
       }
-    }
-
-    // 5. Ammunition
-    else if (type === "ammo") {
+    } else if (type === "ammo") {
       ingredients.push({ label: "Crafting Timber / Metal", pattern: /(wood|timber|steel|iron|lead|metal)/i, qty: 1 });
       ingredients.push({ label: "Mechanical Components / Fletchings", pattern: /(feather|fletching|powder|casing|mechanism|scrap)/i, qty: 1 });
-    }
-
-    // 6. Alchemy & Poison
-    else {
-      if (disciplineType === "poison" || /\b(poison|toxin|venom)\b/i.test(name)) {
+    } else {
+      if (/\b(poison|toxin|venom)\b/i.test(name)) {
         ingredients.push({ label: "Toxic Extracts", pattern: /(venom|toxin|poison|gland|extract)/i, qty: 2 });
       } else {
         ingredients.push({ label: "Alchemical Reagents", pattern: /(reagent|extract|salt|sulfur|phosphorus|solvent|herb)/i, qty: 2 });
       }
     }
 
-    // Inventory search by regex against item.name
     const inventory = this.actor.items.contents;
     const resolvedIngredients = ingredients.map(req => {
       const matchingItems = inventory.filter(invItem => 
@@ -391,15 +359,10 @@ export class PlayerWorkshopApp extends Application {
     return { list: resolvedIngredients, allSatisfied };
   }
 
-  /* -------------------------------------------- */
-  /* Data Preparation                             */
-  /* -------------------------------------------- */
-
   async getData() {
     const rawProjects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
     const disciplines = this._getAvailableCraftDisciplines();
 
-    // Select discipline from constructor or fallback
     if (!this.selectedDiscipline && disciplines.length > 0) {
       this.selectedDiscipline = disciplines[0].key;
     } else if (this.selectedDiscipline && !this.selectedDiscipline.startsWith("subSkills.")) {
@@ -422,6 +385,7 @@ export class PlayerWorkshopApp extends Application {
 
     return {
       actor: this.actor,
+      isGM: game.user.isGM,
       activeTab: this.activeTab,
       disciplines,
       selectedDiscipline: this.selectedDiscipline,
@@ -436,10 +400,6 @@ export class PlayerWorkshopApp extends Application {
       searchTerm: this.searchTerm
     };
   }
-
-  /* -------------------------------------------- */
-  /* HTML Rendering                               */
-  /* -------------------------------------------- */
 
   async _renderInner(data) {
     const discOpts = data.disciplines.map(d => 
@@ -523,15 +483,22 @@ export class PlayerWorkshopApp extends Application {
             
             <!-- COLUMN 1: DISCIPLINE & BLUEPRINTS -->
             <div style="flex:1.2; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
-              <div>
-                <label style="font-size:0.8em; font-weight:bold;">Active Craft Discipline</label>
-                <select id="workshop-discipline-select" style="width:100%; padding:4px; font-size:0.85em;">${discOpts}</select>
+              <div style="display:flex; gap:6px; align-items:flex-end;">
+                <div style="flex:1;">
+                  <label style="font-size:0.8em; font-weight:bold;">Active Craft Discipline</label>
+                  <select id="workshop-discipline-select" style="width:100%; padding:4px; font-size:0.85em;">${discOpts}</select>
+                </div>
+                ${data.isGM ? `
+                  <button type="button" id="workshop-gm-packs-btn" style="padding:4px 8px; font-size:0.8em; font-weight:bold; background:#747d8c; color:#fff; border:none; border-radius:3px; cursor:pointer;" title="Configure source compendiums for this discipline">
+                    ⚙️ Source Packs
+                  </button>
+                ` : ""}
               </div>
 
               <input type="text" id="workshop-search-input" value="${data.searchTerm}" placeholder="🔍 Search ${data.currentDiscipline.label} blueprints..." style="padding:4px; font-size:0.85em; border:1px solid #ced6e0; border-radius:3px;">
               
               <div style="flex-grow:1; max-height:520px; overflow-y:auto; border:1px solid #ced6e0; border-radius:4px; padding:4px; background:#fff;">
-                ${itemRows || `<p style="padding:10px; font-size:0.85em; color:#777;">No blueprints matching ${data.currentDiscipline.label} found in active compendiums.</p>`}
+                ${itemRows || `<p style="padding:10px; font-size:0.85em; color:#777;">No blueprints matching ${data.currentDiscipline.label} found. Click ⚙️ Source Packs to link compendiums.</p>`}
               </div>
             </div>
 
@@ -564,7 +531,6 @@ export class PlayerWorkshopApp extends Application {
                     </div>
                   </div>
 
-                  <!-- GENERALIZED INGREDIENTS LIST -->
                   <strong style="font-size:0.85em;">Required Inventory Materials:</strong>
                   <div style="background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:6px; margin:4px 0 8px 0;">
                     ${data.ingredientsInfo.list.map(ing => `
@@ -598,10 +564,6 @@ export class PlayerWorkshopApp extends Application {
     return $(html);
   }
 
-  /* -------------------------------------------- */
-  /* Event Listeners & Execution Logic            */
-  /* -------------------------------------------- */
-
   activateListeners(html) {
     super.activateListeners(html);
 
@@ -614,6 +576,46 @@ export class PlayerWorkshopApp extends Application {
       this.selectedDiscipline = e.target.value;
       this.selectedBaseItem = null;
       this.render();
+    });
+
+    // GM Compendium Picker Dialog
+    html.find('#workshop-gm-packs-btn').click(async () => {
+      const disciplines = this._getAvailableCraftDisciplines();
+      const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
+      const savedMap = game.settings.get(MODULE_ID, "craftCompendiums") || {};
+      const activePacks = new Set(savedMap[currentDisc.type] || []);
+      const allItemPacks = game.packs.filter(p => p.documentName === "Item");
+
+      const checkboxes = allItemPacks.map(p => `
+        <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; margin-bottom:4px; cursor:pointer;">
+          <input type="checkbox" class="gm-pack-cb" value="${p.collection}" ${activePacks.has(p.collection) ? "checked" : ""}>
+          <span>${p.metadata.label} <code style="color:#777; font-size:0.85em;">(${p.collection})</code></span>
+        </label>
+      `).join("");
+
+      new Dialog({
+        title: `⚙️ Configure Packs for ${currentDisc.label}`,
+        content: `
+          <form style="max-height:360px; overflow-y:auto; padding:6px;">
+            <p style="font-size:0.8em; color:#555;">Check all compendiums to search for blueprints under this discipline:</p>
+            ${checkboxes}
+          </form>
+        `,
+        buttons: {
+          save: {
+            label: "Save Packs",
+            callback: async (dHtml) => {
+              const selected = [];
+              dHtml.find('.gm-pack-cb:checked').each((i, el) => selected.push(el.value));
+              savedMap[currentDisc.type] = selected;
+              await game.settings.set(MODULE_ID, "craftCompendiums", savedMap);
+              ui.notifications.info(`Updated compendium sources for ${currentDisc.label}!`);
+              this.render();
+            }
+          }
+        },
+        default: "save"
+      }).render(true);
     });
 
     html.find('#workshop-search-input').on('input', e => {
@@ -643,9 +645,6 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
-    /* -------------------------------------------- */
-    /* Start Project Button                         */
-    /* -------------------------------------------- */
     html.find('#start-project-btn').click(async () => {
       if (!this.selectedBaseItem) return;
 
@@ -654,7 +653,6 @@ export class PlayerWorkshopApp extends Application {
         return ui.notifications.error("You do not have all required tangible materials in your inventory!");
       }
 
-      // Deduct items from inventory
       for (const ing of ingredientsInfo.list) {
         let needed = ing.qty;
         for (const itemId of ing.matchingItemIds) {
@@ -705,9 +703,6 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
-    /* -------------------------------------------- */
-    /* Work 1-Hour Shift                            */
-    /* -------------------------------------------- */
     html.find('.work-shift-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
       const projects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
@@ -776,9 +771,6 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
-    /* -------------------------------------------- */
-    /* Claim Finished Item                          */
-    /* -------------------------------------------- */
     html.find('.claim-project-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
       const projects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
@@ -865,9 +857,6 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
-    /* -------------------------------------------- */
-    /* Abandon Project                              */
-    /* -------------------------------------------- */
     html.find('.abandon-project-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
       const projects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
