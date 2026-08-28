@@ -17,6 +17,15 @@ Hooks.once("init", () => {
 
   registerHandlebarsHelpers();
 
+  // World Storage for Forge Settings & Batch Preferences
+  game.settings.register(MODULE_ID, "forgeSettings", {
+    name: "Forge Preferences",
+    scope: "world",
+    config: false,
+    type: Object,
+    default: {}
+  });
+  
   game.settings.register(MODULE_ID, "enable10xGranularity", {
     name: "Enable 10x Granularity Engine",
     hint: "Scales base dice faces (1d6 -> 1d60) and flat modifiers by 10x.",
