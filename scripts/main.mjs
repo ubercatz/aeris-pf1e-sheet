@@ -197,6 +197,18 @@ Hooks.once("ready", () => {
   game.aeris.GranularForgeApp = GranularForgeApp;
   game.aeris.openForge = () => new GranularForgeApp().render(true);
   apply10xConditionRegistry();
+  // Register Player Workshop API Launcher
+  const moduleObj = game.modules.get(MODULE_ID);
+  if (moduleObj) {
+    moduleObj.api = moduleObj.api || {};
+    moduleObj.api.openPlayerWorkshop = async (actor) => {
+      const targetActor = actor || canvas.tokens.controlled[0]?.actor || game.user.character;
+      if (!targetActor) return ui.notifications.warn("Please select a character token to open the workshop.");
+      
+      const { PlayerWorkshopApp } = await import("./player-workshop.mjs");
+      new PlayerWorkshopApp(targetActor).render(true);
+    };
+  }
 });
 
 // ─── STYLESHEET INJECTION ─────────────────────────────────────────────────
