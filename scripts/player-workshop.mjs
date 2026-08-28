@@ -1,23 +1,66 @@
 /**
  * @file player-workshop.mjs
- * Player-Facing Procedural Crafting & Enchanting Workbench with Tangible Materials & Sub-Skill Routing
+ * Player-Facing Procedural Crafting Workbench with Multi-Compendium Support, Material Compatibility, and Generalized Resources
  */
 
 import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS } from "./enchantment-registry.mjs";
 
 const MODULE_ID = "pf1-altsheet-reworked";
 
+// ─── SPECIAL MATERIAL COMPATIBILITY & UNIT METADATA ─────────────────────────
+export const CRAFT_MATERIAL_RULES = {
+  base: {
+    name: "Base Material",
+    unitName: "Standard Component",
+    allowed: ["metal_weapon", "wood_weapon", "metal_armor", "leather_armor", "shield", "ammo", "alchemy", "poison", "siege"]
+  },
+  steel: {
+    name: "Steel",
+    unitName: "Steel Ingot",
+    allowed: ["metal_weapon", "metal_armor", "shield", "siege"]
+  },
+  adamantine: {
+    name: "Adamantine",
+    unitName: "Adamantine Ingot",
+    allowed: ["metal_weapon", "metal_armor", "shield"]
+  },
+  coldiron: {
+    name: "Cold Iron",
+    unitName: "Cold Iron Ingot",
+    allowed: ["metal_weapon"]
+  },
+  silversheen: {
+    name: "Alchemical Silver",
+    unitName: "Alchemical Silver Ingot",
+    allowed: ["metal_weapon"]
+  },
+  mithral: {
+    name: "Mithral",
+    unitName: "Mithral Ingot",
+    allowed: ["metal_weapon", "metal_armor", "shield"]
+  },
+  darkwood: {
+    name: "Darkwood",
+    unitName: "Darkwood Timber",
+    allowed: ["wood_weapon", "shield", "bow", "crossbow", "siege"]
+  },
+  dragonhide: {
+    name: "Dragonhide",
+    unitName: "Dragon Scales / Hide",
+    allowed: ["leather_armor", "metal_armor", "shield"]
+  }
+};
+
 export class PlayerWorkshopApp extends Application {
   constructor(actor, options = {}) {
     super(options);
     this.actor = actor;
     this.activeTab = "bench"; // "bench" | "active"
-    this.selectedDiscipline = "";
-    this.selectedCompendium = "";
+    this.selectedDiscipline = options.discipline || "";
     this.compendiumItems = [];
     this.selectedBaseItem = null;
     this.selectedMaterial = "base";
-    this.acceleratedDcBonus = 0; // +0, +50, +100
+    this.acceleratedDcBonus = 0;
     this.searchTerm = "";
   }
 
@@ -34,14 +77,13 @@ export class PlayerWorkshopApp extends Application {
   }
 
   /* -------------------------------------------- */
-  /* Sub-Skill Detection & Discipline Parsing     */
+  /* Sub-Skill Detection & Mapping                */
   /* -------------------------------------------- */
 
   _getAvailableCraftDisciplines() {
     const subSkills = this.actor.system?.skills?.crf?.subSkills || {};
     const disciplines = [];
 
-    // Mapping known standard abbreviations to disciplines
     const disciplineMap = {
       cw: { label: "Craft (Weapons)", type: "weapon" },
       wea: { label: "Craft (Weapons)", type: "weapon" },
@@ -103,10 +145,87 @@ export class PlayerWorkshopApp extends Application {
   }
 
   /* -------------------------------------------- */
-  /* Item Filtering by Selected Discipline        */
+  /* Item Material Compatibility Checker          */
   /* -------------------------------------------- */
 
-  _filterCompendiumItem(item, disciplineType) {
+  _getItemMaterialCategory(item) {
+    const type = item.type;
+    const subType = (item.system?.subType || item.system?.weaponSubtype || "").toLowerCase();
+    const name = item.name.toLowerCase();
+
+    // Wooden weapons
+    if (/\b(club|greatclub|quarterstaff|staff|bo staff|nunchaku|bow|crossbow)\b/i.test(name)) {
+      if (/\b(bow|crossbow)\b/i.test(name)) return "bow";
+      return "wood_weapon";
+    }
+
+    // Metal weapons
+    if (type === "weapon" && subType !== "ranged") return "metal_weapon";
+
+    // Armor categories
+    if (type === "armor" || item.system?.armor !== undefined) {
+      if (subType === "light" || /\b(leather|padded|hide|quilted)\b/i.test(name)) return "leather_armor";
+      if (type === "shield" || subType === "shield") return "shield";
+      return "metal_armor";
+    }
+
+    if (type === "ammo") return "ammo";
+    return "general";
+  }
+
+  _getValidMaterialsForItem(item) {
+    if (!item) return { base: CRAFT_MATERIAL_RULES.base };
+    const itemCat = this._getItemMaterialCategory(item);
+    const valid = {};
+
+    for (const [key, rule] of Object.entries(CRAFT_MATERIAL_RULES)) {
+      if (rule.allowed.includes(itemCat) || rule.allowed.includes("general") || key === "base") {
+        valid[key] = rule;
+      }
+    }
+    return valid;
+  }
+
+  /* -------------------------------------------- */
+  /* Compendium Query & Multi-Pack Integration    */
+  /* -------------------------------------------- */
+
+  async _loadCompendiumItemsForDiscipline(disciplineType) {
+    const savedPacksMap = game.settings.get(MODULE_ID, "craftCompendiums") || {};
+    let packKeys = savedPacksMap[disciplineType];
+
+    // Fallback: If no GM mapping exists, auto-select matching world packs
+    if (!packKeys || packKeys.length === 0) {
+      const allItemPacks = game.packs.filter(p => p.documentName === "Item");
+      if (["weapon", "bow", "firearm", "siege"].includes(disciplineType)) {
+        packKeys = allItemPacks.filter(p => p.collection.includes("weapon")).map(p => p.collection);
+      } else if (disciplineType === "armor") {
+        packKeys = allItemPacks.filter(p => p.collection.includes("armor")).map(p => p.collection);
+      } else {
+        packKeys = allItemPacks.map(p => p.collection);
+      }
+    }
+
+    const items = [];
+    for (const key of packKeys) {
+      const pack = game.packs.get(key);
+      if (!pack) continue;
+
+      const index = await pack.getIndex({
+        fields: ["system.subType", "system.weaponSubtype", "system.equipmentType", "system.armor", "system.slot", "system.price", "system.weaponGroups", "system.baseTypes"]
+      });
+
+      for (const entry of index) {
+        if (this._filterItemByDiscipline(entry, disciplineType)) {
+          entry._packCollection = pack.collection;
+          items.push(entry);
+        }
+      }
+    }
+    return items;
+  }
+
+  _filterItemByDiscipline(item, disciplineType) {
     const type = item.type;
     const subType = (item.system?.subType || item.system?.weaponSubtype || "").toLowerCase();
     const eqType = (item.system?.equipmentType || "").toLowerCase();
@@ -116,6 +235,7 @@ export class PlayerWorkshopApp extends Application {
     if (disciplineType === "weapon") {
       if (type !== "weapon" || subType === "ammo") return false;
       if (wpnGroup.includes("bows") || wpnGroup.includes("crossbows") || wpnGroup.includes("firearms")) return false;
+      if (/\b(bow|crossbow|pistol|musket|rifle|blunderbuss)\b/i.test(name)) return false;
       return true;
     }
 
@@ -155,7 +275,7 @@ export class PlayerWorkshopApp extends Application {
   }
 
   /* -------------------------------------------- */
-  /* Tangible Ingredient Parser & Validator       */
+  /* 6 Core Generalized Resource Matcher          */
   /* -------------------------------------------- */
 
   _calculateRequiredIngredients(baseItem, chosenMaterialKey) {
@@ -164,72 +284,95 @@ export class PlayerWorkshopApp extends Application {
     const name = baseItem.name.toLowerCase();
     const ingredients = [];
 
-    const mat = SPECIAL_MATERIALS[chosenMaterialKey] || SPECIAL_MATERIALS.base;
-    const metalName = mat.name !== "Base" && mat.name !== "Steel" ? `${mat.name} Ingot` : "Steel Ingot";
+    const matRule = CRAFT_MATERIAL_RULES[chosenMaterialKey] || CRAFT_MATERIAL_RULES.base;
+    const isSpecialMat = chosenMaterialKey !== "base" && chosenMaterialKey !== "steel";
 
     // 1. Melee & Thrown Weapons
     if (type === "weapon" && subType !== "ranged" && !/\b(bow|crossbow|pistol|musket)\b/i.test(name)) {
-      if (subType === "light") {
-        ingredients.push({ label: metalName, pattern: new RegExp(`(${mat.name}|steel|iron|metal|bar|ingot)`, "i"), qty: 1 });
-        ingredients.push({ label: "Leather Strip / Grip", pattern: /(leather|hide|strip|cord|cloth)/i, qty: 1 });
-      } else if (subType === "1h") {
-        ingredients.push({ label: metalName, pattern: new RegExp(`(${mat.name}|steel|iron|metal|bar|ingot)`, "i"), qty: 2 });
-        ingredients.push({ label: "Wood / Leather Haft", pattern: /(wood|timber|haft|leather|grip)/i, qty: 1 });
-      } else { // 2H
-        ingredients.push({ label: metalName, pattern: new RegExp(`(${mat.name}|steel|iron|metal|bar|ingot)`, "i"), qty: 4 });
-        ingredients.push({ label: "Reinforced Timber / Haft", pattern: /(wood|timber|haft|hardwood)/i, qty: 2 });
+      const isWoodWeapon = /\b(club|greatclub|quarterstaff|staff|bo staff|nunchaku)\b/i.test(name);
+      
+      if (isWoodWeapon) {
+        const matName = isSpecialMat ? matRule.unitName : "Crafting Timber / Wood";
+        const pat = isSpecialMat ? new RegExp(matRule.name, "i") : /(wood|timber|lumber|haft|stave)/i;
+        ingredients.push({ label: matName, pattern: pat, qty: subType === "2h" ? 3 : 2 });
+      } else {
+        const matName = isSpecialMat ? matRule.unitName : "Refined Metal / Steel";
+        const pat = isSpecialMat ? new RegExp(matRule.name, "i") : /(steel|iron|metal|bar|ingot|plate)/i;
+        
+        if (subType === "light") {
+          ingredients.push({ label: matName, pattern: pat, qty: 1 });
+          ingredients.push({ label: "Treated Leather / Grip", pattern: /(leather|hide|pelt|strap)/i, qty: 1 });
+        } else if (subType === "1h") {
+          ingredients.push({ label: matName, pattern: pat, qty: 2 });
+          ingredients.push({ label: "Crafting Timber / Wood", pattern: /(wood|timber|lumber|haft)/i, qty: 1 });
+        } else {
+          ingredients.push({ label: matName, pattern: pat, qty: 4 });
+          ingredients.push({ label: "Crafting Timber / Wood", pattern: /(wood|timber|lumber|haft)/i, qty: 2 });
+        }
       }
     }
 
     // 2. Bows & Crossbows
     else if (type === "weapon" && /\b(bow|crossbow)\b/i.test(name)) {
+      const woodName = isSpecialMat ? matRule.unitName : "Crafting Timber / Wood";
+      const woodPat = isSpecialMat ? new RegExp(matRule.name, "i") : /(wood|timber|lumber|stave|yew)/i;
+
       if (/\bcrossbow\b/i.test(name)) {
-        ingredients.push({ label: "Hardwood Stock", pattern: /(wood|timber|stock|lumber)/i, qty: 3 });
-        ingredients.push({ label: "Steel / Metal Mechanism", pattern: /(steel|iron|metal|mechanism|fittings|latch)/i, qty: 1 });
-        ingredients.push({ label: "Torsion Bowstring", pattern: /(string|cord|sinew|wire)/i, qty: 1 });
+        ingredients.push({ label: woodName, pattern: woodPat, qty: 3 });
+        ingredients.push({ label: "Mechanical Components", pattern: /(mechanism|fittings|lock|gear|scrap|spring|metal)/i, qty: 1 });
       } else {
-        ingredients.push({ label: "Flexible Stave (Yew/Wood)", pattern: /(wood|timber|yew|stave|darkwood)/i, qty: 2 });
-        ingredients.push({ label: "Braided Bowstring", pattern: /(string|cord|sinew|hemp)/i, qty: 1 });
+        ingredients.push({ label: woodName, pattern: woodPat, qty: 2 });
+        ingredients.push({ label: "Mechanical Components / String", pattern: /(string|cord|sinew|wire|mechanism)/i, qty: 1 });
       }
     }
 
     // 3. Firearms
     else if (type === "weapon" && /\b(pistol|musket|rifle|blunderbuss)\b/i.test(name)) {
-      ingredients.push({ label: "Forged Steel Barrel", pattern: /(steel|iron|barrel|ingot|metal)/i, qty: 3 });
-      ingredients.push({ label: "Lock & Trigger Mechanism", pattern: /(mechanism|lock|fittings|trigger|clockwork)/i, qty: 1 });
-      ingredients.push({ label: "Hardwood Stock", pattern: /(wood|timber|stock|hardwood)/i, qty: 1 });
+      ingredients.push({ label: "Refined Metal / Steel", pattern: /(steel|iron|metal|bar|ingot|plate)/i, qty: 3 });
+      ingredients.push({ label: "Mechanical Components", pattern: /(mechanism|fittings|lock|gear|scrap|spring)/i, qty: 1 });
+      ingredients.push({ label: "Crafting Timber / Wood", pattern: /(wood|timber|lumber|stock)/i, qty: 1 });
     }
 
     // 4. Armor & Shields
     else if (type === "armor" || type === "shield" || baseItem.system?.armor !== undefined) {
-      if (subType === "light") {
-        ingredients.push({ label: "Treated Leather Hides", pattern: /(leather|hide|pelt|skin)/i, qty: 2 });
-        ingredients.push({ label: "Cloth Padding", pattern: /(cloth|padding|linen|wool)/i, qty: 1 });
+      if (subType === "light" || /\b(leather|padded|hide|quilted)\b/i.test(name)) {
+        const leatherName = isSpecialMat ? matRule.unitName : "Treated Leather";
+        const leatherPat = isSpecialMat ? new RegExp(matRule.name, "i") : /(leather|hide|pelt|skin)/i;
+        ingredients.push({ label: leatherName, pattern: leatherPat, qty: 3 });
       } else if (subType === "medium") {
-        ingredients.push({ label: metalName, pattern: new RegExp(`(${mat.name}|steel|iron|scale|ring|ingot)`, "i"), qty: 4 });
-        ingredients.push({ label: "Padded Undergarment", pattern: /(leather|padding|cloth|hide)/i, qty: 2 });
+        const metalName = isSpecialMat ? matRule.unitName : "Refined Metal / Steel";
+        const metalPat = isSpecialMat ? new RegExp(matRule.name, "i") : /(steel|iron|metal|bar|ingot|plate|scale)/i;
+        ingredients.push({ label: metalName, pattern: metalPat, qty: 4 });
+        ingredients.push({ label: "Treated Leather", pattern: /(leather|hide|pelt|skin)/i, qty: 2 });
       } else if (subType === "heavy") {
-        ingredients.push({ label: metalName, pattern: new RegExp(`(${mat.name}|steel|iron|plate|ingot)`, "i"), qty: 6 });
-        ingredients.push({ label: "Heavy Armor Padding", pattern: /(leather|padding|cloth|quilted)/i, qty: 3 });
+        const metalName = isSpecialMat ? matRule.unitName : "Refined Metal / Steel";
+        const metalPat = isSpecialMat ? new RegExp(matRule.name, "i") : /(steel|iron|metal|bar|ingot|plate)/i;
+        ingredients.push({ label: metalName, pattern: metalPat, qty: 6 });
+        ingredients.push({ label: "Treated Leather", pattern: /(leather|hide|pelt|skin)/i, qty: 3 });
       } else { // Shields
-        ingredients.push({ label: metalName, pattern: new RegExp(`(${mat.name}|steel|iron|wood|timber|shield)`, "i"), qty: 3 });
-        ingredients.push({ label: "Leather Shield Straps", pattern: /(leather|strap|grip|buckle)/i, qty: 1 });
+        const shieldMatName = isSpecialMat ? matRule.unitName : "Refined Metal / Timber";
+        const shieldPat = isSpecialMat ? new RegExp(matRule.name, "i") : /(steel|iron|metal|wood|timber|plate)/i;
+        ingredients.push({ label: shieldMatName, pattern: shieldPat, qty: 2 });
+        ingredients.push({ label: "Treated Leather", pattern: /(leather|hide|strap|grip)/i, qty: 1 });
       }
     }
 
-    // 5. Ammunition Bundles
+    // 5. Ammunition
     else if (type === "ammo") {
-      ingredients.push({ label: "Wood / Iron Rods", pattern: /(wood|timber|lead|iron|metal|bullet)/i, qty: 1 });
-      ingredients.push({ label: "Fletchings / Powder Doses", pattern: /(feather|fletching|powder|casing)/i, qty: 1 });
+      ingredients.push({ label: "Crafting Timber / Metal", pattern: /(wood|timber|steel|iron|lead|metal)/i, qty: 1 });
+      ingredients.push({ label: "Mechanical Components / Fletchings", pattern: /(feather|fletching|powder|casing|mechanism|scrap)/i, qty: 1 });
     }
 
     // 6. Alchemy & Poison
     else {
-      ingredients.push({ label: "Alchemical Reagents / Toxic Extract", pattern: /(reagent|extract|salt|sulfur|venom|toxin|herb)/i, qty: 2 });
-      ingredients.push({ label: "Glass Vial / Ceramic Flask", pattern: /(flask|vial|bottle|glass|jar)/i, qty: 1 });
+      if (disciplineType === "poison" || /\b(poison|toxin|venom)\b/i.test(name)) {
+        ingredients.push({ label: "Toxic Extracts", pattern: /(venom|toxin|poison|gland|extract)/i, qty: 2 });
+      } else {
+        ingredients.push({ label: "Alchemical Reagents", pattern: /(reagent|extract|salt|sulfur|phosphorus|solvent|herb)/i, qty: 2 });
+      }
     }
 
-    // Inspect player inventory for matching items
+    // Inventory search by regex against item.name
     const inventory = this.actor.items.contents;
     const resolvedIngredients = ingredients.map(req => {
       const matchingItems = inventory.filter(invItem => 
@@ -256,28 +399,20 @@ export class PlayerWorkshopApp extends Application {
     const rawProjects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
     const disciplines = this._getAvailableCraftDisciplines();
 
+    // Select discipline from constructor or fallback
     if (!this.selectedDiscipline && disciplines.length > 0) {
       this.selectedDiscipline = disciplines[0].key;
+    } else if (this.selectedDiscipline && !this.selectedDiscipline.startsWith("subSkills.")) {
+      const match = disciplines.find(d => d.subKey === this.selectedDiscipline || d.type === this.selectedDiscipline);
+      if (match) this.selectedDiscipline = match.key;
     }
 
     const currentDiscipline = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
+    this.compendiumItems = await this._loadCompendiumItemsForDiscipline(currentDiscipline.type);
 
-    const packs = game.packs.filter(p => p.documentName === "Item");
-    const packChoices = packs.reduce((acc, p) => { acc[p.collection] = p.metadata.label; return acc; }, {});
-    
-    if (!this.selectedCompendium && packs.length > 0) {
-      const defPack = packs.find(p => p.collection.includes("weapon") || p.collection.includes("equipment")) || packs[0];
-      this.selectedCompendium = defPack.collection;
-    }
-
-    if (this.selectedCompendium) {
-      const pack = game.packs.get(this.selectedCompendium);
-      if (pack) {
-        const rawIndex = await pack.getIndex({
-          fields: ["system.subType", "system.weaponSubtype", "system.equipmentType", "system.armor", "system.slot", "system.price", "system.weaponGroups", "system.baseTypes"]
-        });
-        this.compendiumItems = rawIndex.filter(i => this._filterCompendiumItem(i, currentDiscipline.type));
-      }
+    const validMaterials = this._getValidMaterialsForItem(this.selectedBaseItem);
+    if (!validMaterials[this.selectedMaterial]) {
+      this.selectedMaterial = "base";
     }
 
     let ingredientsInfo = { list: [], allSatisfied: false };
@@ -291,12 +426,10 @@ export class PlayerWorkshopApp extends Application {
       disciplines,
       selectedDiscipline: this.selectedDiscipline,
       currentDiscipline,
-      packs: packChoices,
-      selectedCompendium: this.selectedCompendium,
       items: this.compendiumItems,
       selectedBaseItem: this.selectedBaseItem,
       selectedMaterial: this.selectedMaterial,
-      materials: SPECIAL_MATERIALS,
+      validMaterials,
       acceleratedDcBonus: this.acceleratedDcBonus,
       ingredientsInfo,
       projects: rawProjects,
@@ -305,7 +438,7 @@ export class PlayerWorkshopApp extends Application {
   }
 
   /* -------------------------------------------- */
-  /* HTML Template Rendering                      */
+  /* HTML Rendering                               */
   /* -------------------------------------------- */
 
   async _renderInner(data) {
@@ -313,16 +446,12 @@ export class PlayerWorkshopApp extends Application {
       `<option value="${d.key}" ${d.key === data.selectedDiscipline ? "selected" : ""}>${d.label} (+${d.mod} | ${d.rank} Ranks${d.isGoldMode ? ' ⚡ Gold Mode' : ''})</option>`
     ).join("");
 
-    const packOpts = Object.entries(data.packs).map(([k, v]) => 
-      `<option value="${k}" ${k === data.selectedCompendium ? "selected" : ""}>${v}</option>`
-    ).join("");
-
-    const matOpts = Object.entries(data.materials).map(([k, v]) => 
+    const matOpts = Object.entries(data.validMaterials).map(([k, v]) => 
       `<option value="${k}" ${k === data.selectedMaterial ? "selected" : ""}>${v.name}</option>`
     ).join("");
 
     const itemRows = data.items.map(i => `
-      <div class="bench-item-row ${data.selectedBaseItem?._id === i._id ? "selected" : ""}" data-id="${i._id}" style="display:flex; align-items:center; gap:6px; padding:5px; cursor:pointer; border-bottom:1px solid rgba(0,0,0,0.06); background:${data.selectedBaseItem?._id === i._id ? "rgba(46,204,113,0.15)" : "transparent"};">
+      <div class="bench-item-row ${data.selectedBaseItem?._id === i._id ? "selected" : ""}" data-id="${i._id}" data-pack="${i._packCollection}" style="display:flex; align-items:center; gap:6px; padding:5px; cursor:pointer; border-bottom:1px solid rgba(0,0,0,0.06); background:${data.selectedBaseItem?._id === i._id ? "rgba(46,204,113,0.15)" : "transparent"};">
         <img src="${i.img || "icons/svg/item-bag.svg"}" width="26" height="26" style="border-radius:3px;" />
         <span style="font-size:0.85em; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${i.name}</span>
         <span style="font-size:0.75em; color:#777;">${i.system?.price || 0} GP</span>
@@ -355,7 +484,7 @@ export class PlayerWorkshopApp extends Application {
 
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <span style="font-size:0.75em; color:#777;">
-              Active Phase: ${proj.shiftsLogged.length < Math.floor(proj.requiredRolls/3) ? "Smelting & Durability (Phase 1)" : proj.shiftsLogged.length < Math.floor(proj.requiredRolls*2/3) ? "Forging & Physical Geometry (Phase 2)" : "Honing & Precision Edge (Phase 3)"}
+              Phase: ${proj.shiftsLogged.length < Math.floor(proj.requiredRolls/3) ? "Phase 1: Smelting & Ingot Prep" : proj.shiftsLogged.length < Math.floor(proj.requiredRolls*2/3) ? "Phase 2: Forging & Shaping" : "Phase 3: Honing & Tempering"}
             </span>
             <div style="display:flex; gap:6px;">
               ${pct >= 100 ? `
@@ -390,32 +519,25 @@ export class PlayerWorkshopApp extends Application {
         </nav>
 
         ${data.activeTab === "bench" ? `
-          <!-- BENCH TAB -->
           <div style="display:flex; flex:1; gap:12px; overflow:hidden;">
             
-            <!-- COLUMN 1: DISCIPLINE & COMPENDIUM SELECTION -->
+            <!-- COLUMN 1: DISCIPLINE & BLUEPRINTS -->
             <div style="flex:1.2; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
-              <div style="display:flex; gap:6px;">
-                <div style="flex:1;">
-                  <label style="font-size:0.8em; font-weight:bold;">Active Craft Discipline</label>
-                  <select id="workshop-discipline-select" style="width:100%; padding:3px; font-size:0.85em;">${discOpts}</select>
-                </div>
-                <div style="flex:1;">
-                  <label style="font-size:0.8em; font-weight:bold;">Source Compendium</label>
-                  <select id="workshop-pack-select" style="width:100%; padding:3px; font-size:0.85em;">${packOpts}</select>
-                </div>
+              <div>
+                <label style="font-size:0.8em; font-weight:bold;">Active Craft Discipline</label>
+                <select id="workshop-discipline-select" style="width:100%; padding:4px; font-size:0.85em;">${discOpts}</select>
               </div>
 
               <input type="text" id="workshop-search-input" value="${data.searchTerm}" placeholder="🔍 Search ${data.currentDiscipline.label} blueprints..." style="padding:4px; font-size:0.85em; border:1px solid #ced6e0; border-radius:3px;">
               
-              <div style="flex-grow:1; max-height:480px; overflow-y:auto; border:1px solid #ced6e0; border-radius:4px; padding:4px; background:#fff;">
-                ${itemRows || `<p style="padding:10px; font-size:0.85em; color:#777;">No blueprints matching ${data.currentDiscipline.label} found in this compendium.</p>`}
+              <div style="flex-grow:1; max-height:520px; overflow-y:auto; border:1px solid #ced6e0; border-radius:4px; padding:4px; background:#fff;">
+                ${itemRows || `<p style="padding:10px; font-size:0.85em; color:#777;">No blueprints matching ${data.currentDiscipline.label} found in active compendiums.</p>`}
               </div>
             </div>
 
-            <!-- COLUMN 2: RECIPE & INGREDIENT REQUIREMENTS -->
+            <!-- COLUMN 2: BLUEPRINT & MATERIAL CHECK -->
             <div style="flex:1.1; display:flex; flex-direction:column; gap:8px; background:rgba(0,0,0,0.02); padding:10px; border-radius:6px; border:1px solid #ced6e0; overflow-y:auto;">
-              <strong style="font-size:0.95em; border-bottom:1px solid #ccc; padding-bottom:3px;">Forging Blueprint & Material Requirements</strong>
+              <strong style="font-size:0.95em; border-bottom:1px solid #ccc; padding-bottom:3px;">Blueprint & Material Requirements</strong>
               
               ${data.selectedBaseItem ? `
                 <div style="font-size:0.85em; line-height:1.4;">
@@ -423,13 +545,13 @@ export class PlayerWorkshopApp extends Application {
                     <img src="${data.selectedBaseItem.img}" width="32" height="32" style="border-radius:3px;" />
                     <div>
                       <strong style="font-size:1.05em;">${data.selectedBaseItem.name}</strong><br/>
-                      <span style="color:#555;">Mundane Cost: ${data.selectedBaseItem.system?.price || 0} GP | Target Goal: ${(data.selectedBaseItem.system?.price || 10) + 300} GP</span>
+                      <span style="color:#555;">Base Price: ${data.selectedBaseItem.system?.price || 0} GP | Goal: ${(data.selectedBaseItem.system?.price || 10) + 300} GP</span>
                     </div>
                   </div>
 
                   <div style="display:flex; gap:6px; margin-bottom:8px;">
                     <div style="flex:1;">
-                      <label style="font-size:0.8em; font-weight:bold;">Material</label>
+                      <label style="font-size:0.8em; font-weight:bold;">Special Material</label>
                       <select id="workshop-material-select" style="width:100%; padding:3px; font-size:0.85em;">${matOpts}</select>
                     </div>
                     <div style="flex:1;">
@@ -442,7 +564,7 @@ export class PlayerWorkshopApp extends Application {
                     </div>
                   </div>
 
-                  <!-- TANGIBLE INGREDIENTS LIST -->
+                  <!-- GENERALIZED INGREDIENTS LIST -->
                   <strong style="font-size:0.85em;">Required Inventory Materials:</strong>
                   <div style="background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:6px; margin:4px 0 8px 0;">
                     ${data.ingredientsInfo.list.map(ing => `
@@ -463,11 +585,10 @@ export class PlayerWorkshopApp extends Application {
                 <button type="button" id="start-project-btn" ${!data.ingredientsInfo.allSatisfied ? 'disabled style="opacity:0.6; cursor:not-allowed;"' : ''} style="margin-top:auto; padding:10px; font-weight:bold; background:#2f3542; color:#fff; border:none; border-radius:4px; cursor:pointer;">
                   ${data.ingredientsInfo.allSatisfied ? '🔥 Consume Materials & Begin Project' : '⚠️ Missing Required Ingredients in Inventory'}
                 </button>
-              ` : '<p style="text-align:center; color:#777; margin-top:60px;">Select an equipment blueprint on the left to verify required inventory materials.</p>'}
+              ` : '<p style="text-align:center; color:#777; margin-top:60px;">Select a blueprint on the left to verify required inventory materials.</p>'}
             </div>
           </div>
         ` : `
-          <!-- ACTIVE PROJECTS TAB -->
           <div style="flex:1; overflow-y:auto; padding-right:4px;">
             ${activeProjectsHtml}
           </div>
@@ -478,7 +599,7 @@ export class PlayerWorkshopApp extends Application {
   }
 
   /* -------------------------------------------- */
-  /* Event Listeners & Craft Execution Logic      */
+  /* Event Listeners & Execution Logic            */
   /* -------------------------------------------- */
 
   activateListeners(html) {
@@ -495,12 +616,6 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
-    html.find('#workshop-pack-select').change(e => {
-      this.selectedCompendium = e.target.value;
-      this.selectedBaseItem = null;
-      this.render();
-    });
-
     html.find('#workshop-search-input').on('input', e => {
       this.searchTerm = e.target.value.toLowerCase();
       html.find('.bench-item-row').each((i, el) => {
@@ -510,7 +625,8 @@ export class PlayerWorkshopApp extends Application {
 
     html.find('.bench-item-row').click(async e => {
       const id = $(e.currentTarget).data('id');
-      const pack = game.packs.get(this.selectedCompendium);
+      const packKey = $(e.currentTarget).data('pack');
+      const pack = game.packs.get(packKey);
       if (pack) {
         this.selectedBaseItem = await pack.getDocument(id);
         this.render();
@@ -528,7 +644,7 @@ export class PlayerWorkshopApp extends Application {
     });
 
     /* -------------------------------------------- */
-    /* Consume Materials & Begin Project            */
+    /* Start Project Button                         */
     /* -------------------------------------------- */
     html.find('#start-project-btn').click(async () => {
       if (!this.selectedBaseItem) return;
@@ -584,7 +700,7 @@ export class PlayerWorkshopApp extends Application {
       projects.push(newProject);
       await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
 
-      ui.notifications.info(`Deducted materials and initialized forging project for ${newProject.name}!`);
+      ui.notifications.info(`Deducted materials and initialized project for ${newProject.name}!`);
       this.activeTab = "active";
       this.render();
     });
@@ -626,11 +742,9 @@ export class PlayerWorkshopApp extends Application {
         ui.notifications.warn(`Shift Failed (Strike ${proj.failedChecks}/${failLimit}). Progress lost.`);
       }
 
-      // Failure Condition: Project Ruin
       if (proj.failedChecks >= failLimit || (proj.shiftsLogged.length > 1 && proj.currentGp <= 0)) {
         ui.notifications.error(`Project Ruined! The forging of ${proj.name} collapsed. 50% scrap materials returned.`);
         
-        // Salvage 50% materials back to inventory
         if (proj.consumedIngredients) {
           for (const ing of proj.consumedIngredients) {
             const salvageQty = Math.max(1, Math.floor(ing.qty * 0.5));
@@ -649,7 +763,6 @@ export class PlayerWorkshopApp extends Application {
         return;
       }
 
-      // Early Gold Completion: Roll remaining modifier checks immediately without time loss
       if (proj.currentGp >= proj.targetGp && proj.shiftsLogged.length < proj.requiredRolls) {
         const needed = proj.requiredRolls - proj.shiftsLogged.length;
         ui.notifications.info(`GP Goal achieved early! Rolling remaining ${needed} modifier checks.`);
@@ -677,7 +790,6 @@ export class PlayerWorkshopApp extends Application {
       const isArmor = itemData.type === "armor" || itemData.system?.armor !== undefined;
       const mat = SPECIAL_MATERIALS[proj.material] || SPECIAL_MATERIALS.base;
 
-      // Chronological 3-Phase Variance Mapping
       const totalShifts = proj.shiftsLogged.length;
       const phase1 = proj.shiftsLogged.slice(0, Math.floor(totalShifts / 3));
       const phase2 = proj.shiftsLogged.slice(Math.floor(totalShifts / 3), Math.floor(totalShifts * 2 / 3));
@@ -703,14 +815,14 @@ export class PlayerWorkshopApp extends Application {
       itemData.system.masterwork = true;
       itemData.system.identified = true;
 
-      // Apply Phase 1: Durability, Hardness, and HP
+      // Phase 1: Durability
       let bHard = (typeof itemData.system.hardness === "object" ? itemData.system.hardness.value : itemData.system.hardness) || 0;
       let bHp = (itemData.system.hp?.base ?? itemData.system.hp?.max ?? 0);
       itemData.system.hardness = Math.max(0, Math.round((bHard * 10 + mat.hardnessMod) * hardMult));
       const fHp = Math.max(1, Math.round((bHp * 10 * mat.hpMult) * hardMult));
       itemData.system.hp = { base: fHp, max: fHp, value: fHp };
 
-      // Apply Phase 2: Physical AC, ACP & Weight
+      // Phase 2: Physical AC & ACP
       if (isArmor && itemData.system?.armor) {
         itemData.system.armor.value = Math.round((itemData.system.armor.value || 0) * 10 * physMult);
         let adjAcp = Math.round((itemData.system.armor.acp || 0) * 10 * (2.0 - physMult));
@@ -718,7 +830,7 @@ export class PlayerWorkshopApp extends Application {
         itemData.system.armor.acp = adjAcp;
       }
 
-      // Apply Phase 3: Precision, Crit Threat & Multipliers
+      // Phase 3: Precision & Crit
       if (isWeapon && itemData.system?.actions) {
         itemData.system.actions.forEach(act => {
           act.ability = act.ability || {};
@@ -749,7 +861,7 @@ export class PlayerWorkshopApp extends Application {
       projects.splice(idx, 1);
       await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
 
-      ui.notifications.info(`Successfully finished and added ${itemData.name} to inventory!`);
+      ui.notifications.info(`Successfully crafted ${itemData.name}!`);
       this.render();
     });
 
@@ -764,7 +876,7 @@ export class PlayerWorkshopApp extends Application {
 
       Dialog.confirm({
         title: "Abandon Crafting Project",
-        content: `<p>Are you sure you want to abandon <strong>${proj.name}</strong>? You will salvage 50% of the raw physical materials as scrap.</p>`,
+        content: `<p>Are you sure you want to abandon <strong>${proj.name}</strong>? You will salvage 50% of the physical materials as scrap.</p>`,
         yes: async () => {
           if (proj.consumedIngredients) {
             for (const ing of proj.consumedIngredients) {

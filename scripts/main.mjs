@@ -26,6 +26,23 @@ Hooks.once("init", () => {
     default: {}
   });
   
+  // World Settings for Craft Disciplines -> Compendium Packs
+  game.settings.register(MODULE_ID, "craftCompendiums", {
+    name: "Crafting Discipline Compendiums",
+    scope: "world",
+    config: false,
+    type: Object,
+    default: {
+      weapon: ["PF1.PACKS.weapons-and-ammo"],
+      bow: ["PF1.PACKS.weapons-and-ammo"],
+      armor: ["PF1.PACKS.armors-and-shields"],
+      firearm: ["PF1.PACKS.weapons-and-ammo"],
+      alchemy: ["PF1.PACKS.equipment", "PF1.PACKS.weapons-and-ammo"],
+      poison: ["PF1.PACKS.equipment"],
+      siege: ["PF1.PACKS.weapons-and-ammo"]
+    }
+  });
+
   game.settings.register(MODULE_ID, "enable10xGranularity", {
     name: "Enable 10x Granularity Engine",
     hint: "Scales base dice faces (1d6 -> 1d60) and flat modifiers by 10x.",
@@ -201,12 +218,12 @@ Hooks.once("ready", () => {
   const moduleObj = game.modules.get(MODULE_ID);
   if (moduleObj) {
     moduleObj.api = moduleObj.api || {};
-    moduleObj.api.openPlayerWorkshop = async (actor) => {
+    moduleObj.api.openPlayerWorkshop = async (actor, targetDiscipline = null) => {
       const targetActor = actor || canvas.tokens.controlled[0]?.actor || game.user.character;
       if (!targetActor) return ui.notifications.warn("Please select a character token to open the workshop.");
       
       const { PlayerWorkshopApp } = await import("./player-workshop.mjs");
-      new PlayerWorkshopApp(targetActor).render(true);
+      new PlayerWorkshopApp(targetActor, { discipline: targetDiscipline }).render(true);
     };
   }
 });
