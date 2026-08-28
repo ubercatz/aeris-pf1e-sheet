@@ -1,16 +1,16 @@
 /**
  * @file gear-forge.mjs
- * Procedural 10x Gear Forge with Tabbed Architecture, Weight Variance, and ACP/ASF Scaling
+ * Procedural 10x Gear Forge with Tabbed Architecture, Batch Loot Generation, and Currency Scaling
  */
 
-import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS } from "./enchantment-registry.mjs";
+import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS, LEVEL_LOOT_TIERS } from "./enchantment-registry.mjs";
 
 const MODULE_ID = "pf1-altsheet-reworked";
 
 export class GranularForgeApp extends Application {
   constructor(options = {}) {
     super(options);
-    this.activeTab = "weapons"; // "weapons" | "armor" | "ammo"
+    this.activeTab = "weapons"; // "weapons" | "armor" | "ammo" | "batch"
     this.selectedCompendium = "";
     this.compendiumItems = [];
     this.selectedBaseItem = null;
@@ -24,12 +24,24 @@ export class GranularForgeApp extends Application {
     };
     
     this.magicLevel = 0;
-    this.selectedMaterial = "steel";
+    this.selectedMaterial = "base";
     this.selectedProperties = new Set();
     this.useShortCompoundNames = true;
     this.searchTerm = "";
     this.ammoQuantity = 20;
-    this.rollLogHtml = ""; 
+    this.rollLogHtml = "";
+
+    // ─── BATCH LOOT STATE ───
+    this.batchConfig = {
+      level: 5,
+      count: 6,
+      grade: "scaled", // "scaled" | "mundane" | "minor" | "medium" | "major"
+      includeWeapons: true,
+      includeArmor: true,
+      includeAmmo: true,
+      includeGold: true
+    };
+    this.batchResults = [];
   }
 
   static get defaultOptions() {
@@ -37,8 +49,8 @@ export class GranularForgeApp extends Application {
       id: "aeris-granular-forge",
       title: "10x Procedural Gear & Enchantment Forge",
       template: "",
-      width: 1000,
-      height: 800,
+      width: 1020,
+      height: 820,
       resizable: true,
       classes: ["aeris-gear-gen-app"]
     });
@@ -76,7 +88,7 @@ export class GranularForgeApp extends Application {
       return false;
     }
 
-    return false;
+    return true;
   }
 
   async getData() {
@@ -119,7 +131,9 @@ export class GranularForgeApp extends Application {
       useShortNames: this.useShortCompoundNames,
       searchTerm: this.searchTerm,
       ammoQuantity: this.ammoQuantity,
-      rollLogHtml: this.rollLogHtml
+      rollLogHtml: this.rollLogHtml,
+      batchConfig: this.batchConfig,
+      batchResults: this.batchResults
     };
   }
 
@@ -198,128 +212,201 @@ export class GranularForgeApp extends Application {
       </div>
     `;
 
+    // ─── BATCH LOOT TAB TEMPLATE ───
+    const batchTabHtml = `
+      <div style="display:flex; height:100%; gap:12px; overflow:hidden;">
+        <div style="flex:1.2; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
+          <strong style="font-size:1.0em; border-bottom:1px solid var(--color-border-light-2); padding-bottom:3px;">📦 Hoard Generator Parameters</strong>
+          
+          <div style="display:flex; gap:8px;">
+            <div style="flex:1;">
+              <label style="font-size:0.85em; font-weight:bold;">Party / Encounter Level (CR)</label>
+              <select id="batch-level" style="width:100%; padding:4px;">
+                ${Array.from({length: 20}, (_, i) => `<option value="${i+1}" ${data.batchConfig.level === (i+1) ? "selected" : ""}>Level ${i+1} (CR ${i+1})</option>`).join("")}
+              </select>
+            </div>
+            <div style="flex:1;">
+              <label style="font-size:0.85em; font-weight:bold;">Loot Quality Tier</label>
+              <select id="batch-grade" style="width:100%; padding:4px;">
+                <option value="scaled" ${data.batchConfig.grade === "scaled" ? "selected" : ""}>Match Level Curve</option>
+                <option value="mundane" ${data.batchConfig.grade === "mundane" ? "selected" : ""}>Mundane (No Magic)</option>
+                <option value="minor" ${data.batchConfig.grade === "minor" ? "selected" : ""}>Minor Magic (+10 / +1)</option>
+                <option value="medium" ${data.batchConfig.grade === "medium" ? "selected" : ""}>Medium Magic (+20 to +30)</option>
+                <option value="major" ${data.batchConfig.grade === "major" ? "selected" : ""}>Major Magic (+40 to +50)</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px; align-items:center;">
+            <label style="font-size:0.85em; font-weight:bold; flex:1;">Total Gear Items to Generate:</label>
+            <input type="number" id="batch-count" value="${data.batchConfig.count}" min="1" max="50" style="width:70px; text-align:center; padding:3px;">
+          </div>
+
+          <strong style="font-size:0.85em; margin-top:4px;">Include Categories in Pool:</strong>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; background:rgba(0,0,0,0.02); padding:6px; border-radius:4px; border:1px solid var(--color-border-light-1);">
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; cursor:pointer;">
+              <input type="checkbox" id="batch-inc-wpn" ${data.batchConfig.includeWeapons ? "checked" : ""}> ⚔️ Weapons
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; cursor:pointer;">
+              <input type="checkbox" id="batch-inc-arm" ${data.batchConfig.includeArmor ? "checked" : ""}> 🛡️ Armor & Shields
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; cursor:pointer;">
+              <input type="checkbox" id="batch-inc-ammo" ${data.batchConfig.includeAmmo ? "checked" : ""}> 🏹 Ammunition Stacks
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; cursor:pointer;">
+              <input type="checkbox" id="batch-inc-gold" ${data.batchConfig.includeGold ? "checked" : ""}> 💰 10x Gold & Coins
+            </label>
+          </div>
+
+          <button type="button" id="forge-batch-btn" style="margin-top:auto; padding:10px; font-weight:bold; background:#2f3542; color:#fff; border-radius:4px; cursor:pointer; border:1px solid #1e272e;">
+            🎲 Generate Procedural Loot Hoard
+          </button>
+        </div>
+
+        <div style="flex:1.4; display:flex; flex-direction:column; gap:6px;">
+          <strong style="font-size:1.0em; border-bottom:1px solid var(--color-border-light-2); padding-bottom:3px;">Generated Hoard Output (${data.batchResults.length} Items)</strong>
+          <div style="flex-grow:1; border:2px dashed var(--color-border-dark); border-radius:6px; padding:6px; overflow-y:auto; background:rgba(0,0,0,0.01);">
+            ${data.batchResults.length > 0 ? data.batchResults.map((item, idx) => `
+              <div style="display:flex; align-items:center; gap:8px; padding:4px 6px; margin-bottom:4px; background:#fff; border:1px solid #ced6e0; border-radius:4px;">
+                <img src="${item.img}" width="28" height="28" style="border-radius:3px;" />
+                <div style="flex:1; overflow:hidden;">
+                  <strong style="font-size:0.85em; display:block; text-overflow:ellipsis; white-space:nowrap; overflow:hidden;">${item.name}</strong>
+                  <span style="font-size:0.75em; color:#555;">${item.type === "loot" ? "Currency Hoard" : item.system?.armor ? `AC +${item.system.armor.value}` : item.system?.actions?.[0]?.damage?.parts?.[0]?.formula || "Special"} | Qty: ${item.system?.quantity ?? 1}</span>
+                </div>
+                <div class="forge-drag-card" draggable="true" data-batch-idx="${idx}" style="padding:2px 8px; background:#dfe4ea; border:1px solid #747d8c; border-radius:3px; cursor:grab; font-size:0.75em; font-weight:bold;">📦 Drag</div>
+              </div>
+            `).join("") : '<p style="text-align:center; color:#777; padding:20px; font-size:0.85em;">Configure parameters and click Generate to roll an entire encounter hoard.</p>'}
+          </div>
+        </div>
+      </div>
+    `;
+
+    const standardTabHtml = `
+      <div style="display:flex; flex:1; gap:10px; overflow:hidden;">
+        
+        <!-- COLUMN 1: DIRECTORY -->
+        <div style="flex:1; display:flex; flex-direction:column; border-right:1px solid var(--color-border-light-2); padding-right:6px;">
+          <label style="font-weight:bold; font-size:0.8em; margin-bottom:2px;">Compendium Pack</label>
+          <select id="forge-pack-select" style="margin-bottom:6px; font-size:0.85em; padding:3px;">${packOpts}</select>
+          <input type="text" id="forge-item-search" value="${data.searchTerm}" placeholder="🔍 Search ${data.activeTab}..." style="margin-bottom:6px; font-size:0.85em; padding:4px; border:1px solid var(--color-border-light-1); border-radius:3px;">
+          <div style="flex-grow:1; overflow-y:auto; border:1px solid var(--color-border-light-1); border-radius:4px; max-height:560px;">${itemRows || `<p style="padding:8px; color:#777;">No ${data.activeTab} found in pack.</p>`}</div>
+        </div>
+
+        <!-- COLUMN 2: FORGE CONTROLS -->
+        <div style="flex:1.2; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:6px; height:100%; overflow-y:auto;">
+          
+          ${previewHtml}
+          
+          <details style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
+            <summary style="font-weight:bold; font-size:0.9em; cursor:pointer; outline:none; user-select:none;">🎯 Targeted Variances (Min to Max)</summary>
+            <div style="display:flex; flex-direction:column; gap:4px; margin-top:8px;">
+              ${createSlider("Physical (Craft, AC, Weight, Damage)", "physical")}
+              ${createSlider("Durability (HP, Hardness)", "durability")}
+              ${createSlider("Precision (Crit Range, Mult)", "precision")}
+              ${createSlider("Magic (Enhancement, Properties, ASF)", "magic")}
+            </div>
+          </details>
+
+          <div style="display:flex; gap:6px;">
+            <div style="flex:1;">
+              <label style="font-size:0.8em; font-weight:bold;">Enhancement</label>
+              <select id="forge-enh-level" style="width:100%; padding:3px; font-size:0.85em;">
+                <option value="0" ${data.magicLevel===0?"selected":""}>Mundane (+0)</option>
+                <option value="1" ${data.magicLevel===1?"selected":""}>+1 (+10 Scaled)</option>
+                <option value="2" ${data.magicLevel===2?"selected":""}>+2 (+20 Scaled)</option>
+                <option value="3" ${data.magicLevel===3?"selected":""}>+3 (+30 Scaled)</option>
+                <option value="4" ${data.magicLevel===4?"selected":""}>+4 (+40 Scaled)</option>
+                <option value="5" ${data.magicLevel===5?"selected":""}>+5 (+50 Scaled)</option>
+              </select>
+            </div>
+            <div style="flex:1;">
+              <label style="font-size:0.8em; font-weight:bold;">Special Material</label>
+              <select id="forge-material" style="width:100%; padding:3px; font-size:0.85em;">${matOpts}</select>
+            </div>
+          </div>
+
+          ${data.activeTab === "ammo" ? `
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label style="font-size:0.8em; font-weight:bold;">Bundle Quantity:</label>
+              <input type="number" id="forge-ammo-qty" value="${data.ammoQuantity}" min="1" max="1000" style="width:70px; padding:3px; font-size:0.85em; text-align:center;">
+            </div>
+          ` : ""}
+
+          <div style="display:flex; justify-content:space-between; align-items:flex-end;">
+             <strong style="font-size:0.9em; border-bottom:1px solid var(--color-border-light-2); padding-bottom:2px; flex-grow:1;">✨ Magic Properties</strong>
+             <div style="display:flex; gap:4px; margin-left:8px;">
+               <button type="button" id="forge-random-prop" style="font-size:0.75em; padding:2px 6px; line-height:1;">🎲 Random</button>
+               <button type="button" id="forge-new-custom-prop" style="font-size:0.75em; padding:2px 6px; line-height:1;">➕ New</button>
+             </div>
+          </div>
+          
+          <div style="flex-grow:1; min-height:140px; overflow-y:auto; border:1px solid var(--color-border-light-1); padding:4px; border-radius:4px; background:rgba(0,0,0,0.02); box-shadow:inset 0 1px 3px rgba(0,0,0,0.05);">
+             ${propRows || `<span style="color:#777; font-size:0.8em; padding:8px; display:block;">No properties available for this category.</span>`}
+          </div>
+
+          <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; margin-top:2px; cursor:pointer;">
+            <input type="checkbox" id="forge-short-names" ${data.useShortNames ? "checked" : ""}>
+            <span>Use Compound Short Names (e.g. <em>Mastercraft Sunstrike</em>)</span>
+          </label>
+
+          <button id="forge-gen-btn" style="padding:10px; font-weight:bold; background:#2f3542; color:#fff; border-radius:4px; cursor:pointer; border:1px solid #1e272e; margin-bottom:4px;">
+            ⚡ Forge Procedural ${data.activeTab === "weapons" ? "Weapon" : data.activeTab === "armor" ? "Armor / Shield" : "Ammunition Stack"}
+          </button>
+        </div>
+
+        <!-- COLUMN 3: INSPECTION WINDOW -->
+        <div style="flex:1.1; display:flex; flex-direction:column; gap:6px;">
+          <strong style="font-size:0.9em; border-bottom:1px solid var(--color-border-light-2); padding-bottom:2px;">Inspection Window</strong>
+          <div style="flex-grow:1; border:2px dashed var(--color-border-dark); border-radius:6px; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:8px; text-align:center; overflow-y:auto;">
+            ${data.generated ? `
+              <img src="${data.generated.img}" width="42" height="42" style="border-radius:4px; margin-bottom:4px;" />
+              <strong style="font-size:0.9em;">${data.generated.name}</strong>
+              <div style="font-size:0.75em; text-align:left; width:100%; margin-top:4px; background:rgba(0,0,0,0.03); padding:6px; border-radius:4px; line-height:1.3;">
+                ${data.generated.system?.armor ? `
+                  <div><strong>Armor AC:</strong> +${data.generated.system.armor.value} | <strong>ACP:</strong> ${data.generated.system.armor.acp}</div>
+                  <div><strong>Max Dex:</strong> +${data.generated.system.armor.dex ?? "∞"} | <strong>Spell Failure:</strong> ${data.generated.system.armor.spellFailure ?? 0}%</div>
+                ` : `
+                  <div><strong>Damage:</strong> ${data.generated.system?.actions?.[0]?.damage?.parts?.map(p => p.formula).join(" + ") || "N/A"}</div>
+                  <div><strong>Crit Threat:</strong> ${data.generated.system?.actions?.[0]?.critRange}+ (×${data.generated.system?.actions?.[0]?.critMult})</div>
+                `}
+                <div><strong>Hardness:</strong> ${data.generated.system.hardness} | <strong>HP:</strong> ${data.generated.system.hp?.max}</div>
+                <div><strong>Weight:</strong> ${data.generated.system.weight?.value ?? 0} lbs | <strong>Quantity:</strong> ${data.generated.system.quantity ?? 1}</div>
+                <div><strong>Enhancement:</strong> +${data.generated.system.enh || 0}</div>
+              </div>
+              
+              <div style="font-size:0.7em; text-align:left; width:100%; margin-top:6px; background:#f1f2f6; padding:6px; border-radius:4px; border:1px solid #ced6e0;">
+                <strong style="border-bottom:1px solid #ced6e0; display:block; padding-bottom:2px; margin-bottom:4px;">Roll Variance Log</strong>
+                ${data.rollLogHtml}
+              </div>
+
+              <div class="forge-drag-card" draggable="true" style="margin-top:8px; padding:4px 10px; background:#dfe4ea; border:1px solid #747d8c; border-radius:4px; cursor:grab; font-weight:bold; font-size:0.8em;">📦 Drag to Sheet</div>
+            ` : '<span style="color:#777; font-size:0.8em;">Select base item and configure parameters to forge.</span>'}
+          </div>
+        </div>
+
+      </div>
+    `;
+
     const html = `
       <div style="display:flex; flex-direction:column; height:100%; gap:8px; padding:6px; font-family:var(--font-primary);">
         
         <!-- HEADER TAB NAVIGATION -->
         <nav class="forge-category-tabs" style="display:flex; gap:8px; border-bottom:2px solid var(--color-border-light-2); padding-bottom:6px;">
-          <button type="button" class="forge-tab-nav ${data.activeTab === "weapons" ? "active" : ""}" data-tab="weapons" style="flex:1; padding:6px 12px; font-weight:bold; cursor:pointer; background:${data.activeTab === "weapons" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "weapons" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
+          <button type="button" class="forge-tab-nav ${data.activeTab === "weapons" ? "active" : ""}" data-tab="weapons" style="flex:1; padding:6px 10px; font-weight:bold; cursor:pointer; background:${data.activeTab === "weapons" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "weapons" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
             ⚔️ Weapons
           </button>
-          <button type="button" class="forge-tab-nav ${data.activeTab === "armor" ? "active" : ""}" data-tab="armor" style="flex:1; padding:6px 12px; font-weight:bold; cursor:pointer; background:${data.activeTab === "armor" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "armor" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
+          <button type="button" class="forge-tab-nav ${data.activeTab === "armor" ? "active" : ""}" data-tab="armor" style="flex:1; padding:6px 10px; font-weight:bold; cursor:pointer; background:${data.activeTab === "armor" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "armor" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
             🛡️ Armor & Shields
           </button>
-          <button type="button" class="forge-tab-nav ${data.activeTab === "ammo" ? "active" : ""}" data-tab="ammo" style="flex:1; padding:6px 12px; font-weight:bold; cursor:pointer; background:${data.activeTab === "ammo" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "ammo" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
+          <button type="button" class="forge-tab-nav ${data.activeTab === "ammo" ? "active" : ""}" data-tab="ammo" style="flex:1; padding:6px 10px; font-weight:bold; cursor:pointer; background:${data.activeTab === "ammo" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "ammo" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
             🏹 Ammunition
+          </button>
+          <button type="button" class="forge-tab-nav ${data.activeTab === "batch" ? "active" : ""}" data-tab="batch" style="flex:1; padding:6px 10px; font-weight:bold; cursor:pointer; background:${data.activeTab === "batch" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "batch" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
+            📦 Batch Loot Hoard
           </button>
         </nav>
 
-        <!-- MAIN 3-COLUMN LAYOUT -->
-        <div style="display:flex; flex:1; gap:10px; overflow:hidden;">
-          
-          <!-- COLUMN 1: DIRECTORY -->
-          <div style="flex:1; display:flex; flex-direction:column; border-right:1px solid var(--color-border-light-2); padding-right:6px;">
-            <label style="font-weight:bold; font-size:0.8em; margin-bottom:2px;">Compendium Pack</label>
-            <select id="forge-pack-select" style="margin-bottom:6px; font-size:0.85em; padding:3px;">${packOpts}</select>
-            <input type="text" id="forge-item-search" value="${data.searchTerm}" placeholder="🔍 Search ${data.activeTab}..." style="margin-bottom:6px; font-size:0.85em; padding:4px; border:1px solid var(--color-border-light-1); border-radius:3px;">
-            <div style="flex-grow:1; overflow-y:auto; border:1px solid var(--color-border-light-1); border-radius:4px; max-height:560px;">${itemRows || `<p style="padding:8px; color:#777;">No ${data.activeTab} found in pack.</p>`}</div>
-          </div>
-
-          <!-- COLUMN 2: FORGE CONTROLS -->
-          <div style="flex:1.2; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:6px; height:100%; overflow-y:auto;">
-            
-            ${previewHtml}
-            
-            <!-- COLLAPSIBLE VARIANCES -->
-            <details style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
-              <summary style="font-weight:bold; font-size:0.9em; cursor:pointer; outline:none; user-select:none;">🎯 Targeted Variances (Min to Max)</summary>
-              <div style="display:flex; flex-direction:column; gap:4px; margin-top:8px;">
-                ${createSlider("Physical (Craft, AC, Weight, Damage)", "physical")}
-                ${createSlider("Durability (HP, Hardness)", "durability")}
-                ${createSlider("Precision (Crit Range, Mult)", "precision")}
-                ${createSlider("Magic (Enhancement, Properties, ASF)", "magic")}
-              </div>
-            </details>
-
-            <div style="display:flex; gap:6px;">
-              <div style="flex:1;">
-                <label style="font-size:0.8em; font-weight:bold;">Enhancement</label>
-                <select id="forge-enh-level" style="width:100%; padding:3px; font-size:0.85em;">
-                  <option value="0" ${data.magicLevel===0?"selected":""}>Mundane (+0)</option>
-                  <option value="1" ${data.magicLevel===1?"selected":""}>+1 (+10 Scaled)</option>
-                  <option value="2" ${data.magicLevel===2?"selected":""}>+2 (+20 Scaled)</option>
-                  <option value="3" ${data.magicLevel===3?"selected":""}>+3 (+30 Scaled)</option>
-                  <option value="4" ${data.magicLevel===4?"selected":""}>+4 (+40 Scaled)</option>
-                  <option value="5" ${data.magicLevel===5?"selected":""}>+5 (+50 Scaled)</option>
-                </select>
-              </div>
-              <div style="flex:1;">
-                <label style="font-size:0.8em; font-weight:bold;">Special Material</label>
-                <select id="forge-material" style="width:100%; padding:3px; font-size:0.85em;">${matOpts}</select>
-              </div>
-            </div>
-
-            ${data.activeTab === "ammo" ? `
-              <div style="display:flex; align-items:center; gap:8px;">
-                <label style="font-size:0.8em; font-weight:bold;">Bundle Quantity:</label>
-                <input type="number" id="forge-ammo-qty" value="${data.ammoQuantity}" min="1" max="1000" style="width:70px; padding:3px; font-size:0.85em; text-align:center;">
-              </div>
-            ` : ""}
-
-            <!-- EXPANDED MAGIC PROPERTIES -->
-            <div style="display:flex; justify-content:space-between; align-items:flex-end;">
-               <strong style="font-size:0.9em; border-bottom:1px solid var(--color-border-light-2); padding-bottom:2px; flex-grow:1;">✨ Magic Properties</strong>
-               <div style="display:flex; gap:4px; margin-left:8px;">
-                 <button type="button" id="forge-random-prop" style="font-size:0.75em; padding:2px 6px; line-height:1;">🎲 Random</button>
-                 <button type="button" id="forge-new-custom-prop" style="font-size:0.75em; padding:2px 6px; line-height:1;">➕ New</button>
-               </div>
-            </div>
-            
-            <div style="flex-grow:1; min-height:140px; overflow-y:auto; border:1px solid var(--color-border-light-1); padding:4px; border-radius:4px; background:rgba(0,0,0,0.02); box-shadow:inset 0 1px 3px rgba(0,0,0,0.05);">
-               ${propRows || `<span style="color:#777; font-size:0.8em; padding:8px; display:block;">No properties available for this category.</span>`}
-            </div>
-
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; margin-top:2px; cursor:pointer;">
-              <input type="checkbox" id="forge-short-names" ${data.useShortNames ? "checked" : ""}>
-              <span>Use Compound Short Names (e.g. <em>Mastercraft Sunstrike</em>)</span>
-            </label>
-
-            <button id="forge-gen-btn" style="padding:10px; font-weight:bold; background:#2f3542; color:#fff; border-radius:4px; cursor:pointer; border:1px solid #1e272e; margin-bottom:4px;">
-              ⚡ Forge Procedural ${data.activeTab === "weapons" ? "Weapon" : data.activeTab === "armor" ? "Armor / Shield" : "Ammunition Stack"}
-            </button>
-          </div>
-
-          <!-- COLUMN 3: INSPECTION WINDOW -->
-          <div style="flex:1.1; display:flex; flex-direction:column; gap:6px;">
-            <strong style="font-size:0.9em; border-bottom:1px solid var(--color-border-light-2); padding-bottom:2px;">Inspection Window</strong>
-            <div style="flex-grow:1; border:2px dashed var(--color-border-dark); border-radius:6px; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:8px; text-align:center; overflow-y:auto;">
-              ${data.generated ? `
-                <img src="${data.generated.img}" width="42" height="42" style="border-radius:4px; margin-bottom:4px;" />
-                <strong style="font-size:0.9em;">${data.generated.name}</strong>
-                <div style="font-size:0.75em; text-align:left; width:100%; margin-top:4px; background:rgba(0,0,0,0.03); padding:6px; border-radius:4px; line-height:1.3;">
-                  ${data.generated.system?.armor ? `
-                    <div><strong>Armor AC:</strong> +${data.generated.system.armor.value} | <strong>ACP:</strong> ${data.generated.system.armor.acp}</div>
-                    <div><strong>Max Dex:</strong> +${data.generated.system.armor.dex ?? "∞"} | <strong>Spell Failure:</strong> ${data.generated.system.armor.spellFailure ?? 0}%</div>
-                  ` : `
-                    <div><strong>Damage:</strong> ${data.generated.system?.actions?.[0]?.damage?.parts?.map(p => p.formula).join(" + ") || "N/A"}</div>
-                    <div><strong>Crit Threat:</strong> ${data.generated.system?.actions?.[0]?.critRange}+ (×${data.generated.system?.actions?.[0]?.critMult})</div>
-                  `}
-                  <div><strong>Hardness:</strong> ${data.generated.system.hardness} | <strong>HP:</strong> ${data.generated.system.hp?.max}</div>
-                  <div><strong>Weight:</strong> ${data.generated.system.weight?.value ?? 0} lbs | <strong>Quantity:</strong> ${data.generated.system.quantity ?? 1}</div>
-                  <div><strong>Enhancement:</strong> +${data.generated.system.enh || 0}</div>
-                </div>
-                
-                <div style="font-size:0.7em; text-align:left; width:100%; margin-top:6px; background:#f1f2f6; padding:6px; border-radius:4px; border:1px solid #ced6e0;">
-                  <strong style="border-bottom:1px solid #ced6e0; display:block; padding-bottom:2px; margin-bottom:4px;">Roll Variance Log</strong>
-                  ${data.rollLogHtml}
-                </div>
-
-                <div class="forge-drag-card" draggable="true" style="margin-top:8px; padding:4px 10px; background:#dfe4ea; border:1px solid #747d8c; border-radius:4px; cursor:grab; font-weight:bold; font-size:0.8em;">📦 Drag to Sheet</div>
-              ` : '<span style="color:#777; font-size:0.8em;">Select base item and configure parameters to forge.</span>'}
-            </div>
-          </div>
-
-        </div>
+        ${data.activeTab === "batch" ? batchTabHtml : standardTabHtml}
       </div>
     `;
     return $(html);
@@ -449,6 +536,194 @@ export class GranularForgeApp extends Application {
       }).render(true);
     });
 
+    // ─── BATCH LOOT GENERATOR EXECUTION ───
+    html.find('#forge-batch-btn').click(async () => {
+      this.batchConfig.level = parseInt(html.find('#batch-level').val(), 10) || 1;
+      this.batchConfig.grade = html.find('#batch-grade').val();
+      this.batchConfig.count = parseInt(html.find('#batch-count').val(), 10) || 5;
+      this.batchConfig.includeWeapons = html.find('#batch-inc-wpn').is(':checked');
+      this.batchConfig.includeArmor = html.find('#batch-inc-arm').is(':checked');
+      this.batchConfig.includeAmmo = html.find('#batch-inc-ammo').is(':checked');
+      this.batchConfig.includeGold = html.find('#batch-inc-gold').is(':checked');
+
+      const tierConfig = LEVEL_LOOT_TIERS[this.batchConfig.level] || LEVEL_LOOT_TIERS[1];
+      const categories = [];
+      if (this.batchConfig.includeWeapons) categories.push("weapons");
+      if (this.batchConfig.includeArmor) categories.push("armor");
+      if (this.batchConfig.includeAmmo) categories.push("ammo");
+
+      if (categories.length === 0 && !this.batchConfig.includeGold) {
+        return ui.notifications.warn("Please select at least one loot category!");
+      }
+
+      this.batchResults = [];
+      ui.notifications.info("Generating Procedural Loot Hoard...");
+
+      // 1. Generate Currency (10x scaled Gold)
+      if (this.batchConfig.includeGold) {
+        const goldVariance = 0.75 + Math.random() * 0.5; // +-25%
+        const totalGold = Math.round(tierConfig.goldBase * 10 * goldVariance);
+        
+        const pp = Math.floor((totalGold * 0.2) / 10);
+        const gp = Math.floor(totalGold * 0.6);
+        const sp = Math.floor((totalGold * 0.15) * 10);
+        const cp = Math.floor((totalGold * 0.05) * 100);
+
+        const goldItem = {
+          name: `Hoard Coinage (CR ${this.batchConfig.level})`,
+          type: "loot",
+          img: "icons/commodities/currency/coins-assorted-mix-copper-silver-gold.webp",
+          system: {
+            description: { value: `<p><strong>Encounter Treasure:</strong> Contains 10x granular coins.</p><p>• <strong>Platinum:</strong> ${pp} pp<br/>• <strong>Gold:</strong> ${gp} gp<br/>• <strong>Silver:</strong> ${sp} sp<br/>• <strong>Copper:</strong> ${cp} cp</p>` },
+            quantity: 1,
+            price: totalGold,
+            weight: { value: Math.round((pp + gp + sp + cp) / 50) }
+          },
+          flags: { [MODULE_ID]: { is10xScaled: true, disable10xSheet: true, disable10xCard: true } }
+        };
+        this.batchResults.push(goldItem);
+      }
+
+      // 2. Generate Equipment Items
+      if (categories.length > 0) {
+        const packs = game.packs.filter(p => p.documentName === "Item");
+        for (let i = 0; i < this.batchConfig.count; i++) {
+          const chosenCategory = categories[Math.floor(Math.random() * categories.length)];
+          const validPacks = packs.filter(p => p.collection.includes("weapon") || p.collection.includes("armor") || p.collection.includes("item") || p.collection.includes("equipment"));
+          const chosenPack = validPacks[Math.floor(Math.random() * validPacks.length)] || packs[0];
+          
+          if (!chosenPack) continue;
+          const index = await chosenPack.getIndex({ fields: ["system.subType", "system.weaponSubtype", "system.equipmentType", "system.armor", "system.slot"] });
+          const pool = index.filter(item => this._filterItemForTab(item, chosenCategory));
+          if (pool.length === 0) continue;
+
+          const baseDoc = await chosenPack.getDocument(pool[Math.floor(Math.random() * pool.length)]._id);
+          if (!baseDoc) continue;
+
+          const newItemData = baseDoc.toObject();
+          const isArmor = chosenCategory === "armor";
+          const isAmmo = chosenCategory === "ammo";
+
+          // Calculate Level-Appropriate Enhancement
+          let enhLevel = 0;
+          if (this.batchConfig.grade === "mundane") enhLevel = 0;
+          else if (this.batchConfig.grade === "minor") enhLevel = 1;
+          else if (this.batchConfig.grade === "medium") enhLevel = 2 + Math.floor(Math.random() * 2);
+          else if (this.batchConfig.grade === "major") enhLevel = 4 + Math.floor(Math.random() * 2);
+          else {
+            if (Math.random() < tierConfig.propChance) enhLevel = Math.max(1, Math.floor(Math.random() * (tierConfig.maxEnh + 1)));
+          }
+
+          // Pick Material
+          let chosenMat = "base";
+          if (Math.random() < tierConfig.matChance) {
+            const mats = isArmor ? ["mithral", "adamantine", "darkwood", "dragonhide"] : ["adamantine", "coldiron", "silversheen", "mithral"];
+            chosenMat = mats[Math.floor(Math.random() * mats.length)];
+          }
+          const mat = SPECIAL_MATERIALS[chosenMat];
+
+          // Pick Magic Property
+          const propPool = isArmor ? ARMOR_ENCHANTMENTS : WEAPON_ENCHANTMENTS;
+          const pickedProps = new Set();
+          if (enhLevel > 0 && Math.random() < tierConfig.propChance) {
+            const keys = Object.keys(propPool);
+            pickedProps.add(keys[Math.floor(Math.random() * keys.length)]);
+          }
+
+          // Flags & Masterwork
+          newItemData.flags = newItemData.flags || {};
+          newItemData.flags[MODULE_ID] = newItemData.flags[MODULE_ID] || {};
+          newItemData.flags[MODULE_ID].disable10xCard = true;
+          newItemData.flags[MODULE_ID].disable10xSheet = true;
+          newItemData.flags[MODULE_ID].is10xScaled = true;
+          if (enhLevel > 0 || pickedProps.size > 0 || mat.name !== "Base") newItemData.system.masterwork = true;
+          if (isAmmo) newItemData.system.quantity = 20 + (Math.floor(Math.random() * 4) * 10);
+
+          // Continuous Roller
+          const rollM = (cat) => 1.0 + ((this.variances[cat].min / 100) + Math.random() * ((this.variances[cat].max - this.variances[cat].min) / 100));
+          const craftM = rollM("physical");
+          const hardM = rollM("durability");
+          const hpM = rollM("durability");
+
+          const tierPrefixes = { "-4": "Ruined", "-3": "Flawed", "-2": "Worn", "-1": "Serviceable", "1": "Tempered", "2": "Honed", "3": "Superior", "4": "Mastercraft" };
+          let tier = Math.ceil(((craftM - 1.0) / 0.25) * 4);
+          if (tier === 0) tier = craftM >= 1.0 ? 1 : -1;
+          const prefix = tierPrefixes[Math.max(-4, Math.min(4, tier))];
+
+          // Hardness, HP & Weight
+          let bHard = (typeof newItemData.system.hardness === "object" ? newItemData.system.hardness.value : newItemData.system.hardness) || 0;
+          let bHp = (newItemData.system.hp?.base ?? newItemData.system.hp?.max ?? 0);
+          newItemData.system.hardness = Math.max(0, Math.round((bHard * 10 + mat.hardnessMod) * hardM));
+          const fHp = Math.max(1, Math.round((bHp * 10 * mat.hpMult) * hpM));
+          newItemData.system.hp = { base: fHp, max: fHp, value: fHp };
+
+          let bWeight = newItemData.system.weight?.value ?? 0;
+          if (bWeight > 0) newItemData.system.weight.value = Math.max(0.1, Math.round((bWeight * (mat.weightMult || 1.0) * (2.0 - craftM)) * 100) / 100);
+
+          // Armor Stats
+          if (isArmor && newItemData.system?.armor) {
+            newItemData.system.armor.value = Math.round((newItemData.system.armor.value || 0) * 10 * craftM);
+            let adjAcp = Math.round((newItemData.system.armor.acp || 0) * 10 * (2.0 - craftM));
+            if (mat.acpBonus) adjAcp = Math.min(0, adjAcp + mat.acpBonus);
+            newItemData.system.armor.acp = adjAcp;
+          }
+
+          // Weapon Actions
+          let propPrefix = "";
+          if (!isArmor && newItemData.system?.actions) {
+            const critRM = rollM("precision");
+            const critMM = rollM("precision");
+            newItemData.system.actions.forEach(act => {
+              act.ability = act.ability || {};
+              if (chosenCategory === "weapons") {
+                act.extraAttacks = [{ type: "custom", name: "10x Iteratives", countFormula: "max(0, floor((@attributes.bab.total - 10) / 50))", modifierFormula: "-50 * (@idx + 1)" }];
+              }
+              let cBase = act.ability.critRange ?? act.critRange ?? 191;
+              if (cBase <= 20) cBase = (cBase * 10) - 9;
+              act.critRange = Math.min(199, Math.max(100, Math.round(cBase - ((critRM - 1.0) * 40))));
+              act.ability.critRange = act.critRange;
+
+              let fMult = Number(act.ability.critMult ?? act.critMult ?? 2);
+              if (critMM >= 1.20) fMult += 1;
+              else if (critMM <= 0.80) fMult = Math.max(1, fMult - 1);
+              act.critMult = fMult;
+              act.ability.critMult = fMult;
+
+              for (const pKey of pickedProps) {
+                const prop = propPool[pKey];
+                if (prop && prop.isDice) {
+                  const pM = rollM("magic");
+                  let faces = Math.max(1, Math.round(60 + (((pM - 1.0) / 0.25) * 20)));
+                  propPrefix = pM > 1.15 ? `Supreme ${prop.baseName}` : pM < 0.85 ? `Weak ${prop.baseName}` : prop.baseName;
+                  act.damage.parts.push({ formula: `${prop.numDice || 1}d${faces}`, type: { values: [prop.type], custom: "" } });
+                }
+              }
+            });
+          }
+
+          // Enhancement Bonus (Properly set on both root & armor object!)
+          let enhSuffix = "";
+          if (enhLevel > 0) {
+            const enhM = rollM("magic");
+            newItemData.system.enh = Math.max(1, Math.round((enhLevel * 10) * enhM));
+            if (newItemData.system.armor) newItemData.system.armor.enh = newItemData.system.enh;
+            const titles = { 1: "of Flickering Might", 2: "of Resolute Force", 3: "of Striking Power", 4: "of Exalted Dominion", 5: "of Transcendent Power" };
+            enhSuffix = ` ${titles[enhLevel] || ""}`;
+          }
+
+          const matTitle = mat.name !== "Base" ? `${mat.name} ` : "";
+          const pPre = propPrefix ? `${propPrefix} ` : "";
+          newItemData.name = `${prefix} ${matTitle}${pPre}${baseDoc.name}${enhSuffix}`.trim();
+          newItemData.system.identified = true;
+
+          this.batchResults.push(newItemData);
+        }
+      }
+
+      this.render();
+    });
+
+    // ─── STANDARD FORGE GENERATION ───
     html.find('#forge-gen-btn').click(async () => {
       if (!this.selectedBaseItem) return ui.notifications.warn("Please select a base item first!");
 
@@ -476,7 +751,6 @@ export class GranularForgeApp extends Application {
       const identifiedTraits = [];
       let logOutput = ""; 
 
-      // ─── 1. NO SHEET / NO CARD MULTIPLICATION SHIELD ───
       newItemData.flags = newItemData.flags || {};
       newItemData.flags[MODULE_ID] = newItemData.flags[MODULE_ID] || {};
       newItemData.flags[MODULE_ID].disable10xCard = true; 
@@ -487,7 +761,7 @@ export class GranularForgeApp extends Application {
         newItemData.system.quantity = this.ammoQuantity;
       }
 
-      if (this.magicLevel > 0 || this.selectedProperties.size > 0 || mat.name === "Adamantine" || mat.name === "Mithral") {
+      if (this.magicLevel > 0 || this.selectedProperties.size > 0 || (mat.name !== "Base" && mat.name !== "Steel")) {
         newItemData.system.masterwork = true;
       }
 
@@ -511,27 +785,23 @@ export class GranularForgeApp extends Application {
         "1": "Tempered", "2": "Honed", "3": "Superior", "4": "Mastercraft"
       };
 
-      // 2. Craft Quality & Physical Stats
+      // 1. Craft Quality
       const craftRoll = rollStat("Craft Quality", "physical");
       const prefix = tierPrefixes[craftRoll.tier];
       identifiedTraits.push(`<strong>Craftsmanship (${prefix}):</strong> Forged to ${prefix.toLowerCase()} standards.`);
       logOutput += `<div style="padding-bottom: 2px;"><strong>Physical M-plier:</strong> <span style="float:right;">${((craftRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
 
-      // 3. Weight Scaling & Inverted Weight Variance
+      // 2. Weight Scaling
       const weightRoll = rollStat("Weight", "physical");
       const rawWeight = newItemData.system?.weight?.value ?? 0;
       const matWeightMult = mat.weightMult || 1.0;
-      // Inverted variance: positive roll = lighter weight
       const weightFactor = Math.max(0.1, 2.0 - weightRoll.mult);
       let calculatedWeight = Math.round((rawWeight * matWeightMult * weightFactor) * 100) / 100;
       if (rawWeight > 0 && calculatedWeight === 0) calculatedWeight = 0.1;
-      
-      if (newItemData.system?.weight) {
-        newItemData.system.weight.value = rawWeight === 0 ? 0 : calculatedWeight;
-      }
+      if (newItemData.system?.weight) newItemData.system.weight.value = rawWeight === 0 ? 0 : calculatedWeight;
       logOutput += `<div style="padding-bottom: 2px;"><strong>Weight:</strong> <span style="float:right;">${((weightRoll.mult - 1)*100).toFixed(2)}% (${newItemData.system?.weight?.value ?? 0} lbs)</span></div>`;
 
-      // 4. Durability & Hardness
+      // 3. Durability & Hardness
       const hardRoll = rollStat("Hardness", "durability");
       const hpRoll = rollStat("Hit Points", "durability");
       logOutput += `<div style="padding-bottom: 2px;"><strong>Hardness / HP:</strong> <span style="float:right;">${((hardRoll.mult - 1)*100).toFixed(2)}% / ${((hpRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
@@ -541,23 +811,16 @@ export class GranularForgeApp extends Application {
         baseHardness = typeof newItemData.system.hardness === "object" ? newItemData.system.hardness.value : newItemData.system.hardness;
       }
       const baseHp = (newItemData.system.hp?.base ?? newItemData.system.hp?.max ?? 0); 
-
-      let initialHardness10x = baseHardness * 10;
-      let initialHp10x = baseHp * 10;
-
-      newItemData.system.hardness = Math.max(0, Math.round((initialHardness10x + mat.hardnessMod) * hardRoll.mult));
+      newItemData.system.hardness = Math.max(0, Math.round((baseHardness * 10 + mat.hardnessMod) * hardRoll.mult));
       
-      const finalHp = Math.max(1, Math.round((initialHp10x * mat.hpMult) * hpRoll.mult));
-      newItemData.system.hp = newItemData.system.hp || {};
-      newItemData.system.hp.base = finalHp; 
-      newItemData.system.hp.max = finalHp;
-      newItemData.system.hp.value = finalHp;
+      const finalHp = Math.max(1, Math.round((baseHp * 10 * mat.hpMult) * hpRoll.mult));
+      newItemData.system.hp = { base: finalHp, max: finalHp, value: finalHp };
 
-      if (mat.name !== "Steel") {
+      if (mat.name !== "Base" && mat.name !== "Steel") {
         identifiedTraits.push(`<strong>Material (${mat.name}):</strong> Hardness ${newItemData.system.hardness}, HP ${newItemData.system.hp.max}. ${mat.desc || ""}`);
       }
 
-      // 5. Armor & Shield Profile (AC, ACP, Max Dex, ASF)
+      // 4. Armor & Shield Profile (AC, ACP, Max Dex, ASF)
       if (isArmor && newItemData.system?.armor) {
         const acRoll = rollStat("Armor AC", "physical");
         const acpRoll = rollStat("ACP", "physical");
@@ -568,7 +831,6 @@ export class GranularForgeApp extends Application {
         let baseAsf = newItemData.system.armor.spellFailure ?? 0;
 
         newItemData.system.armor.value = Math.round(baseAc * acRoll.mult);
-        
         let adjustedAcp = Math.round(baseAcp * (2.0 - acpRoll.mult));
         if (mat.acpBonus) adjustedAcp = Math.min(0, adjustedAcp + mat.acpBonus);
         newItemData.system.armor.acp = adjustedAcp;
@@ -592,7 +854,7 @@ export class GranularForgeApp extends Application {
       let propPrefixes = [];
       let propSuffixes = [];
 
-      // 6. Weapon and Ammunition Action Injections
+      // 5. Actions & Precision
       if (!isArmor && newItemData.system?.actions) {
         const critRangeRoll = rollStat("Crit Threat", "precision");
         const critMultRoll = rollStat("Crit Mult", "precision");
@@ -602,7 +864,6 @@ export class GranularForgeApp extends Application {
 
         newItemData.system.actions.forEach(action => {
           action.ability = action.ability || {}; 
-          
           if (this.activeTab === "weapons") {
             action.extraAttacks = [{
               type: "custom",
@@ -613,13 +874,8 @@ export class GranularForgeApp extends Application {
             if (isFirstAction) identifiedTraits.push(`<strong>Iterative Form:</strong> Custom 10x progression injected.`);
           }
           
-          let critBase = action.ability.critRange ?? action.critRange;
-          if (critBase === undefined || critBase === null || critBase === "") {
-            critBase = 191; 
-          } else {
-            critBase = Number(critBase);
-            if (!isNaN(critBase) && critBase <= 20) critBase = (critBase * 10) - 9;
-          }
+          let critBase = action.ability.critRange ?? action.critRange ?? 191;
+          if (critBase <= 20) critBase = (critBase * 10) - 9;
 
           const rangeShift = (critRangeRoll.mult - 1.0) * 40; 
           let finalCrit = Math.min(199, Math.max(100, Math.round(critBase - rangeShift)));
@@ -634,7 +890,6 @@ export class GranularForgeApp extends Application {
 
           action.critMult = finalMult;
           action.ability.critMult = finalMult;
-
           action.flags = action.flags || {};
           action.flags[MODULE_ID] = action.flags[MODULE_ID] || {};
           action.flags[MODULE_ID].critMult = finalMult;
@@ -651,18 +906,14 @@ export class GranularForgeApp extends Application {
               
               const numDice = prop.numDice || 1;
               const varianceRatio = (pRoll.mult - 1.0) / 0.25; 
-              let faces = Math.round(60 + (varianceRatio * 20)); 
-              faces = Math.max(1, faces); 
+              let faces = Math.max(1, Math.round(60 + (varianceRatio * 20))); 
 
               let titlePrefix = prop.baseName;
               if (pRoll.mult > 1.15) titlePrefix = `Supreme ${prop.baseName}`;
               else if (pRoll.mult < 0.85) titlePrefix = `Weak ${prop.baseName}`;
               if (isFirstAction) propPrefixes.push(titlePrefix);
 
-              action.damage.parts.push({
-                formula: `${numDice}d${faces}`,
-                type: { values: [prop.type], custom: "" }
-              });
+              action.damage.parts.push({ formula: `${numDice}d${faces}`, type: { values: [prop.type], custom: "" } });
               if (isFirstAction) identifiedTraits.push(`<strong>${titlePrefix} Property:</strong> Infuses attacks with +${numDice}d${faces} ${prop.type} damage.`);
             } else {
               if (isFirstAction) {
@@ -678,7 +929,7 @@ export class GranularForgeApp extends Application {
         });
       }
 
-      // 7. Armor Properties & Enchantments
+      // 6. Armor Enchantments
       if (isArmor) {
         for (const propKey of this.selectedProperties) {
           const prop = propRegistry[propKey];
@@ -689,22 +940,16 @@ export class GranularForgeApp extends Application {
             logOutput += `<div style="padding-bottom: 2px;"><strong>Magic (${prop.baseName}):</strong> <span style="float:right;">${((pRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
             let bonus = prop.bonusMath(pRoll.mult);
             
-            let titlePrefix = prop.baseName;
-            if (pRoll.mult > 1.15) titlePrefix = `Greater ${prop.baseName}`;
-            else if (pRoll.mult < 0.85) titlePrefix = `Lesser ${prop.baseName}`;
+            let titlePrefix = pRoll.mult > 1.15 ? `Greater ${prop.baseName}` : pRoll.mult < 0.85 ? `Lesser ${prop.baseName}` : prop.baseName;
             propPrefixes.push(titlePrefix);
 
             if (prop.type === "skill") {
               newItemData.system.changes = newItemData.system.changes || [];
-              newItemData.system.changes.push({
-                formula: `${bonus}`, target: prop.target, operator: "add", type: "competence", priority: 0
-              });
+              newItemData.system.changes.push({ formula: `${bonus}`, target: prop.target, operator: "add", type: "competence", priority: 0 });
               identifiedTraits.push(`<strong>${titlePrefix}:</strong> +${bonus} competence bonus to skill checks.`);
             } else if (prop.type === "sr") {
               newItemData.system.changes = newItemData.system.changes || [];
-              newItemData.system.changes.push({
-                formula: `${bonus}`, target: "spellResist", operator: "add", type: "untyped", priority: 0
-              });
+              newItemData.system.changes.push({ formula: `${bonus}`, target: "spellResist", operator: "add", type: "untyped", priority: 0 });
               identifiedTraits.push(`<strong>${titlePrefix}:</strong> Grants Spell Resistance ${bonus}.`);
             }
           } else {
@@ -716,19 +961,21 @@ export class GranularForgeApp extends Application {
         }
       }
 
-      // 8. Magical Enhancement Bonus
+      // 7. Magical Enhancement (Set on root & armor object!)
       let enhSuffix = "";
       if (this.magicLevel > 0) {
         const enhRoll = rollStat("Magic Enhancement", "magic");
         logOutput += `<div style="padding-bottom: 2px;"><strong>Enhancement Bonus:</strong> <span style="float:right;">${((enhRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
         newItemData.system.enh = Math.max(1, Math.round((this.magicLevel * 10) * enhRoll.mult));
+        if (newItemData.system.armor) newItemData.system.armor.enh = newItemData.system.enh;
+        
         const titles = { 1: "of Flickering Might", 2: "of Resolute Force", 3: "of Striking Power", 4: "of Exalted Dominion", 5: "of Transcendent Power" };
         enhSuffix = titles[this.magicLevel] || "";
         identifiedTraits.push(`<strong>Enhancement Bonus (+${newItemData.system.enh}):</strong> Provides +${newItemData.system.enh} to hit/damage or Armor AC.`);
       }
 
-      // 9. Compound Fusion & Name Synthesis
-      const matTitle = mat.name !== "Steel" ? `${mat.name} ` : "";
+      // 8. Name Synthesis
+      const matTitle = mat.name !== "Base" ? `${mat.name} ` : "";
       let finalName = "";
 
       if (this.useShortCompoundNames && this.selectedProperties.size > 0) {
@@ -779,8 +1026,15 @@ export class GranularForgeApp extends Application {
       this.render();
     });
 
+    // ─── DRAG HANDLERS ───
     html.find('.forge-drag-card').on('dragstart', e => {
-      if (this.generatedItemData) {
+      const batchIdx = $(e.currentTarget).data('batch-idx');
+      if (batchIdx !== undefined && this.batchResults[batchIdx]) {
+        e.originalEvent.dataTransfer.setData('text/plain', JSON.stringify({ 
+          type: "Item", 
+          data: this.batchResults[batchIdx] 
+        }));
+      } else if (this.generatedItemData) {
         e.originalEvent.dataTransfer.setData('text/plain', JSON.stringify({ 
           type: "Item", 
           data: this.generatedItemData 
