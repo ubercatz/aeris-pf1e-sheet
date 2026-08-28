@@ -1,6 +1,6 @@
 /**
  * @file gear-forge.mjs
- * Procedural 10x Gear Forge with Tabbed Architecture, Batch Loot Generation, and Currency Scaling
+ * Procedural 10x Gear Forge with Tabbed Architecture, Balanced Level Hoards, and Actor Exporting
  */
 
 import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS, LEVEL_LOOT_TIERS } from "./enchantment-registry.mjs";
@@ -42,6 +42,7 @@ export class GranularForgeApp extends Application {
       includeGold: true
     };
     this.batchResults = [];
+    this.batchCoins = { pp: 0, gp: 0, sp: 0, cp: 0 };
   }
 
   static get defaultOptions() {
@@ -49,8 +50,8 @@ export class GranularForgeApp extends Application {
       id: "aeris-granular-forge",
       title: "10x Procedural Gear & Enchantment Forge",
       template: "",
-      width: 1020,
-      height: 820,
+      width: 1040,
+      height: 840,
       resizable: true,
       classes: ["aeris-gear-gen-app"]
     });
@@ -100,7 +101,7 @@ export class GranularForgeApp extends Application {
       const pack = game.packs.get(this.selectedCompendium);
       if (pack) {
         const rawIndex = await pack.getIndex({
-          fields: ["system.subType", "system.weaponSubtype", "system.equipmentType", "system.armor", "system.slot", "system.spellFailure"]
+          fields: ["system.subType", "system.weaponSubtype", "system.equipmentType", "system.armor", "system.slot", "system.spellFailure", "system.price"]
         });
         this.compendiumItems = rawIndex.filter(i => this._filterItemForTab(i, this.activeTab));
       }
@@ -133,7 +134,8 @@ export class GranularForgeApp extends Application {
       ammoQuantity: this.ammoQuantity,
       rollLogHtml: this.rollLogHtml,
       batchConfig: this.batchConfig,
-      batchResults: this.batchResults
+      batchResults: this.batchResults,
+      batchCoins: this.batchCoins
     };
   }
 
@@ -254,7 +256,7 @@ export class GranularForgeApp extends Application {
               <input type="checkbox" id="batch-inc-ammo" ${data.batchConfig.includeAmmo ? "checked" : ""}> 🏹 Ammunition Stacks
             </label>
             <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; cursor:pointer;">
-              <input type="checkbox" id="batch-inc-gold" ${data.batchConfig.includeGold ? "checked" : ""}> 💰 10x Gold & Coins
+              <input type="checkbox" id="batch-inc-gold" ${data.batchConfig.includeGold ? "checked" : ""}> 💰 Standard Coinage
             </label>
           </div>
 
@@ -263,19 +265,32 @@ export class GranularForgeApp extends Application {
           </button>
         </div>
 
-        <div style="flex:1.4; display:flex; flex-direction:column; gap:6px;">
-          <strong style="font-size:1.0em; border-bottom:1px solid var(--color-border-light-2); padding-bottom:3px;">Generated Hoard Output (${data.batchResults.length} Items)</strong>
+        <div style="flex:1.4; display:flex; flex-direction:column; gap:6px; overflow:hidden;">
+          <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--color-border-light-2); padding-bottom:3px;">
+            <strong style="font-size:1.0em;">Generated Hoard (${data.batchResults.length} Items)</strong>
+            <div style="display:flex; gap:6px;">
+              ${data.batchResults.length > 0 ? `
+                <button type="button" id="batch-export-actor-btn" style="padding:2px 8px; font-size:0.8em; font-weight:bold; background:#27ae60; color:#fff; border:1px solid #219653; border-radius:3px; cursor:pointer;">
+                  📥 Export to Actor
+                </button>
+                <div class="forge-drag-card" draggable="true" data-batch-all="true" style="padding:2px 8px; background:#dfe4ea; border:1px solid #747d8c; border-radius:3px; cursor:grab; font-size:0.8em; font-weight:bold;">
+                  📦 Drag All
+                </div>
+              ` : ""}
+            </div>
+          </div>
+
           <div style="flex-grow:1; border:2px dashed var(--color-border-dark); border-radius:6px; padding:6px; overflow-y:auto; background:rgba(0,0,0,0.01);">
             ${data.batchResults.length > 0 ? data.batchResults.map((item, idx) => `
               <div style="display:flex; align-items:center; gap:8px; padding:4px 6px; margin-bottom:4px; background:#fff; border:1px solid #ced6e0; border-radius:4px;">
                 <img src="${item.img}" width="28" height="28" style="border-radius:3px;" />
                 <div style="flex:1; overflow:hidden;">
                   <strong style="font-size:0.85em; display:block; text-overflow:ellipsis; white-space:nowrap; overflow:hidden;">${item.name}</strong>
-                  <span style="font-size:0.75em; color:#555;">${item.type === "loot" ? "Currency Hoard" : item.system?.armor ? `AC +${item.system.armor.value}` : item.system?.actions?.[0]?.damage?.parts?.[0]?.formula || "Special"} | Qty: ${item.system?.quantity ?? 1}</span>
+                  <span style="font-size:0.75em; color:#555;">${item.type === "loot" ? "Standard Coins" : item.system?.armor ? `AC +${item.system.armor.value}` : item.system?.actions?.[0]?.damage?.parts?.[0]?.formula || "Equipment"} | Qty: ${item.system?.quantity ?? 1}</span>
                 </div>
                 <div class="forge-drag-card" draggable="true" data-batch-idx="${idx}" style="padding:2px 8px; background:#dfe4ea; border:1px solid #747d8c; border-radius:3px; cursor:grab; font-size:0.75em; font-weight:bold;">📦 Drag</div>
               </div>
-            `).join("") : '<p style="text-align:center; color:#777; padding:20px; font-size:0.85em;">Configure parameters and click Generate to roll an entire encounter hoard.</p>'}
+            `).join("") : '<p style="text-align:center; color:#777; padding:20px; font-size:0.85em;">Configure parameters and click Generate to roll an encounter hoard calibrated to party level.</p>'}
           </div>
         </div>
       </div>
@@ -389,8 +404,6 @@ export class GranularForgeApp extends Application {
 
     const html = `
       <div style="display:flex; flex-direction:column; height:100%; gap:8px; padding:6px; font-family:var(--font-primary);">
-        
-        <!-- HEADER TAB NAVIGATION -->
         <nav class="forge-category-tabs" style="display:flex; gap:8px; border-bottom:2px solid var(--color-border-light-2); padding-bottom:6px;">
           <button type="button" class="forge-tab-nav ${data.activeTab === "weapons" ? "active" : ""}" data-tab="weapons" style="flex:1; padding:6px 10px; font-weight:bold; cursor:pointer; background:${data.activeTab === "weapons" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "weapons" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
             ⚔️ Weapons
@@ -536,7 +549,59 @@ export class GranularForgeApp extends Application {
       }).render(true);
     });
 
-    // ─── BATCH LOOT GENERATOR EXECUTION ───
+    // ─── BATCH EXPORT DIRECTLY TO ACTOR ───
+    html.find('#batch-export-actor-btn').click(async () => {
+      if (this.batchResults.length === 0) return ui.notifications.warn("No hoard generated yet!");
+      
+      const actors = game.actors.contents.filter(a => a.isOwner);
+      if (actors.length === 0) return ui.notifications.error("No valid destination actor found.");
+
+      const options = actors.map(a => `<option value="${a.id}">${a.name}</option>`).join("");
+      
+      new Dialog({
+        title: "Deposit Hoard into Actor",
+        content: `
+          <form>
+            <div class="form-group">
+              <label>Target Actor / Container</label>
+              <select id="export-actor-id">${options}</select>
+            </div>
+          </form>
+        `,
+        buttons: {
+          export: {
+            label: "Deposit All",
+            callback: async (dHtml) => {
+              const actorId = dHtml.find('#export-actor-id').val();
+              const targetActor = game.actors.get(actorId);
+              if (!targetActor) return;
+
+              // 1. Update Coin Wallet Directly
+              if (this.batchCoins) {
+                const cur = targetActor.system.currency || { pp: 0, gp: 0, sp: 0, cp: 0 };
+                await targetActor.update({
+                  "system.currency.pp": (cur.pp || 0) + (this.batchCoins.pp || 0),
+                  "system.currency.gp": (cur.gp || 0) + (this.batchCoins.gp || 0),
+                  "system.currency.sp": (cur.sp || 0) + (this.batchCoins.sp || 0),
+                  "system.currency.cp": (cur.cp || 0) + (this.batchCoins.cp || 0)
+                });
+              }
+
+              // 2. Deposit Equipment (excluding coin tracker item)
+              const gearDocs = this.batchResults.filter(i => i.type !== "loot");
+              if (gearDocs.length > 0) {
+                await targetActor.createEmbeddedDocuments("Item", gearDocs);
+              }
+
+              ui.notifications.info(`Successfully deposited ${this.batchResults.length} items and currency into ${targetActor.name}!`);
+            }
+          }
+        },
+        default: "export"
+      }).render(true);
+    });
+
+    // ─── BATCH LOOT GENERATOR EXECUTION (CALIBRATED) ───
     html.find('#forge-batch-btn').click(async () => {
       this.batchConfig.level = parseInt(html.find('#batch-level').val(), 10) || 1;
       this.batchConfig.grade = html.find('#batch-grade').val();
@@ -557,24 +622,27 @@ export class GranularForgeApp extends Application {
       }
 
       this.batchResults = [];
-      ui.notifications.info("Generating Procedural Loot Hoard...");
+      this.batchCoins = { pp: 0, gp: 0, sp: 0, cp: 0 };
+      ui.notifications.info("Generating Balanced Procedural Hoard...");
 
-      // 1. Generate Currency (10x scaled Gold)
+      // 1. Standard Gold Hoard (Unscaled Base Values)
       if (this.batchConfig.includeGold) {
-        const goldVariance = 0.75 + Math.random() * 0.5; // +-25%
-        const totalGold = Math.round(tierConfig.goldBase * 10 * goldVariance);
+        const goldVariance = 0.85 + Math.random() * 0.3; // +-15%
+        const totalGold = Math.round(tierConfig.goldBase * goldVariance);
         
-        const pp = Math.floor((totalGold * 0.2) / 10);
-        const gp = Math.floor(totalGold * 0.6);
+        const pp = Math.floor((totalGold * 0.1) / 10);
+        const gp = Math.floor(totalGold * 0.7);
         const sp = Math.floor((totalGold * 0.15) * 10);
         const cp = Math.floor((totalGold * 0.05) * 100);
+
+        this.batchCoins = { pp, gp, sp, cp };
 
         const goldItem = {
           name: `Hoard Coinage (CR ${this.batchConfig.level})`,
           type: "loot",
           img: "icons/commodities/currency/coins-assorted-mix-copper-silver-gold.webp",
           system: {
-            description: { value: `<p><strong>Encounter Treasure:</strong> Contains 10x granular coins.</p><p>• <strong>Platinum:</strong> ${pp} pp<br/>• <strong>Gold:</strong> ${gp} gp<br/>• <strong>Silver:</strong> ${sp} sp<br/>• <strong>Copper:</strong> ${cp} cp</p>` },
+            description: { value: `<p><strong>Encounter Treasure (CR ${this.batchConfig.level}):</strong></p><p>• <strong>Platinum:</strong> ${pp} pp<br/>• <strong>Gold:</strong> ${gp} gp<br/>• <strong>Silver:</strong> ${sp} sp<br/>• <strong>Copper:</strong> ${cp} cp</p>` },
             quantity: 1,
             price: totalGold,
             weight: { value: Math.round((pp + gp + sp + cp) / 50) }
@@ -584,7 +652,7 @@ export class GranularForgeApp extends Application {
         this.batchResults.push(goldItem);
       }
 
-      // 2. Generate Equipment Items
+      // 2. Generate Equipment Items (with CR Item Price Ceilings)
       if (categories.length > 0) {
         const packs = game.packs.filter(p => p.documentName === "Item");
         for (let i = 0; i < this.batchConfig.count; i++) {
@@ -593,8 +661,15 @@ export class GranularForgeApp extends Application {
           const chosenPack = validPacks[Math.floor(Math.random() * validPacks.length)] || packs[0];
           
           if (!chosenPack) continue;
-          const index = await chosenPack.getIndex({ fields: ["system.subType", "system.weaponSubtype", "system.equipmentType", "system.armor", "system.slot"] });
-          const pool = index.filter(item => this._filterItemForTab(item, chosenCategory));
+          const index = await chosenPack.getIndex({ fields: ["system.subType", "system.weaponSubtype", "system.equipmentType", "system.armor", "system.slot", "system.price"] });
+          
+          // STRICT PRICE FILTER TO PREVENT HIGH-LEVEL LOOT OVERPOWERS
+          const pool = index.filter(item => {
+            if (!this._filterItemForTab(item, chosenCategory)) return false;
+            const price = item.system?.price || 0;
+            return price <= tierConfig.maxItemPrice;
+          });
+
           if (pool.length === 0) continue;
 
           const baseDoc = await chosenPack.getDocument(pool[Math.floor(Math.random() * pool.length)]._id);
@@ -603,18 +678,26 @@ export class GranularForgeApp extends Application {
           const newItemData = baseDoc.toObject();
           const isArmor = chosenCategory === "armor";
           const isAmmo = chosenCategory === "ammo";
+          const isWondrous = !isArmor && !isAmmo && baseDoc.type !== "weapon";
 
-          // Calculate Level-Appropriate Enhancement
+          // Wondrous Items are kept pristine with no variance applied
+          if (isWondrous) {
+            newItemData.flags = newItemData.flags || {};
+            newItemData.flags[MODULE_ID] = { is10xScaled: true, disable10xSheet: true, disable10xCard: true };
+            this.batchResults.push(newItemData);
+            continue;
+          }
+
+          // Level-Appropriate Enhancement
           let enhLevel = 0;
           if (this.batchConfig.grade === "mundane") enhLevel = 0;
           else if (this.batchConfig.grade === "minor") enhLevel = 1;
-          else if (this.batchConfig.grade === "medium") enhLevel = 2 + Math.floor(Math.random() * 2);
-          else if (this.batchConfig.grade === "major") enhLevel = 4 + Math.floor(Math.random() * 2);
+          else if (this.batchConfig.grade === "medium") enhLevel = Math.min(3, Math.max(1, tierConfig.maxEnh));
+          else if (this.batchConfig.grade === "major") enhLevel = Math.min(5, Math.max(3, tierConfig.maxEnh));
           else {
             if (Math.random() < tierConfig.propChance) enhLevel = Math.max(1, Math.floor(Math.random() * (tierConfig.maxEnh + 1)));
           }
 
-          // Pick Material
           let chosenMat = "base";
           if (Math.random() < tierConfig.matChance) {
             const mats = isArmor ? ["mithral", "adamantine", "darkwood", "dragonhide"] : ["adamantine", "coldiron", "silversheen", "mithral"];
@@ -622,7 +705,6 @@ export class GranularForgeApp extends Application {
           }
           const mat = SPECIAL_MATERIALS[chosenMat];
 
-          // Pick Magic Property
           const propPool = isArmor ? ARMOR_ENCHANTMENTS : WEAPON_ENCHANTMENTS;
           const pickedProps = new Set();
           if (enhLevel > 0 && Math.random() < tierConfig.propChance) {
@@ -630,7 +712,6 @@ export class GranularForgeApp extends Application {
             pickedProps.add(keys[Math.floor(Math.random() * keys.length)]);
           }
 
-          // Flags & Masterwork
           newItemData.flags = newItemData.flags || {};
           newItemData.flags[MODULE_ID] = newItemData.flags[MODULE_ID] || {};
           newItemData.flags[MODULE_ID].disable10xCard = true;
@@ -639,7 +720,6 @@ export class GranularForgeApp extends Application {
           if (enhLevel > 0 || pickedProps.size > 0 || mat.name !== "Base") newItemData.system.masterwork = true;
           if (isAmmo) newItemData.system.quantity = 20 + (Math.floor(Math.random() * 4) * 10);
 
-          // Continuous Roller
           const rollM = (cat) => 1.0 + ((this.variances[cat].min / 100) + Math.random() * ((this.variances[cat].max - this.variances[cat].min) / 100));
           const craftM = rollM("physical");
           const hardM = rollM("durability");
@@ -650,7 +730,6 @@ export class GranularForgeApp extends Application {
           if (tier === 0) tier = craftM >= 1.0 ? 1 : -1;
           const prefix = tierPrefixes[Math.max(-4, Math.min(4, tier))];
 
-          // Hardness, HP & Weight
           let bHard = (typeof newItemData.system.hardness === "object" ? newItemData.system.hardness.value : newItemData.system.hardness) || 0;
           let bHp = (newItemData.system.hp?.base ?? newItemData.system.hp?.max ?? 0);
           newItemData.system.hardness = Math.max(0, Math.round((bHard * 10 + mat.hardnessMod) * hardM));
@@ -660,7 +739,6 @@ export class GranularForgeApp extends Application {
           let bWeight = newItemData.system.weight?.value ?? 0;
           if (bWeight > 0) newItemData.system.weight.value = Math.max(0.1, Math.round((bWeight * (mat.weightMult || 1.0) * (2.0 - craftM)) * 100) / 100);
 
-          // Armor Stats
           if (isArmor && newItemData.system?.armor) {
             newItemData.system.armor.value = Math.round((newItemData.system.armor.value || 0) * 10 * craftM);
             let adjAcp = Math.round((newItemData.system.armor.acp || 0) * 10 * (2.0 - craftM));
@@ -668,7 +746,6 @@ export class GranularForgeApp extends Application {
             newItemData.system.armor.acp = adjAcp;
           }
 
-          // Weapon Actions
           let propPrefix = "";
           if (!isArmor && newItemData.system?.actions) {
             const critRM = rollM("precision");
@@ -701,7 +778,6 @@ export class GranularForgeApp extends Application {
             });
           }
 
-          // Enhancement Bonus (Properly set on both root & armor object!)
           let enhSuffix = "";
           if (enhLevel > 0) {
             const enhM = rollM("magic");
@@ -754,7 +830,7 @@ export class GranularForgeApp extends Application {
       newItemData.flags = newItemData.flags || {};
       newItemData.flags[MODULE_ID] = newItemData.flags[MODULE_ID] || {};
       newItemData.flags[MODULE_ID].disable10xCard = true; 
-      newItemData.flags[MODULE_ID].disable10xSheet = true; // Auto-activates no sheet multiplication!
+      newItemData.flags[MODULE_ID].disable10xSheet = true; 
       newItemData.flags[MODULE_ID].is10xScaled = true; 
 
       if (this.activeTab === "ammo") {
@@ -785,13 +861,11 @@ export class GranularForgeApp extends Application {
         "1": "Tempered", "2": "Honed", "3": "Superior", "4": "Mastercraft"
       };
 
-      // 1. Craft Quality
       const craftRoll = rollStat("Craft Quality", "physical");
       const prefix = tierPrefixes[craftRoll.tier];
       identifiedTraits.push(`<strong>Craftsmanship (${prefix}):</strong> Forged to ${prefix.toLowerCase()} standards.`);
       logOutput += `<div style="padding-bottom: 2px;"><strong>Physical M-plier:</strong> <span style="float:right;">${((craftRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
 
-      // 2. Weight Scaling
       const weightRoll = rollStat("Weight", "physical");
       const rawWeight = newItemData.system?.weight?.value ?? 0;
       const matWeightMult = mat.weightMult || 1.0;
@@ -801,7 +875,6 @@ export class GranularForgeApp extends Application {
       if (newItemData.system?.weight) newItemData.system.weight.value = rawWeight === 0 ? 0 : calculatedWeight;
       logOutput += `<div style="padding-bottom: 2px;"><strong>Weight:</strong> <span style="float:right;">${((weightRoll.mult - 1)*100).toFixed(2)}% (${newItemData.system?.weight?.value ?? 0} lbs)</span></div>`;
 
-      // 3. Durability & Hardness
       const hardRoll = rollStat("Hardness", "durability");
       const hpRoll = rollStat("Hit Points", "durability");
       logOutput += `<div style="padding-bottom: 2px;"><strong>Hardness / HP:</strong> <span style="float:right;">${((hardRoll.mult - 1)*100).toFixed(2)}% / ${((hpRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
@@ -820,7 +893,6 @@ export class GranularForgeApp extends Application {
         identifiedTraits.push(`<strong>Material (${mat.name}):</strong> Hardness ${newItemData.system.hardness}, HP ${newItemData.system.hp.max}. ${mat.desc || ""}`);
       }
 
-      // 4. Armor & Shield Profile (AC, ACP, Max Dex, ASF)
       if (isArmor && newItemData.system?.armor) {
         const acRoll = rollStat("Armor AC", "physical");
         const acpRoll = rollStat("ACP", "physical");
@@ -854,7 +926,6 @@ export class GranularForgeApp extends Application {
       let propPrefixes = [];
       let propSuffixes = [];
 
-      // 5. Actions & Precision
       if (!isArmor && newItemData.system?.actions) {
         const critRangeRoll = rollStat("Crit Threat", "precision");
         const critMultRoll = rollStat("Crit Mult", "precision");
@@ -929,7 +1000,6 @@ export class GranularForgeApp extends Application {
         });
       }
 
-      // 6. Armor Enchantments
       if (isArmor) {
         for (const propKey of this.selectedProperties) {
           const prop = propRegistry[propKey];
@@ -961,7 +1031,6 @@ export class GranularForgeApp extends Application {
         }
       }
 
-      // 7. Magical Enhancement (Set on root & armor object!)
       let enhSuffix = "";
       if (this.magicLevel > 0) {
         const enhRoll = rollStat("Magic Enhancement", "magic");
@@ -974,7 +1043,6 @@ export class GranularForgeApp extends Application {
         identifiedTraits.push(`<strong>Enhancement Bonus (+${newItemData.system.enh}):</strong> Provides +${newItemData.system.enh} to hit/damage or Armor AC.`);
       }
 
-      // 8. Name Synthesis
       const matTitle = mat.name !== "Base" ? `${mat.name} ` : "";
       let finalName = "";
 
@@ -1028,8 +1096,15 @@ export class GranularForgeApp extends Application {
 
     // ─── DRAG HANDLERS ───
     html.find('.forge-drag-card').on('dragstart', e => {
+      const isDragAll = $(e.currentTarget).data('batch-all');
       const batchIdx = $(e.currentTarget).data('batch-idx');
-      if (batchIdx !== undefined && this.batchResults[batchIdx]) {
+      
+      if (isDragAll && this.batchResults.length > 0) {
+        e.originalEvent.dataTransfer.setData('text/plain', JSON.stringify({ 
+          type: "Item", 
+          data: this.batchResults 
+        }));
+      } else if (batchIdx !== undefined && this.batchResults[batchIdx]) {
         e.originalEvent.dataTransfer.setData('text/plain', JSON.stringify({ 
           type: "Item", 
           data: this.batchResults[batchIdx] 

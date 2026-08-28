@@ -1,6 +1,6 @@
 /**
  * @file enchantment-registry.mjs
- * Continuous 10x Granular Engine Registry with Base Material & CR Loot Scaling
+ * Continuous 10x Granular Engine Registry with Standard Gold & CR Item Ceilings
  */
 
 export const SPECIAL_MATERIALS = {
@@ -64,26 +64,26 @@ export const COMPOUND_FUSIONS = {
   "corrosive_flaming_frost_shock": "Omni-Elemental"
 };
 
-// ─── CR / ENCOUNTER LEVEL TREASURE CURVES ───────────────────────────────────
+// ─── STANDARD ENCOUNTER WEALTH & SINGLE-ITEM CAPS (CR 1–20) ─────────────────
 export const LEVEL_LOOT_TIERS = {
-  1:  { maxEnh: 0, propChance: 0.05, matChance: 0.05, goldBase: 250 },
-  2:  { maxEnh: 1, propChance: 0.10, matChance: 0.10, goldBase: 500 },
-  3:  { maxEnh: 1, propChance: 0.15, matChance: 0.15, goldBase: 800 },
-  4:  { maxEnh: 1, propChance: 0.25, matChance: 0.20, goldBase: 1200 },
-  5:  { maxEnh: 2, propChance: 0.35, matChance: 0.25, goldBase: 2000 },
-  6:  { maxEnh: 2, propChance: 0.45, matChance: 0.30, goldBase: 3000 },
-  7:  { maxEnh: 2, propChance: 0.55, matChance: 0.35, goldBase: 4500 },
-  8:  { maxEnh: 3, propChance: 0.65, matChance: 0.40, goldBase: 6500 },
-  9:  { maxEnh: 3, propChance: 0.75, matChance: 0.50, goldBase: 9000 },
-  10: { maxEnh: 3, propChance: 0.85, matChance: 0.60, goldBase: 13000 },
-  11: { maxEnh: 4, propChance: 0.90, matChance: 0.70, goldBase: 18000 },
-  12: { maxEnh: 4, propChance: 0.95, matChance: 0.75, goldBase: 25000 },
-  13: { maxEnh: 4, propChance: 1.00, matChance: 0.80, goldBase: 35000 },
-  14: { maxEnh: 5, propChance: 1.00, matChance: 0.85, goldBase: 50000 },
-  15: { maxEnh: 5, propChance: 1.00, matChance: 0.90, goldBase: 70000 },
-  16: { maxEnh: 5, propChance: 1.00, matChance: 0.95, goldBase: 100000 },
-  17: { maxEnh: 5, propChance: 1.00, matChance: 1.00, goldBase: 140000 },
-  18: { maxEnh: 5, propChance: 1.00, matChance: 1.00, goldBase: 200000 },
-  19: { maxEnh: 5, propChance: 1.00, matChance: 1.00, goldBase: 300000 },
-  20: { maxEnh: 5, propChance: 1.00, matChance: 1.00, goldBase: 500000 }
+  1:  { maxEnh: 0, maxItemPrice: 300,    propChance: 0.00, matChance: 0.05, goldBase: 260 },
+  2:  { maxEnh: 0, maxItemPrice: 600,    propChance: 0.05, matChance: 0.08, goldBase: 550 },
+  3:  { maxEnh: 0, maxItemPrice: 1000,   propChance: 0.10, matChance: 0.12, goldBase: 800 },
+  4:  { maxEnh: 1, maxItemPrice: 2000,   propChance: 0.20, matChance: 0.15, goldBase: 1150 },
+  5:  { maxEnh: 1, maxItemPrice: 3000,   propChance: 0.30, matChance: 0.20, goldBase: 1550 },
+  6:  { maxEnh: 1, maxItemPrice: 4500,   propChance: 0.40, matChance: 0.25, goldBase: 2000 },
+  7:  { maxEnh: 2, maxItemPrice: 7000,   propChance: 0.50, matChance: 0.30, goldBase: 2600 },
+  8:  { maxEnh: 2, maxItemPrice: 10000,  propChance: 0.60, matChance: 0.35, goldBase: 3350 },
+  9:  { maxEnh: 2, maxItemPrice: 14000,  propChance: 0.70, matChance: 0.40, goldBase: 4250 },
+  10: { maxEnh: 3, maxItemPrice: 20000,  propChance: 0.75, matChance: 0.45, goldBase: 5450 },
+  11: { maxEnh: 3, maxItemPrice: 28000,  propChance: 0.80, matChance: 0.50, goldBase: 7000 },
+  12: { maxEnh: 3, maxItemPrice: 38000,  propChance: 0.85, matChance: 0.55, goldBase: 9000 },
+  13: { maxEnh: 4, maxItemPrice: 50000,  propChance: 0.90, matChance: 0.60, goldBase: 11600 },
+  14: { maxEnh: 4, maxItemPrice: 65000,  propChance: 0.95, matChance: 0.65, goldBase: 15000 },
+  15: { maxEnh: 4, maxItemPrice: 85000,  propChance: 1.00, matChance: 0.70, goldBase: 19500 },
+  16: { maxEnh: 5, maxItemPrice: 110000, propChance: 1.00, matChance: 0.75, goldBase: 25000 },
+  17: { maxEnh: 5, maxItemPrice: 150000, propChance: 1.00, matChance: 0.80, goldBase: 32000 },
+  18: { maxEnh: 5, maxItemPrice: 200000, propChance: 1.00, matChance: 0.85, goldBase: 41000 },
+  19: { maxEnh: 5, maxItemPrice: 275000, propChance: 1.00, matChance: 0.90, goldBase: 53000 },
+  20: { maxEnh: 5, maxItemPrice: 400000, propChance: 1.00, matChance: 1.00, goldBase: 67000 }
 };
