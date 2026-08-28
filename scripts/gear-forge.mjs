@@ -1,6 +1,6 @@
 /**
  * @file gear-forge.mjs
- * Procedural 10x Gear Forge with Collapsible Variances, Expanded Properties, and Decimal Protection
+ * Procedural 10x Gear Forge with Tabbed Architecture, Category Filtering, and Ammunition Stacks
  */
 
 import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS } from "./enchantment-registry.mjs";
@@ -10,6 +10,7 @@ const MODULE_ID = "pf1-altsheet-reworked";
 export class GranularForgeApp extends Application {
   constructor(options = {}) {
     super(options);
+    this.activeTab = "weapons"; // "weapons" | "armor" | "ammo"
     this.selectedCompendium = "";
     this.compendiumItems = [];
     this.selectedBaseItem = null;
@@ -27,6 +28,7 @@ export class GranularForgeApp extends Application {
     this.selectedProperties = new Set();
     this.useShortCompoundNames = true;
     this.searchTerm = "";
+    this.ammoQuantity = 20;
     this.rollLogHtml = ""; 
   }
 
@@ -35,28 +37,80 @@ export class GranularForgeApp extends Application {
       id: "aeris-granular-forge",
       title: "10x Procedural Gear & Enchantment Forge",
       template: "",
-      width: 980,
-      height: 780,
+      width: 1000,
+      height: 800,
       resizable: true,
       classes: ["aeris-gear-gen-app"]
     });
+  }
+
+  /**
+   * Evaluates if a raw compendium index entry matches the active tab's category
+   */
+  _filterItemForTab(item, tab) {
+    const type = item.type;
+    const subType = item.system?.subType || item.system?.weaponSubtype || "";
+    const eqType = item.system?.equipmentType || "";
+    const name = item.name.toLowerCase();
+
+    // 1. Ammunition Tab
+    if (tab === "ammo") {
+      if (type === "ammo") return true;
+      if (subType === "ammo") return true;
+      if (type === "loot" && item.system?.subType === "ammo") return true;
+      if (/\b(arrow|arrows|bolt|bolts|bullet|bullets|cartridge|cartridges|dart|darts|shuriken|pellets)\b/i.test(name)) return true;
+      return false;
+    }
+
+    // 2. Armor & Shields Tab
+    if (tab === "armor") {
+      if (type === "armor" || type === "shield") return true;
+      if (type === "equipment") {
+        if (["armor", "shield"].includes(eqType) || ["armor", "shield"].includes(subType)) return true;
+        if (item.system?.armor !== undefined || ["armor", "shield"].includes(item.system?.slot)) return true;
+      }
+      return false;
+    }
+
+    // 3. Weapons Tab (Excludes ammo)
+    if (tab === "weapons") {
+      if (type === "weapon") {
+        if (subType === "ammo") return false;
+        if (/\b(arrow|arrows|bolt|bolts|cartridge|cartridges)\b/i.test(name)) return false;
+        return true;
+      }
+      return false;
+    }
+
+    return false;
   }
 
   async getData() {
     const packs = game.packs.filter(p => p.documentName === "Item");
     const packChoices = packs.reduce((acc, p) => { acc[p.collection] = p.metadata.label; return acc; }, {});
     if (!this.selectedCompendium && packs.length > 0) this.selectedCompendium = packs[0].collection;
+    
     if (this.selectedCompendium) {
       const pack = game.packs.get(this.selectedCompendium);
-      if (pack) this.compendiumItems = await pack.getIndex();
+      if (pack) {
+        const rawIndex = await pack.getIndex({
+          fields: ["system.subType", "system.weaponSubtype", "system.equipmentType", "system.armor", "system.slot"]
+        });
+        this.compendiumItems = rawIndex.filter(i => this._filterItemForTab(i, this.activeTab));
+      }
     }
 
-    const isWeapon = this.selectedBaseItem?.type === "weapon";
-    let baseProperties = isWeapon ? WEAPON_ENCHANTMENTS : ARMOR_ENCHANTMENTS;
+    let availableProperties = {};
     const customProps = game.settings.get(MODULE_ID, "customProperties") || {};
-    const availableProperties = { ...baseProperties, ...customProps };
+
+    if (this.activeTab === "armor") {
+      availableProperties = { ...ARMOR_ENCHANTMENTS, ...customProps };
+    } else {
+      availableProperties = { ...WEAPON_ENCHANTMENTS, ...customProps };
+    }
 
     return {
+      activeTab: this.activeTab,
       packs: packChoices,
       selectedCompendium: this.selectedCompendium,
       items: this.compendiumItems,
@@ -68,9 +122,9 @@ export class GranularForgeApp extends Application {
       materials: SPECIAL_MATERIALS,
       properties: availableProperties,
       selectedProperties: this.selectedProperties,
-      isWeapon,
       useShortNames: this.useShortCompoundNames,
       searchTerm: this.searchTerm,
+      ammoQuantity: this.ammoQuantity,
       rollLogHtml: this.rollLogHtml
     };
   }
@@ -86,7 +140,23 @@ export class GranularForgeApp extends Application {
       </div>
     `).join("");
 
-    const propRows = Object.entries(data.properties).map(([k, v]) => `
+    // Property Filtering
+    let filteredProps = Object.entries(data.properties);
+    if (data.activeTab === "weapons" && data.selectedItem) {
+      const wpn = data.selectedItem.system;
+      const isRanged = wpn?.weaponSubtype === "ranged" || wpn?.properties?.thr;
+      const isMelee = wpn?.weaponSubtype !== "ranged" || wpn?.properties?.thr; 
+      
+      filteredProps = filteredProps.filter(([k, v]) => {
+        if (v.allowed === "melee" && !isMelee) return false;
+        if (v.allowed === "ranged" && !isRanged) return false;
+        return true;
+      });
+    } else if (data.activeTab === "ammo") {
+      filteredProps = filteredProps.filter(([k, v]) => v.allowed !== "melee");
+    }
+
+    const propRows = filteredProps.map(([k, v]) => `
       <label style="display:flex; align-items:center; gap: 6px; font-size: 0.9em; margin-bottom: 4px; padding: 4px; cursor:pointer; border-bottom: 1px solid rgba(0,0,0,0.05); transition: background 0.1s;" onmouseover="this.style.background='rgba(0,0,0,0.05)'" onmouseout="this.style.background='transparent'">
         <input type="checkbox" class="forge-prop-checkbox" value="${k}" ${data.selectedProperties.has(k) ? "checked" : ""}>
         <strong>${v.baseName}</strong> <span style="color:#666;">(+${v.cost})</span>
@@ -95,18 +165,18 @@ export class GranularForgeApp extends Application {
 
     let safeHardness = 0;
     if (data.selectedItem?.system?.hardness) {
-        safeHardness = typeof data.selectedItem.system.hardness === "object" ? data.selectedItem.system.hardness.value : data.selectedItem.system.hardness;
+      safeHardness = typeof data.selectedItem.system.hardness === "object" ? data.selectedItem.system.hardness.value : data.selectedItem.system.hardness;
     }
     const safeHp = data.selectedItem?.system?.hp?.base ?? data.selectedItem?.system?.hp?.max ?? data.selectedItem?.system?.hp?.value ?? 0;
 
     const previewHtml = data.selectedItem ? `
       <div style="background: rgba(0,0,0,0.03); border: 1px solid var(--color-border-light-1); border-radius: 4px; padding: 6px; margin-bottom: 8px; font-size: 0.8em; line-height: 1.4;">
           <strong style="font-size: 1.1em; color: var(--color-text-dark-primary);"><i class="fas fa-cube"></i> Base Item: ${data.selectedItem.name}</strong><br/>
-          ${data.isWeapon ? `
-              <strong>Damage:</strong> ${data.selectedItem.system.actions?.[0]?.damage?.parts?.[0]?.formula || "N/A"} | 
-              <strong>Crit:</strong> ${data.selectedItem.system.actions?.[0]?.ability?.critRange ?? data.selectedItem.system.actions?.[0]?.critRange ?? 20}-20/x${data.selectedItem.system.actions?.[0]?.ability?.critMult ?? data.selectedItem.system.actions?.[0]?.critMult ?? 2}<br/>
+          ${data.selectedItem.system?.actions?.[0]?.damage ? `
+              <strong>Damage:</strong> ${data.selectedItem.system.actions[0].damage.parts?.[0]?.formula || "N/A"} | 
+              <strong>Crit:</strong> ${data.selectedItem.system.actions[0].ability?.critRange ?? data.selectedItem.system.actions[0].critRange ?? 20}-20/x${data.selectedItem.system.actions[0].ability?.critMult ?? data.selectedItem.system.actions[0].critMult ?? 2}<br/>
           ` : ""}
-          ${data.selectedItem.system.armor ? `
+          ${data.selectedItem.system?.armor ? `
               <strong>AC:</strong> +${data.selectedItem.system.armor.value || 0} | 
               <strong>ACP:</strong> ${data.selectedItem.system.armor.acp || 0} | 
               <strong>Max Dex:</strong> ${data.selectedItem.system.armor.dex ?? "∞"}<br/>
@@ -133,100 +203,126 @@ export class GranularForgeApp extends Application {
     `;
 
     const html = `
-      <div style="display:flex;height:100%;gap:10px;padding:6px;font-family:var(--font-primary);">
+      <div style="display:flex; flex-direction:column; height:100%; gap:8px; padding:6px; font-family:var(--font-primary);">
         
-        <!-- COLUMN 1: DIRECTORY -->
-        <div style="flex:1;display:flex;flex-direction:column;border-right:1px solid var(--color-border-light-2);padding-right:6px;">
-          <label style="font-weight:bold;font-size:0.8em;margin-bottom:2px;">Compendium Pack</label>
-          <select id="forge-pack-select" style="margin-bottom:6px;font-size:0.85em;padding:3px;">${packOpts}</select>
-          <input type="text" id="forge-item-search" value="${data.searchTerm}" placeholder="🔍 Search items..." style="margin-bottom:6px;font-size:0.85em;padding:4px;border:1px solid var(--color-border-light-1);border-radius:3px;">
-          <div style="flex-grow:1;overflow-y:auto;border:1px solid var(--color-border-light-1);border-radius:4px;max-height:600px;">${itemRows || '<p style="padding:8px;color:#777;">No items found.</p>'}</div>
-        </div>
+        <!-- HEADER TAB NAVIGATION -->
+        <nav class="forge-category-tabs" style="display:flex; gap:8px; border-bottom:2px solid var(--color-border-light-2); padding-bottom:6px;">
+          <button type="button" class="forge-tab-nav ${data.activeTab === "weapons" ? "active" : ""}" data-tab="weapons" style="flex:1; padding:6px 12px; font-weight:bold; cursor:pointer; background:${data.activeTab === "weapons" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "weapons" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
+            ⚔️ Weapons
+          </button>
+          <button type="button" class="forge-tab-nav ${data.activeTab === "armor" ? "active" : ""}" data-tab="armor" style="flex:1; padding:6px 12px; font-weight:bold; cursor:pointer; background:${data.activeTab === "armor" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "armor" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
+            🛡️ Armor & Shields
+          </button>
+          <button type="button" class="forge-tab-nav ${data.activeTab === "ammo" ? "active" : ""}" data-tab="ammo" style="flex:1; padding:6px 12px; font-weight:bold; cursor:pointer; background:${data.activeTab === "ammo" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "ammo" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
+            🏹 Ammunition
+          </button>
+        </nav>
 
-        <!-- COLUMN 2: FORGE CONTROLS -->
-        <div style="flex:1.2;display:flex;flex-direction:column;gap:8px;border-right:1px solid var(--color-border-light-2);padding-right:6px; height: 100%;">
+        <!-- MAIN 3-COLUMN LAYOUT -->
+        <div style="display:flex; flex:1; gap:10px; overflow:hidden;">
           
-          ${previewHtml}
-          
-          <!-- COLLAPSIBLE VARIANCES -->
-          <details style="background:rgba(0,0,0,0.02); padding: 6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
-            <summary style="font-weight:bold; font-size:0.9em; cursor:pointer; outline:none; user-select:none;">🎯 Targeted Variances (Min to Max)</summary>
-            <div style="display:flex; flex-direction:column; gap:4px; margin-top:8px;">
-              ${createSlider("Physical (Craft, AC, Damage)", "physical")}
-              ${createSlider("Durability (HP, Hardness)", "durability")}
-              ${createSlider("Precision (Crit Range, Mult)", "precision")}
-              ${createSlider("Magic (Enhancement, Properties)", "magic")}
-            </div>
-          </details>
-
-          <div style="display:flex; gap:6px;">
-            <div style="flex:1;">
-              <label style="font-size:0.8em;font-weight:bold;">Enhancement</label>
-              <select id="forge-enh-level" style="width:100%;padding:3px;font-size:0.85em;">
-                <option value="0" ${data.magicLevel===0?"selected":""}>Mundane (+0)</option>
-                <option value="1" ${data.magicLevel===1?"selected":""}>+1 (+10 Scaled)</option>
-                <option value="2" ${data.magicLevel===2?"selected":""}>+2 (+20 Scaled)</option>
-                <option value="3" ${data.magicLevel===3?"selected":""}>+3 (+30 Scaled)</option>
-                <option value="4" ${data.magicLevel===4?"selected":""}>+4 (+40 Scaled)</option>
-                <option value="5" ${data.magicLevel===5?"selected":""}>+5 (+50 Scaled)</option>
-              </select>
-            </div>
-            <div style="flex:1;">
-              <label style="font-size:0.8em;font-weight:bold;">Special Material</label>
-              <select id="forge-material" style="width:100%;padding:3px;font-size:0.85em;">${matOpts}</select>
-            </div>
+          <!-- COLUMN 1: DIRECTORY -->
+          <div style="flex:1; display:flex; flex-direction:column; border-right:1px solid var(--color-border-light-2); padding-right:6px;">
+            <label style="font-weight:bold; font-size:0.8em; margin-bottom:2px;">Compendium Pack</label>
+            <select id="forge-pack-select" style="margin-bottom:6px; font-size:0.85em; padding:3px;">${packOpts}</select>
+            <input type="text" id="forge-item-search" value="${data.searchTerm}" placeholder="🔍 Search ${data.activeTab}..." style="margin-bottom:6px; font-size:0.85em; padding:4px; border:1px solid var(--color-border-light-1); border-radius:3px;">
+            <div style="flex-grow:1; overflow-y:auto; border:1px solid var(--color-border-light-1); border-radius:4px; max-height:560px;">${itemRows || `<p style="padding:8px; color:#777;">No ${data.activeTab} found in pack.</p>`}</div>
           </div>
 
-          <!-- EXPANDED MAGIC PROPERTIES -->
-          <div style="display:flex; justify-content:space-between; align-items:flex-end;">
-             <strong style="font-size:0.9em; border-bottom:1px solid var(--color-border-light-2); padding-bottom:2px; flex-grow:1;">✨ Magic Properties</strong>
-             <div style="display: flex; gap: 4px; margin-left: 8px;">
-               <button type="button" id="forge-random-prop" style="font-size: 0.75em; padding: 2px 6px; line-height: 1;">🎲 Random</button>
-               <button type="button" id="forge-new-custom-prop" style="font-size: 0.75em; padding: 2px 6px; line-height: 1;">➕ New</button>
-             </div>
-          </div>
-          
-          <div style="flex-grow: 1; min-height: 150px; overflow-y: auto; border: 1px solid var(--color-border-light-1); padding: 4px; border-radius: 4px; background: rgba(0,0,0,0.02); box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);">
-             ${propRows || '<span style="color:#777; font-size:0.8em; padding: 8px; display:block;">No properties available.</span>'}
-          </div>
-
-          <label style="display:flex;align-items:center;gap:6px;font-size:0.85em;margin-top:2px;cursor:pointer;">
-            <input type="checkbox" id="forge-short-names" ${data.useShortNames ? "checked" : ""}>
-            <span>Use Compound Short Names (e.g. <em>Mastercraft Sunstrike</em>)</span>
-          </label>
-
-          <button id="forge-gen-btn" style="padding:10px;font-weight:bold;background:#2f3542;color:#fff;border-radius:4px;cursor:pointer;border:1px solid #1e272e; margin-bottom:4px;">⚡ Forge Granular Item</button>
-        </div>
-
-        <!-- COLUMN 3: INSPECTION WINDOW -->
-        <div style="flex:1.1;display:flex;flex-direction:column;gap:6px;">
-          <strong style="font-size:0.9em;border-bottom:1px solid var(--color-border-light-2);padding-bottom:2px;">Inspection Window</strong>
-          <div style="flex-grow:1;border:2px dashed var(--color-border-dark);border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;text-align:center; overflow-y:auto;">
-            ${data.generated ? `
-              <img src="${data.generated.img}" width="42" height="42" style="border-radius:4px;margin-bottom:4px;" />
-              <strong style="font-size:0.9em;">${data.generated.name}</strong>
-              <div style="font-size:0.75em;text-align:left;width:100%;margin-top:4px;background:rgba(0,0,0,0.03);padding:6px;border-radius:4px;line-height:1.3;">
-                ${data.generated.system?.armor ? `
-                  <div><strong>Armor AC:</strong> +${data.generated.system.armor.value} | <strong>ACP:</strong> ${data.generated.system.armor.acp}</div>
-                  <div><strong>Max Dex:</strong> +${data.generated.system.armor.dex ?? "∞"}</div>
-                ` : `
-                  <div><strong>Damage:</strong> ${data.generated.system?.actions?.[0]?.damage?.parts?.map(p => p.formula).join(" + ") || "N/A"}</div>
-                  <div><strong>Crit Threat:</strong> ${data.generated.system?.actions?.[0]?.critRange}+ (×${data.generated.system?.actions?.[0]?.critMult})</div>
-                `}
-                <div><strong>Hardness:</strong> ${data.generated.system.hardness} | <strong>HP:</strong> ${data.generated.system.hp?.max}</div>
-                <div><strong>Enhancement:</strong> +${data.generated.system.enh || 0}</div>
+          <!-- COLUMN 2: FORGE CONTROLS -->
+          <div style="flex:1.2; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:6px; height:100%; overflow-y:auto;">
+            
+            ${previewHtml}
+            
+            <!-- COLLAPSIBLE VARIANCES -->
+            <details style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
+              <summary style="font-weight:bold; font-size:0.9em; cursor:pointer; outline:none; user-select:none;">🎯 Targeted Variances (Min to Max)</summary>
+              <div style="display:flex; flex-direction:column; gap:4px; margin-top:8px;">
+                ${createSlider("Physical (Craft, AC, Damage)", "physical")}
+                ${createSlider("Durability (HP, Hardness)", "durability")}
+                ${createSlider("Precision (Crit Range, Mult)", "precision")}
+                ${createSlider("Magic (Enhancement, Properties)", "magic")}
               </div>
-              
-              <div style="font-size:0.7em; text-align:left; width:100%; margin-top:6px; background:#f1f2f6; padding:6px; border-radius:4px; border:1px solid #ced6e0;">
-                <strong style="border-bottom:1px solid #ced6e0; display:block; padding-bottom:2px; margin-bottom:4px;">Roll Variance Log</strong>
-                ${data.rollLogHtml}
+            </details>
+
+            <div style="display:flex; gap:6px;">
+              <div style="flex:1;">
+                <label style="font-size:0.8em; font-weight:bold;">Enhancement</label>
+                <select id="forge-enh-level" style="width:100%; padding:3px; font-size:0.85em;">
+                  <option value="0" ${data.magicLevel===0?"selected":""}>Mundane (+0)</option>
+                  <option value="1" ${data.magicLevel===1?"selected":""}>+1 (+10 Scaled)</option>
+                  <option value="2" ${data.magicLevel===2?"selected":""}>+2 (+20 Scaled)</option>
+                  <option value="3" ${data.magicLevel===3?"selected":""}>+3 (+30 Scaled)</option>
+                  <option value="4" ${data.magicLevel===4?"selected":""}>+4 (+40 Scaled)</option>
+                  <option value="5" ${data.magicLevel===5?"selected":""}>+5 (+50 Scaled)</option>
+                </select>
               </div>
+              <div style="flex:1;">
+                <label style="font-size:0.8em; font-weight:bold;">Special Material</label>
+                <select id="forge-material" style="width:100%; padding:3px; font-size:0.85em;">${matOpts}</select>
+              </div>
+            </div>
 
-              <div class="forge-drag-card" draggable="true" style="margin-top:8px;padding:4px 10px;background:#dfe4ea;border:1px solid #747d8c;border-radius:4px;cursor:grab;font-weight:bold;font-size:0.8em;">📦 Drag to Sheet</div>
-            ` : '<span style="color:#777;font-size:0.8em;">Select base item and configure parameters to forge.</span>'}
+            ${data.activeTab === "ammo" ? `
+              <div style="display:flex; align-items:center; gap:8px;">
+                <label style="font-size:0.8em; font-weight:bold;">Bundle Quantity:</label>
+                <input type="number" id="forge-ammo-qty" value="${data.ammoQuantity}" min="1" max="1000" style="width:70px; padding:3px; font-size:0.85em; text-align:center;">
+              </div>
+            ` : ""}
+
+            <!-- EXPANDED MAGIC PROPERTIES -->
+            <div style="display:flex; justify-content:space-between; align-items:flex-end;">
+               <strong style="font-size:0.9em; border-bottom:1px solid var(--color-border-light-2); padding-bottom:2px; flex-grow:1;">✨ Magic Properties</strong>
+               <div style="display:flex; gap:4px; margin-left:8px;">
+                 <button type="button" id="forge-random-prop" style="font-size:0.75em; padding:2px 6px; line-height:1;">🎲 Random</button>
+                 <button type="button" id="forge-new-custom-prop" style="font-size:0.75em; padding:2px 6px; line-height:1;">➕ New</button>
+               </div>
+            </div>
+            
+            <div style="flex-grow:1; min-height:140px; overflow-y:auto; border:1px solid var(--color-border-light-1); padding:4px; border-radius:4px; background:rgba(0,0,0,0.02); box-shadow:inset 0 1px 3px rgba(0,0,0,0.05);">
+               ${propRows || `<span style="color:#777; font-size:0.8em; padding:8px; display:block;">No properties available for this category.</span>`}
+            </div>
+
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; margin-top:2px; cursor:pointer;">
+              <input type="checkbox" id="forge-short-names" ${data.useShortNames ? "checked" : ""}>
+              <span>Use Compound Short Names (e.g. <em>Mastercraft Sunstrike</em>)</span>
+            </label>
+
+            <button id="forge-gen-btn" style="padding:10px; font-weight:bold; background:#2f3542; color:#fff; border-radius:4px; cursor:pointer; border:1px solid #1e272e; margin-bottom:4px;">
+              ⚡ Forge Procedural ${data.activeTab === "weapons" ? "Weapon" : data.activeTab === "armor" ? "Armor / Shield" : "Ammunition Stack"}
+            </button>
           </div>
-        </div>
 
+          <!-- COLUMN 3: INSPECTION WINDOW -->
+          <div style="flex:1.1; display:flex; flex-direction:column; gap:6px;">
+            <strong style="font-size:0.9em; border-bottom:1px solid var(--color-border-light-2); padding-bottom:2px;">Inspection Window</strong>
+            <div style="flex-grow:1; border:2px dashed var(--color-border-dark); border-radius:6px; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:8px; text-align:center; overflow-y:auto;">
+              ${data.generated ? `
+                <img src="${data.generated.img}" width="42" height="42" style="border-radius:4px; margin-bottom:4px;" />
+                <strong style="font-size:0.9em;">${data.generated.name}</strong>
+                <div style="font-size:0.75em; text-align:left; width:100%; margin-top:4px; background:rgba(0,0,0,0.03); padding:6px; border-radius:4px; line-height:1.3;">
+                  ${data.generated.system?.armor ? `
+                    <div><strong>Armor AC:</strong> +${data.generated.system.armor.value} | <strong>ACP:</strong> ${data.generated.system.armor.acp}</div>
+                    <div><strong>Max Dex:</strong> +${data.generated.system.armor.dex ?? "∞"}</div>
+                  ` : `
+                    <div><strong>Damage:</strong> ${data.generated.system?.actions?.[0]?.damage?.parts?.map(p => p.formula).join(" + ") || "N/A"}</div>
+                    <div><strong>Crit Threat:</strong> ${data.generated.system?.actions?.[0]?.critRange}+ (×${data.generated.system?.actions?.[0]?.critMult})</div>
+                  `}
+                  <div><strong>Hardness:</strong> ${data.generated.system.hardness} | <strong>HP:</strong> ${data.generated.system.hp?.max}</div>
+                  <div><strong>Quantity:</strong> ${data.generated.system.quantity ?? 1} | <strong>Enhancement:</strong> +${data.generated.system.enh || 0}</div>
+                </div>
+                
+                <div style="font-size:0.7em; text-align:left; width:100%; margin-top:6px; background:#f1f2f6; padding:6px; border-radius:4px; border:1px solid #ced6e0;">
+                  <strong style="border-bottom:1px solid #ced6e0; display:block; padding-bottom:2px; margin-bottom:4px;">Roll Variance Log</strong>
+                  ${data.rollLogHtml}
+                </div>
+
+                <div class="forge-drag-card" draggable="true" style="margin-top:8px; padding:4px 10px; background:#dfe4ea; border:1px solid #747d8c; border-radius:4px; cursor:grab; font-weight:bold; font-size:0.8em;">📦 Drag to Sheet</div>
+              ` : '<span style="color:#777; font-size:0.8em;">Select base item and configure parameters to forge.</span>'}
+            </div>
+          </div>
+
+        </div>
       </div>
     `;
     return $(html);
@@ -235,7 +331,18 @@ export class GranularForgeApp extends Application {
   activateListeners(html) {
     super.activateListeners(html);
     
-    // Live Multi-Slider Collision Protection
+    // Tab Navigation Listener
+    html.find('.forge-tab-nav').click(e => {
+      const targetTab = $(e.currentTarget).data('tab');
+      if (this.activeTab !== targetTab) {
+        this.activeTab = targetTab;
+        this.selectedBaseItem = null;
+        this.selectedProperties.clear();
+        this.render();
+      }
+    });
+
+    // Multi-Slider Collision Protection
     html.find('.forge-var-slider').on('input', e => {
         const cat = e.target.dataset.cat;
         const isMin = e.target.classList.contains("forge-var-min");
@@ -262,6 +369,7 @@ export class GranularForgeApp extends Application {
     if (this.searchTerm) html.find('.gear-row').each((i, el) => $(el).toggle($(el).text().toLowerCase().includes(this.searchTerm)));
 
     html.find('#forge-pack-select').change(e => { this.selectedCompendium = e.target.value; this.selectedBaseItem = null; this.selectedProperties.clear(); this.render(); });
+    
     html.find('.gear-row').click(async e => {
       const id = $(e.currentTarget).data('id');
       const pack = game.packs.get(this.selectedCompendium);
@@ -274,14 +382,27 @@ export class GranularForgeApp extends Application {
     });
 
     html.find('#forge-random-prop').click(async () => {
-        const isWeapon = this.selectedBaseItem?.type === "weapon";
-        const baseProps = isWeapon ? WEAPON_ENCHANTMENTS : ARMOR_ENCHANTMENTS;
+        const baseProps = this.activeTab === "armor" ? ARMOR_ENCHANTMENTS : WEAPON_ENCHANTMENTS;
         const customProps = game.settings.get(MODULE_ID, "customProperties") || {};
-        const allKeys = Object.keys({ ...baseProps, ...customProps });
-        if (allKeys.length === 0) return;
-        const randomKey = allKeys[Math.floor(Math.random() * allKeys.length)];
+        
+        let validProps = Object.entries({ ...baseProps, ...customProps });
+        if (this.activeTab === "weapons" && this.selectedBaseItem) {
+            const wpn = this.selectedBaseItem.system;
+            const isRanged = wpn?.weaponSubtype === "ranged" || wpn?.properties?.thr;
+            const isMelee = wpn?.weaponSubtype !== "ranged" || wpn?.properties?.thr; 
+            validProps = validProps.filter(([k, v]) => {
+                if (v.allowed === "melee" && !isMelee) return false;
+                if (v.allowed === "ranged" && !isRanged) return false;
+                return true;
+            });
+        } else if (this.activeTab === "ammo") {
+            validProps = validProps.filter(([k, v]) => v.allowed !== "melee");
+        }
+        
+        if (validProps.length === 0) return;
+        const randomProp = validProps[Math.floor(Math.random() * validProps.length)];
         this.selectedProperties.clear();
-        this.selectedProperties.add(randomKey);
+        this.selectedProperties.add(randomProp[0]);
         this.render();
     });
 
@@ -292,6 +413,7 @@ export class GranularForgeApp extends Application {
               <form>
                 <div class="form-group"><label>Property Name</label><input type="text" id="cp-name" placeholder="e.g. Sonic, Thundering" required></div>
                 <div class="form-group"><label>Enhancement Cost (+)</label><input type="number" id="cp-cost" value="1" min="0"></div>
+                <div class="form-group"><label>Allowed Category</label><select id="cp-allowed"><option value="both">All Weapons / Ammo</option><option value="melee">Melee Only</option><option value="ranged">Ranged Only</option></select></div>
                 <div class="form-group"><label>Adds Continuous Dice?</label><input type="checkbox" id="cp-isDice" checked></div>
                 <div class="form-group"><label>Number of Dice</label><input type="number" id="cp-numDice" value="1" min="1"></div>
                 <div class="form-group"><label>Damage Type</label><input type="text" id="cp-type" placeholder="e.g. sonic, untyped"></div>
@@ -305,12 +427,13 @@ export class GranularForgeApp extends Application {
                         const name = dHtml.find('#cp-name').val().trim();
                         if (!name) return ui.notifications.error("Name is required!");
                         const cost = parseInt(dHtml.find('#cp-cost').val()) || 0;
+                        const allowed = dHtml.find('#cp-allowed').val();
                         const isDice = dHtml.find('#cp-isDice').is(':checked');
                         const numDice = parseInt(dHtml.find('#cp-numDice').val()) || 1;
                         const type = dHtml.find('#cp-type').val().trim() || "untyped";
                         const note = dHtml.find('#cp-note').val().trim();
 
-                        const newProp = { baseName: name, cost, note, title: name };
+                        const newProp = { baseName: name, cost, allowed, note, title: name };
                         if (isDice) {
                             newProp.isDice = true;
                             newProp.type = type;
@@ -337,8 +460,10 @@ export class GranularForgeApp extends Application {
       this.magicLevel = parseInt(html.find('#forge-enh-level').val(), 10) || 0;
       this.selectedMaterial = html.find('#forge-material').val();
       this.useShortCompoundNames = html.find('#forge-short-names').is(':checked');
+      if (this.activeTab === "ammo") {
+        this.ammoQuantity = parseInt(html.find('#forge-ammo-qty').val(), 10) || 20;
+      }
 
-      // Enforce +1 Enhancement requirement for magic properties
       if (this.selectedProperties.size > 0 && this.magicLevel < 1) {
           ui.notifications.info("Magic properties require at least a +1 Enhancement Bonus. Automatically adjusting to +1.");
           this.magicLevel = 1;
@@ -346,8 +471,8 @@ export class GranularForgeApp extends Application {
       }
 
       const newItemData = this.selectedBaseItem.toObject();
-      const isWeapon = newItemData.type === "weapon";
-      const baseProps = isWeapon ? WEAPON_ENCHANTMENTS : ARMOR_ENCHANTMENTS;
+      const isArmor = this.activeTab === "armor";
+      const baseProps = isArmor ? ARMOR_ENCHANTMENTS : WEAPON_ENCHANTMENTS;
       const customProps = game.settings.get(MODULE_ID, "customProperties") || {};
       const propRegistry = { ...baseProps, ...customProps };
       const mat = SPECIAL_MATERIALS[this.selectedMaterial];
@@ -360,6 +485,10 @@ export class GranularForgeApp extends Application {
       newItemData.flags[MODULE_ID] = newItemData.flags[MODULE_ID] || {};
       newItemData.flags[MODULE_ID].disable10xCard = true; 
       newItemData.flags[MODULE_ID].is10xScaled = true; 
+
+      if (this.activeTab === "ammo") {
+        newItemData.system.quantity = this.ammoQuantity;
+      }
 
       if (this.magicLevel > 0 || this.selectedProperties.size > 0 || mat.name === "Adamantine" || mat.name === "Mithral") {
           newItemData.system.masterwork = true;
@@ -415,7 +544,8 @@ export class GranularForgeApp extends Application {
         identifiedTraits.push(`<strong>Material (${mat.name}):</strong> Hardness ${newItemData.system.hardness}, HP ${newItemData.system.hp.max}. ${mat.desc || ""}`);
       }
 
-      if (newItemData.system?.armor) {
+      // Armor Adjustments
+      if (isArmor && newItemData.system?.armor) {
         const acRoll = rollStat("Armor AC", "physical");
         const acpRoll = rollStat("ACP", "physical");
         let baseAc = (newItemData.system.armor.value || 0) * 10;
@@ -440,21 +570,26 @@ export class GranularForgeApp extends Application {
       let propPrefixes = [];
       let propSuffixes = [];
 
-      if (newItemData.system?.actions) {
+      // Weapon and Ammunition Action Injections
+      if (!isArmor && newItemData.system?.actions) {
         const critRangeRoll = rollStat("Crit Threat", "precision");
         const critMultRoll = rollStat("Crit Mult", "precision");
         logOutput += `<div style="padding-bottom: 2px;"><strong>Crit Rng / Mult:</strong> <span style="float:right;">${((critRangeRoll.mult - 1)*100).toFixed(2)}% / ${((critMultRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
 
+        let isFirstAction = true;
+
         newItemData.system.actions.forEach(action => {
           action.ability = action.ability || {}; 
           
-          action.extraAttacks = [{
-              type: "custom",
-              name: "10x Iteratives",
-              countFormula: "max(0, floor((@attributes.bab.total - 10) / 50))",
-              modifierFormula: "-50 * (@idx + 1)"
-          }];
-          identifiedTraits.push(`<strong>Iterative Form:</strong> Custom 10x progression injected.`);
+          if (this.activeTab === "weapons") {
+            action.extraAttacks = [{
+                type: "custom",
+                name: "10x Iteratives",
+                countFormula: "max(0, floor((@attributes.bab.total - 10) / 50))",
+                modifierFormula: "-50 * (@idx + 1)"
+            }];
+            if (isFirstAction) identifiedTraits.push(`<strong>Iterative Form:</strong> Custom 10x progression injected.`);
+          }
           
           let critBase = action.ability.critRange ?? action.critRange;
           if (critBase === undefined || critBase === null || critBase === "") {
@@ -470,18 +605,19 @@ export class GranularForgeApp extends Application {
           action.ability.critRange = finalCrit;
 
           let baseMult = action.ability.critMult ?? action.critMult ?? 2.0;
-          let multShift = (critMultRoll.mult - 1.0) * 2; 
-          let finalMult = Math.max(1.0, Math.round((Number(baseMult) + multShift) * 100) / 100);
+          let finalMult = Number(baseMult);
+          if (critMultRoll.mult >= 1.20) finalMult += 1;
+          else if (critMultRoll.mult <= 0.80) finalMult = Math.max(1, finalMult - 1);
+          finalMult = Math.round(finalMult);
 
           action.critMult = finalMult;
           action.ability.critMult = finalMult;
 
-          // NEW: Inject decimal protection flag!
           action.flags = action.flags || {};
           action.flags[MODULE_ID] = action.flags[MODULE_ID] || {};
           action.flags[MODULE_ID].critMult = finalMult;
 
-          identifiedTraits.push(`<strong>Precision:</strong> Crit range ${action.critRange}–200, multiplier ×${action.critMult}.`);
+          if (isFirstAction) identifiedTraits.push(`<strong>Precision:</strong> Crit range ${action.critRange}–200, multiplier ×${action.critMult}.`);
 
           for (const propKey of this.selectedProperties) {
              const prop = propRegistry[propKey];
@@ -489,7 +625,7 @@ export class GranularForgeApp extends Application {
 
              if (prop.isDice) {
                 const pRoll = rollStat(`${prop.baseName} Tier`, "magic");
-                logOutput += `<div style="padding-bottom: 2px;"><strong>Magic (${prop.baseName}):</strong> <span style="float:right;">${((pRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
+                if (isFirstAction) logOutput += `<div style="padding-bottom: 2px;"><strong>Magic (${prop.baseName}):</strong> <span style="float:right;">${((pRoll.mult - 1)*100).toFixed(2)}%</span></div>`;
                 
                 const numDice = prop.numDice || 1;
                 const varianceRatio = (pRoll.mult - 1.0) / 0.25; 
@@ -499,25 +635,29 @@ export class GranularForgeApp extends Application {
                 let titlePrefix = prop.baseName;
                 if (pRoll.mult > 1.15) titlePrefix = `Supreme ${prop.baseName}`;
                 else if (pRoll.mult < 0.85) titlePrefix = `Weak ${prop.baseName}`;
-                propPrefixes.push(titlePrefix);
+                if (isFirstAction) propPrefixes.push(titlePrefix);
   
                 action.damage.parts.push({
                   formula: `${numDice}d${faces}`,
                   type: { values: [prop.type], custom: "" }
                 });
-                identifiedTraits.push(`<strong>${titlePrefix} Property:</strong> Infuses attacks with +${numDice}d${faces} ${prop.type} damage.`);
+                if (isFirstAction) identifiedTraits.push(`<strong>${titlePrefix} Property:</strong> Infuses attacks with +${numDice}d${faces} ${prop.type} damage.`);
              } else {
-                tagsList.push(`Property: ${prop.title || prop.baseName}`);
-                if (prop.title?.startsWith("of ")) propSuffixes.push(prop.title);
-                else propPrefixes.push(prop.title || prop.baseName);
+                if (isFirstAction) {
+                    tagsList.push(`Property: ${prop.title || prop.baseName}`);
+                    if (prop.title?.startsWith("of ")) propSuffixes.push(prop.title);
+                    else propPrefixes.push(prop.title || prop.baseName);
+                    if (prop.note) identifiedTraits.push(`<strong>${prop.baseName}:</strong> ${prop.note}`);
+                }
                 if (prop.actionMod) prop.actionMod(action);
-                if (prop.note) identifiedTraits.push(`<strong>${prop.baseName}:</strong> ${prop.note}`);
              }
           }
+          isFirstAction = false;
         });
       }
 
-      if (!isWeapon) {
+      // Armor Enchantment Handling
+      if (isArmor) {
           for (const propKey of this.selectedProperties) {
              const prop = propRegistry[propKey];
              if (!prop) continue;
@@ -567,11 +707,16 @@ export class GranularForgeApp extends Application {
       const matTitle = mat.name !== "Steel" ? `${mat.name} ` : "";
       let finalName = "";
 
-      if (this.useShortCompoundNames && this.selectedProperties.size === 1) {
-          const singlePropKey = Array.from(this.selectedProperties)[0];
-          const fusionKey = `${this.magicLevel}_${singlePropKey}`;
-          if (COMPOUND_FUSIONS[fusionKey]) {
-             finalName = `${prefix} ${matTitle}${COMPOUND_FUSIONS[fusionKey]} ${this.selectedBaseItem.name}`.trim();
+      if (this.useShortCompoundNames && this.selectedProperties.size > 0) {
+          let sortedProps = Array.from(this.selectedProperties).sort();
+          let multiKey = sortedProps.join("_");
+          let levelKey = `${this.magicLevel}_${multiKey}`;
+
+          if (COMPOUND_FUSIONS[levelKey]) {
+             finalName = `${prefix} ${matTitle}${COMPOUND_FUSIONS[levelKey]} ${this.selectedBaseItem.name}`.trim();
+          } else if (COMPOUND_FUSIONS[multiKey]) {
+             let eSuf = enhSuffix ? ` ${enhSuffix}` : "";
+             finalName = `${prefix} ${matTitle}${COMPOUND_FUSIONS[multiKey]} ${this.selectedBaseItem.name}${eSuf}`.trim();
           }
       } 
       
