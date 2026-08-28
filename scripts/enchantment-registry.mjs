@@ -1,6 +1,6 @@
 /**
  * @file enchantment-registry.mjs
- * Continuous 10x Granular Engine Registry with Standard Gold & CR Item Ceilings
+ * Continuous 10x Granular Engine Registry with Gems, Art Objects, Thematic Presets, and Deep Custom Properties
  */
 
 export const SPECIAL_MATERIALS = {
@@ -64,7 +64,6 @@ export const COMPOUND_FUSIONS = {
   "corrosive_flaming_frost_shock": "Omni-Elemental"
 };
 
-// ─── STANDARD ENCOUNTER WEALTH & SINGLE-ITEM CAPS (CR 1–20) ─────────────────
 export const LEVEL_LOOT_TIERS = {
   1:  { maxEnh: 0, maxItemPrice: 300,    propChance: 0.00, matChance: 0.05, goldBase: 260 },
   2:  { maxEnh: 0, maxItemPrice: 600,    propChance: 0.05, matChance: 0.08, goldBase: 550 },
@@ -86,4 +85,86 @@ export const LEVEL_LOOT_TIERS = {
   18: { maxEnh: 5, maxItemPrice: 200000, propChance: 1.00, matChance: 0.85, goldBase: 41000 },
   19: { maxEnh: 5, maxItemPrice: 275000, propChance: 1.00, matChance: 0.90, goldBase: 53000 },
   20: { maxEnh: 5, maxItemPrice: 400000, propChance: 1.00, matChance: 1.00, goldBase: 67000 }
+};
+
+// ─── GEMS, JEWELRY & ART OBJECTS ────────────────────────────────────────────
+export const GEMSTONE_DATA = [
+  { name: "Banded Agate", basePrice: 10, img: "icons/commodities/gems/gem-rough-grey.webp" },
+  { name: "Tiger Eye", basePrice: 10, img: "icons/commodities/gems/gem-rough-cushion-yellow.webp" },
+  { name: "Bloodstone", basePrice: 50, img: "icons/commodities/gems/gem-rough-oval-red.webp" },
+  { name: "Moonstone", basePrice: 50, img: "icons/commodities/gems/gem-faceted-round-white.webp" },
+  { name: "Onyx", basePrice: 50, img: "icons/commodities/gems/gem-faceted-cushion-black.webp" },
+  { name: "Amber", basePrice: 100, img: "icons/commodities/gems/gem-rough-pear-orange.webp" },
+  { name: "Jade", basePrice: 100, img: "icons/commodities/gems/gem-rough-emerald-green.webp" },
+  { name: "Freshwater Pearl", basePrice: 100, img: "icons/commodities/gems/pearl-white.webp" },
+  { name: "Alexandrite", basePrice: 500, img: "icons/commodities/gems/gem-faceted-radiant-teal.webp" },
+  { name: "Black Pearl", basePrice: 500, img: "icons/commodities/gems/pearl-black.webp" },
+  { name: "Deep Blue Sapphire", basePrice: 1000, img: "icons/commodities/gems/gem-faceted-cushion-blue.webp" },
+  { name: "Fiery Ruby", basePrice: 1000, img: "icons/commodities/gems/gem-faceted-heart-red.webp" },
+  { name: "Flawless Emerald", basePrice: 1000, img: "icons/commodities/gems/gem-faceted-emerald-green.webp" },
+  { name: "Brilliant Diamond", basePrice: 5000, img: "icons/commodities/gems/gem-faceted-round-white.webp" },
+  { name: "Star Sapphire", basePrice: 5000, img: "icons/commodities/gems/gem-faceted-radiant-blue.webp" },
+  { name: "Jacinth of the Sun", basePrice: 10000, img: "icons/commodities/gems/gem-faceted-cushion-orange.webp" }
+];
+
+export const ART_OBJECTS_DATA = [
+  { name: "Silver-Plated Chalice", basePrice: 55, img: "icons/sundries/gaming/cup-goblet-silver.webp" },
+  { name: "Carved Bone Statuette", basePrice: 100, img: "icons/commodities/treasure/token-bone-carved.webp" },
+  { name: "Gold-Embroidered Velvet Cloak", basePrice: 150, img: "icons/equipment/back/cloak-heavy-fur-red.webp" },
+  { name: "Jeweled Silver Mirror", basePrice: 350, img: "icons/commodities/treasure/mirror-silver-ornate.webp" },
+  { name: "Gilded Idol of an Ancient Deity", basePrice: 500, img: "icons/commodities/treasure/figurine-gold-cat.webp" },
+  { name: "Ceremonial Electrum Dagger with Rubies", basePrice: 750, img: "icons/weapons/daggers/dagger-jeweled-red.webp" },
+  { name: "Solid Gold Holy Reliquary", basePrice: 1200, img: "icons/commodities/treasure/urn-gold-jeweled.webp" },
+  { name: "Imperial Jeweled Crown", basePrice: 3000, img: "icons/equipment/head/crown-jeweled-gold.webp" },
+  { name: "Platinum Scepter of Dominion", basePrice: 7500, img: "icons/weapons/staves/scepter-platinum-jeweled.webp" }
+];
+
+// ─── THEMATIC ENCOUNTER PRESETS ─────────────────────────────────────────────
+export const THEMATIC_PRESETS = {
+  none: {
+    label: "None (Standard Random)",
+    materialBias: ["base", "steel", "mithral", "adamantine"],
+    propertyBias: [],
+    categoryWeights: { weapons: 1, armor: 1, wondrous: 1, potions: 1, scrolls: 1, wands: 1 }
+  },
+  undead_crypt: {
+    label: "💀 Undead Crypt / Catacombs",
+    materialBias: ["silversheen", "coldiron", "base"],
+    propertyBias: ["holy", "ghost_touch", "defending"],
+    gemBias: ["Onyx", "Bloodstone", "Moonstone"],
+    artBias: ["Carved Bone Statuette", "Solid Gold Holy Reliquary"],
+    categoryWeights: { weapons: 2, armor: 1, wondrous: 1, potions: 1, scrolls: 2 }
+  },
+  dragon_lair: {
+    label: "🐉 Dragon Lair / Hoard",
+    materialBias: ["dragonhide", "adamantine", "mithral", "steel"],
+    propertyBias: ["flaming", "frost", "shock", "corrosive", "speed"],
+    gemBias: ["Fiery Ruby", "Flawless Emerald", "Deep Blue Sapphire", "Brilliant Diamond"],
+    artBias: ["Imperial Jeweled Crown", "Platinum Scepter of Dominion", "Jeweled Silver Mirror"],
+    categoryWeights: { weapons: 2, armor: 2, wondrous: 3, rings: 2, rods: 1 }
+  },
+  feywild_glade: {
+    label: "🧚 Feywild Glade / Sylvan Court",
+    materialBias: ["darkwood", "mithral", "silversheen"],
+    propertyBias: ["keen", "speed", "seeking", "returning"],
+    gemBias: ["Freshwater Pearl", "Alexandrite", "Amber", "Jade"],
+    artBias: ["Gold-Embroidered Velvet Cloak", "Silver-Plated Chalice"],
+    categoryWeights: { weapons: 1, wondrous: 3, potions: 2, wands: 2, rings: 1 }
+  },
+  abyssal_rift: {
+    label: "🔥 Abyssal Rift / Infernal Forge",
+    materialBias: ["adamantine", "coldiron", "steel"],
+    propertyBias: ["vicious", "corrosive", "flaming", "vorpal"],
+    gemBias: ["Bloodstone", "Onyx", "Fiery Ruby"],
+    artBias: ["Gilded Idol of an Ancient Deity", "Ceremonial Electrum Dagger with Rubies"],
+    categoryWeights: { weapons: 3, armor: 2, wondrous: 1, staves: 1 }
+  },
+  arcane_vault: {
+    label: "🔮 Arcane Sanctum / High Wizard Vault",
+    materialBias: ["mithral", "darkwood", "base"],
+    propertyBias: ["spell_resistance", "defending", "thundering"],
+    gemBias: ["Deep Blue Sapphire", "Star Sapphire", "Alexandrite"],
+    artBias: ["Platinum Scepter of Dominion", "Jeweled Silver Mirror"],
+    categoryWeights: { wands: 3, scrolls: 3, staves: 2, rods: 2, wondrous: 3, rings: 2 }
+  }
 };
