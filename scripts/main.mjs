@@ -26,6 +26,20 @@ Hooks.once("init", () => {
     default: {}
   });
   
+  // World Settings for Forge Tab -> Compendium Packs
+  game.settings.register(MODULE_ID, "forgeCompendiums", {
+    name: "Forge Tab Compendiums",
+    scope: "world",
+    config: false,
+    type: Object,
+    default: {
+      weapons: ["PF1.PACKS.weapons-and-ammo"],
+      armor: ["PF1.PACKS.armors-and-shields"],
+      ammo: ["PF1.PACKS.weapons-and-ammo"],
+      batch: ["PF1.PACKS.weapons-and-ammo", "PF1.PACKS.armors-and-shields", "PF1.PACKS.equipment"]
+    }
+  });
+  
   // World Settings for Craft Disciplines -> Compendium Packs
   game.settings.register(MODULE_ID, "craftCompendiums", {
     name: "Crafting Discipline Compendiums",
