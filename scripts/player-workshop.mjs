@@ -18,25 +18,27 @@ export const CRAFT_MATERIAL_RULES = {
   dragonhide: { name: "Dragonhide", rawUnit: "Dragon Scales / Hide", refinedUnit: "Refined Dragon Scales", allowed: ["leather_armor", "metal_armor", "shield"] }
 };
 
-// Built-in refining recipes available to players with >= 30 skill ranks
+// Built-in refining recipes available to players with >= 30 skill ranks (All with genuine material valuations and weights)
 export const REFINING_RECIPES = [
-  { id: "refine_steel", name: "Refined Steel Ingot", rawLabel: "2x Steel Ingot", rawPattern: /(steel|iron|metal|bar|ingot)/i, rawQty: 2, dc: 180, minRanks: 30, craftType: "weapon", img: "icons/commodities/metal/ingot-steel-white.webp" },
-  { id: "refine_timber", name: "Refined Crafting Timber", rawLabel: "2x Crafting Timber", rawPattern: /(wood|timber|lumber|haft|stave)/i, rawQty: 2, dc: 180, minRanks: 30, craftType: "bow", img: "icons/commodities/materials/wood-log-brown.webp" },
-  { id: "refine_leather", name: "Refined Treated Leather", rawLabel: "2x Treated Leather", rawPattern: /(leather|hide|pelt|skin)/i, rawQty: 2, dc: 180, minRanks: 30, craftType: "armor", img: "icons/commodities/leather/leather-roll-brown.webp" },
-  { id: "refine_mithral", name: "Refined Mithral Ingot", rawLabel: "2x Mithral Ingot", rawPattern: /mithral/i, rawQty: 2, dc: 200, minRanks: 30, craftType: "weapon", img: "icons/commodities/metal/ingot-silver.webp" },
-  { id: "refine_adamantine", name: "Refined Adamantine Ingot", rawLabel: "2x Adamantine Ingot", rawPattern: /adamantine/i, rawQty: 2, dc: 220, minRanks: 30, craftType: "weapon", img: "icons/commodities/metal/ingot-dark-purple.webp" },
-  { id: "refine_darkwood", name: "Refined Darkwood Timber", rawLabel: "2x Darkwood Timber", rawPattern: /darkwood/i, rawQty: 2, dc: 200, minRanks: 30, craftType: "bow", img: "icons/commodities/materials/wood-log-green.webp" },
-  { id: "refine_dragonhide", name: "Refined Dragon Scales", rawLabel: "2x Dragon Scales / Hide", rawPattern: /dragon/i, rawQty: 2, dc: 220, minRanks: 30, craftType: "armor", img: "icons/commodities/biological/scale-reptile-red.webp" },
+  { id: "refine_steel", name: "Refined Steel Ingot", rawLabel: "2x Steel Ingot", rawPattern: /steel ingot|iron bar|steel bar/i, rawQty: 2, dc: 150, minRanks: 30, targetPrice: 25, weight: 2.0, img: "icons/commodities/metal/ingot-steel-white.webp" },
+  { id: "refine_timber", name: "Refined Crafting Timber", rawLabel: "2x Crafting Timber", rawPattern: /crafting timber|wood log|hardwood/i, rawQty: 2, dc: 150, minRanks: 30, targetPrice: 15, weight: 3.0, img: "icons/commodities/materials/wood-log-brown.webp" },
+  { id: "refine_leather", name: "Refined Treated Leather", rawLabel: "2x Treated Leather", rawPattern: /treated leather|cured hide|leather roll/i, rawQty: 2, dc: 150, minRanks: 30, targetPrice: 20, weight: 1.5, img: "icons/commodities/leather/leather-roll-brown.webp" },
+  { id: "refine_mithral", name: "Refined Mithral Ingot", rawLabel: "2x Mithral Ingot", rawPattern: /mithral ingot|mithral bar/i, rawQty: 2, dc: 180, minRanks: 30, targetPrice: 1500, weight: 1.0, img: "icons/commodities/metal/ingot-silver.webp" },
+  { id: "refine_adamantine", name: "Refined Adamantine Ingot", rawLabel: "2x Adamantine Ingot", rawPattern: /adamantine ingot|adamantine bar/i, rawQty: 2, dc: 220, minRanks: 30, targetPrice: 3000, weight: 2.0, img: "icons/commodities/metal/ingot-dark-purple.webp" },
+  { id: "refine_coldiron", name: "Refined Cold Iron Ingot", rawLabel: "2x Cold Iron Ingot", rawPattern: /cold iron ingot|cold iron bar/i, rawQty: 2, dc: 170, minRanks: 30, targetPrice: 200, weight: 2.0, img: "icons/commodities/metal/ingot-rough-grey.webp" },
+  { id: "refine_silversheen", name: "Refined Alchemical Silver Ingot", rawLabel: "2x Alchemical Silver Ingot", rawPattern: /alchemical silver|silver ingot/i, rawQty: 2, dc: 160, minRanks: 30, targetPrice: 100, weight: 2.0, img: "icons/commodities/metal/ingot-silver-engraved.webp" },
+  { id: "refine_darkwood", name: "Refined Darkwood Timber", rawLabel: "2x Darkwood Timber", rawPattern: /darkwood timber|darkwood log/i, rawQty: 2, dc: 180, minRanks: 30, targetPrice: 200, weight: 1.5, img: "icons/commodities/materials/wood-log-green.webp" },
+  { id: "refine_dragonhide", name: "Refined Dragon Scales", rawLabel: "2x Dragon Scales / Hide", rawPattern: /dragon scale|dragonhide/i, rawQty: 2, dc: 220, minRanks: 30, targetPrice: 1000, weight: 2.0, img: "icons/commodities/biological/scale-reptile-red.webp" },
   
   // Default recipe for the required Arcane Etcher tool
-  { id: "craft_arcane_etcher", name: "Arcane Etcher", rawLabel: "1x Refined Steel Ingot + 1x Quartz/Glass", rawPattern: /(refined steel|quartz|glass|crystal)/i, rawQty: 2, dc: 160, minRanks: 20, craftType: "general", img: "icons/tools/scribing/stylus-steel.webp", isTool: true }
+  { id: "craft_arcane_etcher", name: "Arcane Etcher", rawLabel: "1x Refined Steel Ingot + 1x Quartz/Glass", rawPattern: /(refined steel|quartz|glass|crystal)/i, rawQty: 2, dc: 160, minRanks: 20, targetPrice: 150, weight: 1.0, img: "icons/tools/scribing/stylus-steel.webp", isTool: true }
 ];
 
 export class PlayerWorkshopApp extends Application {
   constructor(actor, options = {}) {
     super(options);
     this.actor = actor;
-    this.activeTab = "bench"; // "bench" | "magic" | "active"
+    this.activeTab = "bench";
     this.selectedDiscipline = options.discipline || "";
     this.compendiumItems = [];
     this.selectedBaseItem = null;
@@ -45,7 +47,6 @@ export class PlayerWorkshopApp extends Application {
     this.acceleratedDcBonus = 0;
     this.searchTerm = "";
 
-    // ─── MAGIC ENCHANTING BENCH STATE ───
     this.selectedMagicItem = null;
     this.magicEnhLevel = 1;
     this.selectedMagicProperties = new Set();
@@ -160,7 +161,7 @@ export class PlayerWorkshopApp extends Application {
       hasArcaneEtcher,
       canReEnchant,
       reason: !hasArcaneEtcher 
-        ? "⚠️ Missing Required Tool: Arcane Etcher (Not consumed)" 
+        ? "⚠️ Missing Required Tool: Arcane Etcher (Must be in inventory)" 
         : !(hasFeat || hasRank50) 
         ? "Requires 50+ Craft/Spellcraft Ranks or Craft Magic Arms & Armor Feat" 
         : "Unlocked"
@@ -290,10 +291,6 @@ export class PlayerWorkshopApp extends Application {
     return valid;
   }
 
-  /* -------------------------------------------- */
-  /* Refined Materials for Masterwork Check       */
-  /* -------------------------------------------- */
-
   _calculateRequiredIngredients(baseItem, chosenMaterialKey, isMasterwork = true) {
     if (baseItem.isRefiningRecipe) {
       const inventory = this.actor.items.contents;
@@ -313,7 +310,6 @@ export class PlayerWorkshopApp extends Application {
     const matRule = CRAFT_MATERIAL_RULES[chosenMaterialKey] || CRAFT_MATERIAL_RULES.base;
     const isSpecialMat = chosenMaterialKey !== "base" && chosenMaterialKey !== "steel";
 
-    // Masterwork items strictly demand Refined component variations
     const getMetalName = () => isMasterwork ? (isSpecialMat ? matRule.refinedUnit : "Refined Steel Ingot") : (isSpecialMat ? matRule.rawUnit : "Steel Ingot");
     const getWoodName = () => isMasterwork ? (isSpecialMat ? matRule.refinedUnit : "Refined Crafting Timber") : (isSpecialMat ? matRule.rawUnit : "Crafting Timber / Wood");
     const getLeatherName = () => isMasterwork ? (isSpecialMat ? matRule.refinedUnit : "Refined Treated Leather") : (isSpecialMat ? matRule.rawUnit : "Treated Leather");
@@ -405,7 +401,6 @@ export class PlayerWorkshopApp extends Application {
     const reagents = [];
     const inventory = this.actor.items.contents;
 
-    // 4 Arcane Residue per +1 (+10 scaled) equivalent enhancement tier
     const oldBonus = existingItem ? Math.max(0, Math.floor((existingItem.system?.enh || 0) / 10)) : 0;
     const netBonus = Math.max(1, totalEquivalentBonus - oldBonus);
     const residueNeeded = netBonus * 4;
@@ -416,7 +411,6 @@ export class PlayerWorkshopApp extends Application {
       qty: residueNeeded
     });
 
-    // Unique Catalyst for each selected property
     const customProps = game.settings.get(MODULE_ID, "customProperties") || {};
     const propRegistry = { ...WEAPON_ENCHANTMENTS, ...ARMOR_ENCHANTMENTS, ...customProps };
 
@@ -448,10 +442,6 @@ export class PlayerWorkshopApp extends Application {
     return { list: resolved, allSatisfied, residueNeeded };
   }
 
-  /* -------------------------------------------- */
-  /* Data Preparation                             */
-  /* -------------------------------------------- */
-
   async getData() {
     const rawProjects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
     const disciplines = this._getAvailableCraftDisciplines();
@@ -467,7 +457,6 @@ export class PlayerWorkshopApp extends Application {
     const currentDiscipline = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
     this.compendiumItems = await this._loadCompendiumItemsForDiscipline(currentDiscipline.type);
 
-    // Filter available refining recipes matching character rank (>= 30)
     const availableRefining = REFINING_RECIPES.filter(r => currentDiscipline.rank >= r.minRanks).map(r => ({
       _id: r.id,
       name: `⚙️ ${r.name} (Refining)`,
@@ -477,7 +466,9 @@ export class PlayerWorkshopApp extends Application {
       rawPattern: r.rawPattern,
       rawQty: r.rawQty,
       dc: r.dc,
-      system: { price: 50 }
+      targetPrice: r.targetPrice,
+      weight: r.weight,
+      system: { price: r.targetPrice, weight: { value: r.weight } }
     }));
 
     const validMaterials = this._getValidMaterialsForItem(this.selectedBaseItem);
@@ -490,7 +481,6 @@ export class PlayerWorkshopApp extends Application {
       ingredientsInfo = this._calculateRequiredIngredients(this.selectedBaseItem, this.selectedMaterial, this.isMasterwork);
     }
 
-    // Magic Enchanting Inventory Candidates (Masterwork or existing Magic)
     const playerInventory = this.actor.items.contents;
     const enchantableInventoryItems = playerInventory.filter(i => {
       const isMasterwork = i.system?.masterwork === true;
@@ -533,7 +523,6 @@ export class PlayerWorkshopApp extends Application {
       projects: rawProjects,
       searchTerm: this.searchTerm,
       
-      // Magic Bench Data
       magicPrereqs,
       enchantableInventoryItems,
       selectedMagicItem: this.selectedMagicItem,
@@ -595,7 +584,6 @@ export class PlayerWorkshopApp extends Application {
             </span>
           </div>
 
-          <!-- SHIFT ROLLS BREAKDOWN LOG -->
           <details style="background:#f8f9fa; border:1px solid #e9ecef; border-radius:4px; padding:4px; margin-bottom:6px;">
             <summary style="font-size:0.75em; font-weight:bold; cursor:pointer; color:#495057;">📜 Shift Roll History & Facet Allocation (${proj.shiftsLogged.length} shifts)</summary>
             <div style="max-height:90px; overflow-y:auto; margin-top:4px;">
@@ -641,7 +629,6 @@ export class PlayerWorkshopApp extends Application {
       </label>
     `).join("");
 
-    // Calculate unscaled gold cost formula correctly[cite: 1]
     const isArmorEnchant = data.selectedMagicItem?.type === "armor" || data.selectedMagicItem?.system?.armor !== undefined;
     const baseMultCost = isArmorEnchant ? 500 : 1000;
     const oldTier = data.selectedMagicItem ? Math.max(0, Math.floor((data.selectedMagicItem.system?.enh || 0) / 10)) : 0;
@@ -689,7 +676,7 @@ export class PlayerWorkshopApp extends Application {
                     <img src="${data.selectedBaseItem.img}" width="32" height="32" style="border-radius:3px;" />
                     <div>
                       <strong style="font-size:1.05em;">${data.selectedBaseItem.name}</strong><br/>
-                      <span style="color:#555;">Base Price: ${data.selectedBaseItem.system?.price || 0} GP | Target Goal: ${data.selectedBaseItem.isRefiningRecipe ? 50 : (data.selectedBaseItem.system?.price || 10) + (data.isMasterwork ? 300 : 0)} GP</span>
+                      <span style="color:#555;">Base Price: ${data.selectedBaseItem.targetPrice || data.selectedBaseItem.system?.price || 0} GP | Target Goal: ${data.selectedBaseItem.isRefiningRecipe ? (data.selectedBaseItem.targetPrice || 50) : (data.selectedBaseItem.system?.price || 10) + (data.isMasterwork ? 300 : 0)} GP</span>
                     </div>
                   </div>
 
@@ -732,7 +719,7 @@ export class PlayerWorkshopApp extends Application {
                   <div style="font-size:0.8em; color:#666; line-height:1.3;">
                     <div>• <strong>Hourly Craft DC:</strong> ${data.selectedBaseItem.isRefiningRecipe ? data.selectedBaseItem.dc : 150 + data.acceleratedDcBonus}</div>
                     <div>• <strong>Progress Rate:</strong> ${data.currentDiscipline.isGoldMode ? 'Gold Mode (100x Speed)' : 'Silver Mode (10x Speed)'}</div>
-                    <div>• <strong>Estimated Shifts:</strong> ${Math.max(2, Math.ceil((data.selectedBaseItem.isRefiningRecipe ? 50 : (data.selectedBaseItem.system?.price || 10) + (data.isMasterwork ? 300 : 0)) / (data.currentDiscipline.isGoldMode ? 150 : 35)))} Shifts</div>
+                    <div>• <strong>Estimated Shifts:</strong> ${Math.max(2, Math.ceil((data.selectedBaseItem.isRefiningRecipe ? (data.selectedBaseItem.targetPrice || 50) : (data.selectedBaseItem.system?.price || 10) + (data.isMasterwork ? 300 : 0)) / (data.currentDiscipline.isGoldMode ? 150 : 35)))} Shifts</div>
                   </div>
                 </div>
 
@@ -811,7 +798,7 @@ export class PlayerWorkshopApp extends Application {
                   </div>
 
                   <button type="button" id="start-magic-project-btn" ${!data.magicReagentsInfo.allSatisfied ? 'disabled style="opacity:0.6; cursor:not-allowed;"' : ''} style="margin-top:auto; padding:10px; font-weight:bold; background:#8e44ad; color:#fff; border:none; border-radius:4px; cursor:pointer;">
-                    ${data.magicReagentsInfo.allSatisfied ? '🔮 Infuse & Begin Magic Project' : '⚠️ Missing Required Gemstones or Residue'}
+                    ${data.magicReagentsInfo.allSatisfied ? '🔮 Infuse & Begin Magic Project' : '⚠️ Missing Required Catalysts or Residue'}
                   </button>
                 ` : '<p style="text-align:center; color:#777; margin-top:60px;">Select an item from your inventory on the left to configure enchantments.</p>'}
               </div>
@@ -851,13 +838,21 @@ export class PlayerWorkshopApp extends Application {
 
     html.find('.bench-item-row').click(async e => {
       const id = $(e.currentTarget).data('id');
-      const isRefining = $(e.currentTarget).data('refining') === true;
+      const isRefining = $(e.currentTarget).attr('data-refining') === 'true';
       
       if (isRefining) {
-        this.selectedBaseItem = REFINING_RECIPES.find(r => r.id === id);
+        const found = REFINING_RECIPES.find(r => r.id === id);
+        if (found) {
+          this.selectedBaseItem = {
+            ...found,
+            _id: found.id,
+            isRefiningRecipe: true,
+            system: { price: found.targetPrice, weight: { value: found.weight } }
+          };
+        }
         this.render();
       } else {
-        const packKey = $(e.currentTarget).data('pack');
+        const packKey = $(e.currentTarget).attr('data-pack');
         const pack = game.packs.get(packKey);
         if (pack) {
           this.selectedBaseItem = await pack.getDocument(id);
@@ -909,12 +904,12 @@ export class PlayerWorkshopApp extends Application {
     html.find('#start-project-btn').click(async () => {
       if (!this.selectedBaseItem) return;
 
+      const isRefining = this.selectedBaseItem.isRefiningRecipe === true;
       const ingredientsInfo = this._calculateRequiredIngredients(this.selectedBaseItem, this.selectedMaterial, this.isMasterwork);
       if (!ingredientsInfo.allSatisfied) {
         return ui.notifications.error("You do not have all required ingredients in inventory!");
       }
 
-      // Deduct components
       for (const ing of ingredientsInfo.list) {
         let needed = ing.qty;
         for (const itemId of ing.matchingItemIds) {
@@ -936,20 +931,21 @@ export class PlayerWorkshopApp extends Application {
       const gmSettings = game.settings.get(MODULE_ID, "workshopGmConfig") || { failMode: "strikes", maxStrikes: 3 };
       const disciplines = this._getAvailableCraftDisciplines();
       const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
-      const isRefining = this.selectedBaseItem.isRefiningRecipe;
 
-      const basePrice = isRefining ? 50 : (this.selectedBaseItem.system?.price || 10);
-      const targetGp = isRefining ? 50 : basePrice + (this.isMasterwork ? 300 : 0);
+      const basePrice = isRefining ? (this.selectedBaseItem.targetPrice || 50) : (this.selectedBaseItem.system?.price || 10);
+      const targetGp = isRefining ? (this.selectedBaseItem.targetPrice || 50) : basePrice + (this.isMasterwork ? 300 : 0);
       const divisor = currentDisc.isGoldMode ? 150 : 35;
       const requiredRolls = Math.max(2, Math.ceil(targetGp / divisor));
       const dc = isRefining ? this.selectedBaseItem.dc : 150 + this.acceleratedDcBonus;
       const prefixLabel = isRefining ? "" : this.isMasterwork ? "Masterwork " : "";
 
+      const rawBaseData = isRefining ? { ...this.selectedBaseItem } : (typeof this.selectedBaseItem.toObject === "function" ? this.selectedBaseItem.toObject() : foundry.utils.deepClone(this.selectedBaseItem));
+
       const newProject = {
         id: foundry.utils.randomID(),
         name: `${prefixLabel}${this.selectedBaseItem.name}`,
         baseItemId: this.selectedBaseItem.id || this.selectedBaseItem._id,
-        baseItemData: this.selectedBaseItem.isRefiningRecipe ? this.selectedBaseItem : this.selectedBaseItem.toObject(),
+        baseItemData: rawBaseData,
         material: this.selectedMaterial,
         isMasterwork: this.isMasterwork,
         isRefining,
@@ -991,7 +987,6 @@ export class PlayerWorkshopApp extends Application {
         return ui.notifications.error("You do not have all required catalysts/residue in inventory!");
       }
 
-      // Deduct catalysts and residue
       for (const ing of reagentsInfo.list) {
         let needed = ing.qty;
         for (const itemId of ing.matchingItemIds) {
@@ -1075,7 +1070,6 @@ export class PlayerWorkshopApp extends Application {
       const divisor = currentDisc.isGoldMode ? 100 : 1000;
       const shiftProgress = (totalRoll * proj.dc) / divisor;
 
-      // Determine chronological phase label & target facet
       const totalShiftsSoFar = proj.shiftsLogged.length;
       let phaseLabel = "Smelting & Ingot Prep";
       let targetFacet = "Hardness & HP";
@@ -1104,13 +1098,11 @@ export class PlayerWorkshopApp extends Application {
         ui.notifications.warn(`Shift Failed (Strike ${proj.failedChecks}). Progress lost.`);
       }
 
-      // Failure Condition (Strikes vs Zero-Progress Ruin)
       const isRuined = proj.failMode === "zero" ? (proj.shiftsLogged.length > 1 && proj.currentGp <= 0) : (proj.failedChecks >= failLimit || (proj.shiftsLogged.length > 1 && proj.currentGp <= 0));
 
       if (isRuined) {
         ui.notifications.error(`Project Ruined! Work on ${proj.name} collapsed.`);
         
-        // Strip or damage enchantment if upgrading an existing magic item
         if (proj.isMagic && proj.isUpgrade && this.actor.items.has(proj.baseItemId)) {
           const existingDoc = this.actor.items.get(proj.baseItemId);
           const currentEnh = existingDoc.system?.enh || 10;
@@ -1135,7 +1127,6 @@ export class PlayerWorkshopApp extends Application {
         return;
       }
 
-      // Early completion rolls remaining checks
       if (proj.currentGp >= proj.targetGp && proj.shiftsLogged.length < proj.requiredRolls) {
         const needed = proj.requiredRolls - proj.shiftsLogged.length;
         ui.notifications.info(`GP Goal achieved early! Rolling remaining ${needed} modifier checks.`);
@@ -1161,13 +1152,12 @@ export class PlayerWorkshopApp extends Application {
       const proj = projects[idx];
       if (!proj) return;
 
-      // Handle Refining Item Creation
       if (proj.isRefining) {
         const refinedItem = {
           name: proj.baseItemData.name.replace("⚙️ ", "").replace(" (Refining)", ""),
           type: "loot",
           img: proj.baseItemData.img,
-          system: { quantity: 1, price: 50, weight: { value: 1 } }
+          system: { quantity: 1, price: proj.baseItemData.targetPrice || 50, weight: { value: proj.baseItemData.weight || 2.0 } }
         };
         await this.actor.createEmbeddedDocuments("Item", [refinedItem]);
         projects.splice(idx, 1);
@@ -1358,9 +1348,6 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
-    /* -------------------------------------------- */
-    /* Abandon Project                              */
-    /* -------------------------------------------- */
     html.find('.abandon-project-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
       const projects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];

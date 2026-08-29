@@ -1,6 +1,6 @@
 /**
  * @file gear-forge.mjs
- * Procedural 10x Gear Forge with Discrete Gold/Gems/Art Inputs, Catalyst Loot Generator, and GM Multi-Compendiums
+ * Procedural 10x Gear Forge with Discrete Category Budgeting, Single-Item Catalysts, and Custom Property Recipe Builder
  */
 
 import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS, LEVEL_LOOT_TIERS, GEMSTONE_DATA, ART_OBJECTS_DATA, ALL_MAGICAL_CATALYSTS, THEMATIC_PRESETS } from "./enchantment-registry.mjs";
@@ -33,7 +33,6 @@ export class GranularForgeApp extends Application {
     this.ammoQuantity = saved.ammoQuantity || 20;
     this.rollLogHtml = "";
 
-    // ─── BATCH CONFIGURATION WITH DISCRETE WEALTH INPUTS ───
     this.batchConfig = foundry.utils.mergeObject({
       level: 5,
       partySize: 4,
@@ -47,7 +46,6 @@ export class GranularForgeApp extends Application {
       customEnhLevel: 1,
       allowCursed: false,
       
-      // Discrete Wealth & Catalyst Generators[cite: 1]
       includeGold: true,
       customGoldAmount: 0,
       includeGems: true,
@@ -63,6 +61,11 @@ export class GranularForgeApp extends Application {
       },
 
       categoryMaxGp: {
+        weapons: 0, armor: 0, ammo: 0, wondrous: 0, rings: 0,
+        potions: 0, scrolls: 0, wands: 0, staves: 0, rods: 0, uniques: 0
+      },
+
+      categoryBudgetGp: {
         weapons: 0, armor: 0, ammo: 0, wondrous: 0, rings: 0,
         potions: 0, scrolls: 0, wands: 0, staves: 0, rods: 0, uniques: 0
       },
@@ -321,20 +324,23 @@ export class GranularForgeApp extends Application {
       </div>
     `;
 
+    // Quota row showing both Max GP per item and Total Category Budget GP
     const createQuotaRow = (key, label, icon) => `
-      <div style="display:flex; align-items:center; justify-content:space-between; padding:3px 0; border-bottom:1px solid rgba(0,0,0,0.04); font-size:0.85em;">
-        <span style="display:flex; align-items:center; gap:4px;">${icon} ${label}</span>
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:3px 0; border-bottom:1px solid rgba(0,0,0,0.04); font-size:0.82em;">
+        <span style="display:flex; align-items:center; gap:4px; flex:1;">${icon} ${label}</span>
         <div style="display:flex; align-items:center; gap:4px;">
           ${data.batchConfig.allocationMode === "quota" ? `
-            <span style="font-size:0.75em; color:#777;">Qty:</span>
-            <input type="number" class="batch-quota-val" data-cat="${key}" value="${data.batchConfig.quotas[key]}" min="0" max="50" style="width:45px; padding:2px; text-align:center;">
+            <span style="font-size:0.7em; color:#777;">Qty:</span>
+            <input type="number" class="batch-quota-val" data-cat="${key}" value="${data.batchConfig.quotas[key]}" min="0" max="50" style="width:38px; padding:2px; text-align:center;">
           ` : `
-            <label style="font-size:0.75em; display:flex; align-items:center; gap:2px; cursor:pointer;">
-              <input type="checkbox" class="batch-quota-enable" data-cat="${key}" ${data.batchConfig.quotas[key] > 0 ? "checked" : ""}> Include
+            <label style="font-size:0.7em; display:flex; align-items:center; gap:2px; cursor:pointer;">
+              <input type="checkbox" class="batch-quota-enable" data-cat="${key}" ${data.batchConfig.quotas[key] > 0 ? "checked" : ""}> Inc
             </label>
           `}
-          <span style="font-size:0.75em; color:#777; margin-left:4px;">Max GP:</span>
-          <input type="number" class="batch-cat-gp-val" data-cat="${key}" value="${data.batchConfig.categoryMaxGp[key]}" min="0" placeholder="Auto" style="width:55px; padding:2px; text-align:center;">
+          <span style="font-size:0.7em; color:#777; margin-left:2px;">Item Max:</span>
+          <input type="number" class="batch-cat-gp-val" data-cat="${key}" value="${data.batchConfig.categoryMaxGp[key]}" min="0" placeholder="Auto" style="width:48px; padding:2px; text-align:center;">
+          <span style="font-size:0.7em; color:#777; margin-left:2px;">Cat Budget:</span>
+          <input type="number" class="batch-cat-budget-val" data-cat="${key}" value="${data.batchConfig.categoryBudgetGp?.[key] || 0}" min="0" placeholder="Auto" style="width:48px; padding:2px; text-align:center;">
         </div>
       </div>
     `;
@@ -343,7 +349,7 @@ export class GranularForgeApp extends Application {
       <div style="display:flex; height:100%; gap:12px; overflow:hidden;">
         
         <!-- LEFT COLUMN: BUDGET, PRESETS, & ALLOCATIONS -->
-        <div style="flex:1.35; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
+        <div style="flex:1.4; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
           
           <div style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
             <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
@@ -375,6 +381,26 @@ export class GranularForgeApp extends Application {
               </div>
             </div>
 
+            <div style="background:#fff; border:1px solid #ced6e0; border-radius:3px; padding:6px; font-size:0.8em; line-height:1.4;">
+              ${data.batchConfig.budgetMode === "curve" ? `
+                <div style="display:flex; justify-content:space-between;">
+                  <span><strong>Total Budget:</strong> ~${data.scaledGoldBudget} gp</span>
+                  <span><strong>Global Item Cap:</strong> ${data.currentLevelTier.maxItemPrice} gp</span>
+                </div>
+              ` : `
+                <div style="display:flex; gap:8px;">
+                  <div style="flex:1;">
+                    <label style="font-weight:bold;">Hoard GP Budget:</label>
+                    <input type="number" id="batch-custom-total-gp" value="${data.batchConfig.customTotalBudget}" style="width:100%; padding:2px;">
+                  </div>
+                  <div style="flex:1;">
+                    <label style="font-weight:bold;">Global Item Cap:</label>
+                    <input type="number" id="batch-custom-max-item-gp" value="${data.batchConfig.customMaxItemPrice}" style="width:100%; padding:2px;">
+                  </div>
+                </div>
+              `}
+            </div>
+
             <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px;">
               <label style="font-size:0.8em; font-weight:bold;">Budget Mode:</label>
               <select id="batch-budget-mode" style="padding:2px 4px; font-size:0.8em;">
@@ -384,32 +410,32 @@ export class GranularForgeApp extends Application {
             </div>
           </div>
 
-          <!-- DISCRETE WEALTH & CATALYST CONTROLS[cite: 1] -->
+          <!-- DISCRETE TREASURE & CATALYST BUDGETS -->
           <div style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
-            <strong style="font-size:0.85em; display:block; margin-bottom:4px; border-bottom:1px solid #ddd;">💰 Discrete Treasure & Catalyst Values</strong>
+            <strong style="font-size:0.85em; display:block; margin-bottom:4px; border-bottom:1px solid #ddd;">💰 Discrete Treasure & Catalyst Allocations</strong>
             
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-bottom:6px;">
               <div>
                 <label style="display:flex; align-items:center; gap:4px; font-size:0.8em; cursor:pointer;">
-                  <input type="checkbox" id="batch-inc-gold" ${data.batchConfig.includeGold ? "checked" : ""}> 💰 Coins GP:
+                  <input type="checkbox" id="batch-inc-gold" ${data.batchConfig.includeGold ? "checked" : ""}> 💰 Coins Budget:
                 </label>
                 <input type="number" id="batch-custom-gold" value="${data.batchConfig.customGoldAmount}" min="0" placeholder="Auto" style="width:100%; padding:2px; font-size:0.85em;">
               </div>
               <div>
                 <label style="display:flex; align-items:center; gap:4px; font-size:0.8em; cursor:pointer;">
-                  <input type="checkbox" id="batch-inc-gems" ${data.batchConfig.includeGems ? "checked" : ""}> 💎 Gems GP:
+                  <input type="checkbox" id="batch-inc-gems" ${data.batchConfig.includeGems ? "checked" : ""}> 💎 Gems Budget:
                 </label>
                 <input type="number" id="batch-custom-gems" value="${data.batchConfig.customGemsAmount}" min="0" placeholder="Auto" style="width:100%; padding:2px; font-size:0.85em;">
               </div>
               <div>
                 <label style="display:flex; align-items:center; gap:4px; font-size:0.8em; cursor:pointer;">
-                  <input type="checkbox" id="batch-inc-art" ${data.batchConfig.includeArt ? "checked" : ""}> 🏺 Art GP:
+                  <input type="checkbox" id="batch-inc-art" ${data.batchConfig.includeArt ? "checked" : ""}> 🏺 Art Budget:
                 </label>
                 <input type="number" id="batch-custom-art" value="${data.batchConfig.customArtAmount}" min="0" placeholder="Auto" style="width:100%; padding:2px; font-size:0.85em;">
               </div>
               <div>
                 <label style="display:flex; align-items:center; gap:4px; font-size:0.8em; cursor:pointer;">
-                  <input type="checkbox" id="batch-inc-catalysts" ${data.batchConfig.includeCatalysts ? "checked" : ""}> 🔮 Catalysts:
+                  <input type="checkbox" id="batch-inc-catalysts" ${data.batchConfig.includeCatalysts ? "checked" : ""}> 🔮 Catalysts Count:
                 </label>
                 <input type="number" id="batch-catalysts-count" value="${data.batchConfig.catalystsCount}" min="0" max="20" style="width:100%; padding:2px; font-size:0.85em; text-align:center;">
               </div>
@@ -429,7 +455,7 @@ export class GranularForgeApp extends Application {
             </div>
           ` : ""}
 
-          <strong style="font-size:0.9em; margin-top:2px;">Item Pool Selection & Caps</strong>
+          <strong style="font-size:0.9em; margin-top:2px;">Category Quotas, Item Caps & Budgets</strong>
           <div style="background:rgba(0,0,0,0.02); padding:6px; border:1px solid var(--color-border-light-1); border-radius:4px;">
             ${createQuotaRow("weapons", "Weapons", "⚔️")}
             ${createQuotaRow("armor", "Armor & Shields", "🛡️")}
@@ -477,7 +503,7 @@ export class GranularForgeApp extends Application {
         </div>
 
         <!-- RIGHT COLUMN: GENERATED HOARD OUTPUT -->
-        <div style="flex:1.25; display:flex; flex-direction:column; gap:6px; overflow:hidden;">
+        <div style="flex:1.2; display:flex; flex-direction:column; gap:6px; overflow:hidden;">
           <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--color-border-light-2); padding-bottom:3px;">
             <strong style="font-size:1.0em;">Generated Hoard (${data.batchResults.length} Items)</strong>
             ${data.batchResults.length > 0 ? `
@@ -496,7 +522,7 @@ export class GranularForgeApp extends Application {
                     ${item.name} ${!item.system?.identified ? '<span style="color:#e67e22; font-size:0.8em;">(Unidentified)</span>' : ''}
                   </strong>
                   <span style="font-size:0.75em; color:#555;">
-                    ${item.type === "container" ? "Treasure Chest" : item.system?.armor ? `AC +${item.system.armor.value}` : item.system?.actions?.[0]?.damage?.parts?.[0]?.formula || (item.system?.slot ? `Slot: ${item.system.slot}` : "Treasure")} | Qty: ${item.system?.quantity ?? 1} | Val: ${item.system?.price || 0} gp
+                    ${item.type === "container" ? "Treasure Chest" : item.system?.armor ? `AC +${item.system.armor.value}` : item.system?.actions?.[0]?.damage?.parts?.[0]?.formula || (item.system?.slot ? `Slot: ${item.system.slot}` : "Treasure")} | Qty: ${item.system?.quantity ?? 1} | Val: ${item.system?.price || 0} gp | Wt: ${item.system?.weight?.value ?? 0} lbs
                   </span>
                 </div>
                 <div class="forge-drag-card" draggable="true" data-batch-idx="${idx}" style="padding:3px 8px; background:#dfe4ea; border:1px solid #747d8c; border-radius:3px; cursor:grab; font-size:0.75em; font-weight:bold;">📦 Drag</div>
@@ -733,7 +759,7 @@ export class GranularForgeApp extends Application {
       await this._savePersistentSettings();
     });
 
-    // Discrete Wealth & Catalyst Listeners[cite: 1]
+    // Discrete Wealth Listeners
     html.find('#batch-custom-gold').change(async e => {
       this.batchConfig.customGoldAmount = Math.max(0, parseInt(e.target.value, 10) || 0);
       await this._savePersistentSettings();
@@ -815,6 +841,13 @@ export class GranularForgeApp extends Application {
       await this._savePersistentSettings();
     });
 
+    html.find('.batch-cat-budget-val').change(async e => {
+      const cat = e.target.dataset.cat;
+      this.batchConfig.categoryBudgetGp = this.batchConfig.categoryBudgetGp || {};
+      this.batchConfig.categoryBudgetGp[cat] = Math.max(0, parseInt(e.target.value, 10) || 0);
+      await this._savePersistentSettings();
+    });
+
     html.find('.batch-wondrous-slot-cb').change(async e => {
       const slot = e.target.dataset.slot;
       this.batchConfig.wondrousSlots[slot] = e.target.checked;
@@ -854,16 +887,22 @@ export class GranularForgeApp extends Application {
 
     html.find('#forge-new-custom-prop').click(async () => {
       new Dialog({
-        title: "Deep Magic Property Customizer",
+        title: "Deep Magic Property & Recipe Customizer",
         content: `
           <form style="font-size:0.85em; max-height:480px; overflow-y:auto; padding:4px;">
-            <div style="font-weight:bold; border-bottom:1px solid #ccc; margin-bottom:4px;">Core Identity</div>
+            <div style="font-weight:bold; border-bottom:1px solid #ccc; margin-bottom:4px;">Core Identity & Tier</div>
             <div class="form-group"><label>Property Name</label><input type="text" id="cp-name" placeholder="e.g. Stormcaller, Aegis of Titans" required></div>
             <div style="display:flex; gap:6px;">
               <div class="form-group" style="flex:1;"><label>Enhancement Cost (+)</label><input type="number" id="cp-cost" value="1" min="0"></div>
               <div class="form-group" style="flex:1;"><label>Allowed Category</label>
                 <select id="cp-allowed"><option value="both">All Weapons / Ammo</option><option value="melee">Melee Only</option><option value="ranged">Ranged Only</option><option value="armor">Armor / Shield</option></select>
               </div>
+            </div>
+
+            <div style="font-weight:bold; border-bottom:1px solid #ccc; margin:6px 0 4px 0;">Magical Catalyst & Crafting Recipe</div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+              <div><label>Catalyst Name:</label><input type="text" id="cp-cat-name" placeholder="e.g. Tempest Agate"></div>
+              <div><label>Catalyst Regex Pattern:</label><input type="text" id="cp-cat-pat" placeholder="e.g. tempest.*agate|storm.*gem"></div>
             </div>
 
             <div style="font-weight:bold; border-bottom:1px solid #ccc; margin:6px 0 4px 0;">Extra Damage & Elemental Infusion</div>
@@ -911,12 +950,17 @@ export class GranularForgeApp extends Application {
             callback: async (dHtml) => {
               const name = dHtml.find('#cp-name').val().trim();
               if (!name) return ui.notifications.error("Property name is required!");
+
+              const catName = dHtml.find('#cp-cat-name').val().trim() || `${name} Catalyst`;
+              const catPatStr = dHtml.find('#cp-cat-pat').val().trim() || name.toLowerCase();
               
               const newProp = {
                 baseName: name,
                 title: name,
                 cost: parseInt(dHtml.find('#cp-cost').val()) || 0,
                 allowed: dHtml.find('#cp-allowed').val(),
+                catalystName: catName,
+                catalystPattern: new RegExp(catPatStr, "i"),
                 isDice: dHtml.find('#cp-isDice').is(':checked'),
                 numDice: parseInt(dHtml.find('#cp-numDice').val()) || 1,
                 type: dHtml.find('#cp-type').val().trim() || "untyped",
@@ -1031,14 +1075,16 @@ export class GranularForgeApp extends Application {
       this.batchCoins = { pp: 0, gp: 0, sp: 0, cp: 0 };
       ui.notifications.info(`Generating Calibrated Hoard (${activePreset.label}, CR ${this.batchConfig.level})...`);
 
-      // 1. Generate Coins Container
+      let calculatedChestGold = 0;
+
+      // 1. Generate Coins Container with True Valuation
       let coinBudget = this.batchConfig.customGoldAmount > 0 ? this.batchConfig.customGoldAmount : Math.round(totalHoardBudget * 0.4);
       if (this.batchConfig.includeGold) {
-        const totalGold = Math.round(coinBudget * (0.85 + Math.random() * 0.3));
-        const pp = Math.floor((totalGold * 0.1) / 10);
-        const gp = Math.floor(totalGold * 0.7);
-        const sp = Math.floor((totalGold * 0.15) * 10);
-        const cp = Math.floor((totalGold * 0.05) * 100);
+        calculatedChestGold = Math.round(coinBudget * (0.85 + Math.random() * 0.3));
+        const pp = Math.floor((calculatedChestGold * 0.1) / 10);
+        const gp = Math.floor(calculatedChestGold * 0.7);
+        const sp = Math.floor((calculatedChestGold * 0.15) * 10);
+        const cp = Math.floor((calculatedChestGold * 0.05) * 100);
 
         this.batchCoins = { pp, gp, sp, cp };
 
@@ -1049,6 +1095,7 @@ export class GranularForgeApp extends Application {
           system: {
             description: { value: `<p><strong>Encounter Treasure Chest (${activePreset.label}, CR ${this.batchConfig.level}):</strong> Calibrated for a party of ${this.batchConfig.partySize}.</p>` },
             quantity: 1,
+            price: calculatedChestGold,
             currency: { pp, gp, sp, cp },
             weight: { value: Math.max(1, Math.round((pp + gp + sp + cp) / 50)) },
             unidentified: { name: "Heavy Wooden Chest", price: 5 }
@@ -1058,7 +1105,7 @@ export class GranularForgeApp extends Application {
         this.batchResults.push(coinContainer);
       }
 
-      // 2. Generate Discrete Gems & Art Objects[cite: 1]
+      // 2. Generate Discrete Single-Item Gems & Art Objects
       let gemBudget = this.batchConfig.customGemsAmount > 0 ? this.batchConfig.customGemsAmount : Math.round(totalHoardBudget * 0.2);
       if (this.batchConfig.includeGems && gemBudget > 10) {
         const gemCount = Math.max(1, Math.floor(gemBudget / 100));
@@ -1079,7 +1126,7 @@ export class GranularForgeApp extends Application {
               subType: "tradeGoods",
               quantity: 1,
               price: chosenGem.basePrice,
-              weight: { value: 0 },
+              weight: { value: chosenGem.weight || 0.1 },
               identified: false,
               unidentified: { name: "Rough Gemstone", price: Math.round(chosenGem.basePrice * 0.8) },
               description: { value: `<p>A sparkling gemstone appraised at approximately ${chosenGem.basePrice} gp.</p>` }
@@ -1109,7 +1156,7 @@ export class GranularForgeApp extends Application {
               subType: "tradeGoods",
               quantity: 1,
               price: chosenArt.basePrice,
-              weight: { value: 2 },
+              weight: { value: chosenArt.weight || 1.5 },
               identified: false,
               unidentified: { name: "Ornate Art Object", price: Math.round(chosenArt.basePrice * 0.75) },
               description: { value: `<p>A masterfully crafted art piece appraised at approximately ${chosenArt.basePrice} gp.</p>` }
@@ -1119,7 +1166,7 @@ export class GranularForgeApp extends Application {
         }
       }
 
-      // 3. Generate Magical Catalysts & Arcane Residue[cite: 1]
+      // 3. Generate Discrete Single-Item Magical Catalysts
       if (this.batchConfig.includeCatalysts && this.batchConfig.catalystsCount > 0) {
         for (let c = 0; c < this.batchConfig.catalystsCount; c++) {
           const chosenCatalyst = ALL_MAGICAL_CATALYSTS[Math.floor(Math.random() * ALL_MAGICAL_CATALYSTS.length)];
@@ -1129,9 +1176,9 @@ export class GranularForgeApp extends Application {
             img: chosenCatalyst.img,
             system: {
               subType: "tradeGoods",
-              quantity: chosenCatalyst.name.includes("Residue") ? 4 : 1,
+              quantity: chosenCatalyst.name === "Arcane Residue" ? 4 : 1,
               price: chosenCatalyst.price,
-              weight: { value: 0.1 },
+              weight: { value: chosenCatalyst.weight || 0.1 },
               identified: true,
               description: { value: `<p>A valuable magical catalyst used in artisan enchanting and runecarving.</p>` }
             },
@@ -1199,7 +1246,6 @@ export class GranularForgeApp extends Application {
         if (catKey === "wondrous") {
           const isExplicitWondrous = subType === "wondrous" || eqType === "wondrous" || ["head", "headband", "eyes", "shoulders", "neck", "chest", "body", "belt", "wrists", "hands", "feet", "slotless"].includes(slot);
           if (!isExplicitWondrous) return false;
-          
           const s = this.batchConfig.wondrousSlots;
           const activeSlot = slot || "slotless";
           return s[activeSlot] === true;
@@ -1368,7 +1414,6 @@ export class GranularForgeApp extends Application {
         let propPrefixes = [];
         let propSuffixes = [];
 
-        // Weapon Actions
         if (isProceduralWeapon && newItemData.system?.actions) {
           const critRangeRoll = rollStat("Crit Threat", "precision");
           const critMultRoll = rollStat("Crit Mult", "precision");
@@ -1452,7 +1497,6 @@ export class GranularForgeApp extends Application {
           }
         }
 
-        // Enhancement Bonus
         let enhSuffix = "";
         if (enhLevel > 0) {
           const enhRoll = rollStat("Magic Enhancement", "magic");
@@ -1464,7 +1508,6 @@ export class GranularForgeApp extends Application {
           newItemData.system.cl = Math.max(1, enhLevel * 3);
         }
 
-        // Name Synthesis
         const matTitle = mat.name !== "Base" ? `${mat.name} ` : "";
         const pPre = propPrefixes.length ? `${propPrefixes.join(" ")} ` : "";
         const pSuf = propSuffixes.length ? ` ${propSuffixes.join(" ")}` : "";
@@ -1717,6 +1760,23 @@ export class GranularForgeApp extends Application {
       for (const propKey of this.selectedProperties) {
         const prop = baseProps[propKey];
         if (!prop) continue;
+
+        if (prop.bonusMath && isArmor) {
+          const pRoll = rollStat(`${prop.baseName} Tier`, "magic");
+          let bonus = prop.bonusMath(pRoll.mult);
+          let titlePrefix = pRoll.mult > 1.15 ? `Greater ${prop.baseName}` : pRoll.mult < 0.85 ? `Lesser ${prop.baseName}` : prop.baseName;
+          propPrefixes.push(titlePrefix);
+
+          if (prop.type === "skill") {
+            newItemData.system.changes = newItemData.system.changes || [];
+            newItemData.system.changes.push({ formula: `${bonus}`, target: prop.target, operator: "add", type: "competence", priority: 0 });
+            identifiedTraits.push(`<strong>${titlePrefix}:</strong> +${bonus} competence bonus to skill checks.`);
+          } else if (prop.type === "sr") {
+            newItemData.system.changes = newItemData.system.changes || [];
+            newItemData.system.changes.push({ formula: `${bonus}`, target: "spellResist", operator: "add", type: "untyped", priority: 0 });
+            identifiedTraits.push(`<strong>${titlePrefix}:</strong> Grants Spell Resistance ${bonus}.`);
+          }
+        }
 
         if (prop.acMod && newItemData.system?.armor) newItemData.system.armor.value += prop.acMod;
         if (prop.acpBonus && newItemData.system?.armor) newItemData.system.armor.acp = Math.min(0, newItemData.system.armor.acp + prop.acpBonus);
