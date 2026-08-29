@@ -1,6 +1,6 @@
 /**
  * @file player-workshop.mjs
- * Player-Facing Procedural Crafting Workbench with GM Multi-Compendium Selector and Fallback Matcher
+ * Player-Facing Procedural Crafting Workbench with Header Cog, Granular Tags, and Mundane/Masterwork Toggles
  */
 
 import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS } from "./enchantment-registry.mjs";
@@ -59,6 +59,7 @@ export class PlayerWorkshopApp extends Application {
     this.compendiumItems = [];
     this.selectedBaseItem = null;
     this.selectedMaterial = "base";
+    this.isMasterwork = true;
     this.acceleratedDcBonus = 0;
     this.searchTerm = "";
   }
@@ -74,6 +75,26 @@ export class PlayerWorkshopApp extends Application {
       classes: ["aeris-workshop-app"]
     });
   }
+
+  /**
+   * Header buttons: Moves the GM Pack Configuration Cog to the window title bar
+   */
+  _getHeaderButtons() {
+    const buttons = super._getHeaderButtons();
+    if (game.user.isGM) {
+      buttons.unshift({
+        label: "Source Packs",
+        class: "workshop-gm-packs",
+        icon: "fas fa-cog",
+        onclick: () => this._openGmPackConfigDialog()
+      });
+    }
+    return buttons;
+  }
+
+  /* -------------------------------------------- */
+  /* Sub-Skill Detection & Mapping                */
+  /* -------------------------------------------- */
 
   _getAvailableCraftDisciplines() {
     const subSkills = this.actor.system?.skills?.crf?.subSkills || {};
@@ -180,7 +201,6 @@ export class PlayerWorkshopApp extends Application {
 
     const allItemPacks = game.packs.filter(p => p.documentName === "Item");
 
-    // Case-insensitive resolution + automatic fallback search
     let targetPacks = [];
     if (Array.isArray(packKeys) && packKeys.length > 0) {
       targetPacks = allItemPacks.filter(p => 
@@ -393,6 +413,7 @@ export class PlayerWorkshopApp extends Application {
       items: this.compendiumItems,
       selectedBaseItem: this.selectedBaseItem,
       selectedMaterial: this.selectedMaterial,
+      isMasterwork: this.isMasterwork,
       validMaterials,
       acceleratedDcBonus: this.acceleratedDcBonus,
       ingredientsInfo,
@@ -426,7 +447,7 @@ export class PlayerWorkshopApp extends Application {
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
             <div>
               <strong style="font-size:1.05em; color:var(--color-text-dark-primary);">${proj.name}</strong>
-              <span style="font-size:0.8em; color:#666; margin-left:6px;">(DC ${proj.dc} | Material: ${proj.material})</span>
+              <span style="font-size:0.8em; color:#666; margin-left:6px;">(DC ${proj.dc} | Material: ${proj.material} | ${proj.isMasterwork ? 'Masterwork' : 'Mundane'})</span>
             </div>
             <div>
               <span style="font-size:0.8em; font-weight:bold; color:${proj.failedChecks >= failLimit - 1 ? '#c0392b' : '#555'};">
@@ -468,7 +489,6 @@ export class PlayerWorkshopApp extends Application {
     const html = `
       <div style="display:flex; flex-direction:column; height:100%; gap:8px; padding:8px; font-family:var(--font-primary);">
         
-        <!-- HEADER NAVIGATION TABS -->
         <nav style="display:flex; gap:8px; border-bottom:2px solid var(--color-border-light-2); padding-bottom:6px;">
           <button type="button" class="workshop-tab-btn ${data.activeTab === "bench" ? "active" : ""}" data-tab="bench" style="flex:1; padding:6px; font-weight:bold; cursor:pointer; background:${data.activeTab === "bench" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "bench" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
             📐 Recipe Bench (New Project)
@@ -482,28 +502,21 @@ export class PlayerWorkshopApp extends Application {
           <div style="display:flex; flex:1; gap:12px; overflow:hidden;">
             
             <!-- COLUMN 1: DISCIPLINE & BLUEPRINTS -->
-            <div style="flex:1.2; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
-              <div style="display:flex; gap:6px; align-items:flex-end;">
-                <div style="flex:1;">
-                  <label style="font-size:0.8em; font-weight:bold;">Active Craft Discipline</label>
-                  <select id="workshop-discipline-select" style="width:100%; padding:4px; font-size:0.85em;">${discOpts}</select>
-                </div>
-                ${data.isGM ? `
-                  <button type="button" id="workshop-gm-packs-btn" style="padding:4px 8px; font-size:0.8em; font-weight:bold; background:#747d8c; color:#fff; border:none; border-radius:3px; cursor:pointer;" title="Configure source compendiums for this discipline">
-                    ⚙️ Source Packs
-                  </button>
-                ` : ""}
+            <div style="flex:1.15; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
+              <div>
+                <label style="font-size:0.8em; font-weight:bold;">Active Craft Discipline</label>
+                <select id="workshop-discipline-select" style="width:100%; padding:4px; font-size:0.85em;">${discOpts}</select>
               </div>
 
               <input type="text" id="workshop-search-input" value="${data.searchTerm}" placeholder="🔍 Search ${data.currentDiscipline.label} blueprints..." style="padding:4px; font-size:0.85em; border:1px solid #ced6e0; border-radius:3px;">
               
-              <div style="flex-grow:1; max-height:520px; overflow-y:auto; border:1px solid #ced6e0; border-radius:4px; padding:4px; background:#fff;">
-                ${itemRows || `<p style="padding:10px; font-size:0.85em; color:#777;">No blueprints matching ${data.currentDiscipline.label} found. Click ⚙️ Source Packs to link compendiums.</p>`}
+              <div style="flex-grow:1; max-height:540px; overflow-y:auto; border:1px solid #ced6e0; border-radius:4px; padding:4px; background:#fff;">
+                ${itemRows || `<p style="padding:10px; font-size:0.85em; color:#777;">No blueprints matching ${data.currentDiscipline.label} found in active compendiums. Click ⚙️ Source Packs on the title bar to configure.</p>`}
               </div>
             </div>
 
             <!-- COLUMN 2: BLUEPRINT & MATERIAL CHECK -->
-            <div style="flex:1.1; display:flex; flex-direction:column; gap:8px; background:rgba(0,0,0,0.02); padding:10px; border-radius:6px; border:1px solid #ced6e0; overflow-y:auto;">
+            <div style="flex:1.15; display:flex; flex-direction:column; gap:8px; background:rgba(0,0,0,0.02); padding:10px; border-radius:6px; border:1px solid #ced6e0; overflow-y:auto;">
               <strong style="font-size:0.95em; border-bottom:1px solid #ccc; padding-bottom:3px;">Blueprint & Material Requirements</strong>
               
               ${data.selectedBaseItem ? `
@@ -512,11 +525,11 @@ export class PlayerWorkshopApp extends Application {
                     <img src="${data.selectedBaseItem.img}" width="32" height="32" style="border-radius:3px;" />
                     <div>
                       <strong style="font-size:1.05em;">${data.selectedBaseItem.name}</strong><br/>
-                      <span style="color:#555;">Base Price: ${data.selectedBaseItem.system?.price || 0} GP | Goal: ${(data.selectedBaseItem.system?.price || 10) + 300} GP</span>
+                      <span style="color:#555;">Base Price: ${data.selectedBaseItem.system?.price || 0} GP | Target Goal: ${(data.selectedBaseItem.system?.price || 10) + (data.isMasterwork ? 300 : 0)} GP</span>
                     </div>
                   </div>
 
-                  <div style="display:flex; gap:6px; margin-bottom:8px;">
+                  <div style="display:flex; gap:6px; margin-bottom:6px;">
                     <div style="flex:1;">
                       <label style="font-size:0.8em; font-weight:bold;">Special Material</label>
                       <select id="workshop-material-select" style="width:100%; padding:3px; font-size:0.85em;">${matOpts}</select>
@@ -529,6 +542,13 @@ export class PlayerWorkshopApp extends Application {
                         <option value="100" ${data.acceleratedDcBonus===100?"selected":""}>Rapid Rush (+100 DC)</option>
                       </select>
                     </div>
+                  </div>
+
+                  <div style="margin-bottom:8px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; font-weight:bold; cursor:pointer;">
+                      <input type="checkbox" id="workshop-is-masterwork" ${data.isMasterwork ? "checked" : ""}>
+                      <span>Masterwork Quality (+300 GP to goal)</span>
+                    </label>
                   </div>
 
                   <strong style="font-size:0.85em;">Required Inventory Materials:</strong>
@@ -544,7 +564,7 @@ export class PlayerWorkshopApp extends Application {
                   <div style="font-size:0.8em; color:#666; line-height:1.3;">
                     <div>• <strong>Hourly Craft DC:</strong> ${150 + data.acceleratedDcBonus} (Base 150 + Speed)</div>
                     <div>• <strong>Progress Rate:</strong> ${data.currentDiscipline.isGoldMode ? 'Gold Mode (100x Speed)' : 'Silver Mode (10x Speed)'}</div>
-                    <div>• <strong>Minimum Shifts Required:</strong> ${Math.max(3, Math.ceil(((data.selectedBaseItem.system?.price || 10) + 300) / (data.currentDiscipline.isGoldMode ? 150 : 35)))} Shifts</div>
+                    <div>• <strong>Estimated Shifts:</strong> ${Math.max(2, Math.ceil(((data.selectedBaseItem.system?.price || 10) + (data.isMasterwork ? 300 : 0)) / (data.currentDiscipline.isGoldMode ? 150 : 35)))} Shifts</div>
                   </div>
                 </div>
 
@@ -564,6 +584,53 @@ export class PlayerWorkshopApp extends Application {
     return $(html);
   }
 
+  /* -------------------------------------------- */
+  /* GM Pack Configuration Dialog                 */
+  /* -------------------------------------------- */
+
+  _openGmPackConfigDialog() {
+    const disciplines = this._getAvailableCraftDisciplines();
+    const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
+    const savedMap = game.settings.get(MODULE_ID, "craftCompendiums") || {};
+    const activePacks = new Set(savedMap[currentDisc.type] || []);
+    const allItemPacks = game.packs.filter(p => p.documentName === "Item");
+
+    const checkboxes = allItemPacks.map(p => `
+      <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; margin-bottom:4px; cursor:pointer;">
+        <input type="checkbox" class="gm-pack-cb" value="${p.collection}" ${activePacks.has(p.collection) ? "checked" : ""}>
+        <span>${p.metadata.label} <code style="color:#777; font-size:0.85em;">(${p.collection})</code></span>
+      </label>
+    `).join("");
+
+    new Dialog({
+      title: `⚙️ Source Packs for ${currentDisc.label}`,
+      content: `
+        <form style="max-height:360px; overflow-y:auto; padding:6px;">
+          <p style="font-size:0.8em; color:#555;">Check all compendiums to search for blueprints under this discipline:</p>
+          ${checkboxes}
+        </form>
+      `,
+      buttons: {
+        save: {
+          label: "Save Packs",
+          callback: async (dHtml) => {
+            const selected = [];
+            dHtml.find('.gm-pack-cb:checked').each((i, el) => selected.push(el.value));
+            savedMap[currentDisc.type] = selected;
+            await game.settings.set(MODULE_ID, "craftCompendiums", savedMap);
+            ui.notifications.info(`Updated compendium sources for ${currentDisc.label}!`);
+            this.render();
+          }
+        }
+      },
+      default: "save"
+    }).render(true);
+  }
+
+  /* -------------------------------------------- */
+  /* Event Listeners & Execution Logic            */
+  /* -------------------------------------------- */
+
   activateListeners(html) {
     super.activateListeners(html);
 
@@ -576,46 +643,6 @@ export class PlayerWorkshopApp extends Application {
       this.selectedDiscipline = e.target.value;
       this.selectedBaseItem = null;
       this.render();
-    });
-
-    // GM Compendium Picker Dialog
-    html.find('#workshop-gm-packs-btn').click(async () => {
-      const disciplines = this._getAvailableCraftDisciplines();
-      const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
-      const savedMap = game.settings.get(MODULE_ID, "craftCompendiums") || {};
-      const activePacks = new Set(savedMap[currentDisc.type] || []);
-      const allItemPacks = game.packs.filter(p => p.documentName === "Item");
-
-      const checkboxes = allItemPacks.map(p => `
-        <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; margin-bottom:4px; cursor:pointer;">
-          <input type="checkbox" class="gm-pack-cb" value="${p.collection}" ${activePacks.has(p.collection) ? "checked" : ""}>
-          <span>${p.metadata.label} <code style="color:#777; font-size:0.85em;">(${p.collection})</code></span>
-        </label>
-      `).join("");
-
-      new Dialog({
-        title: `⚙️ Configure Packs for ${currentDisc.label}`,
-        content: `
-          <form style="max-height:360px; overflow-y:auto; padding:6px;">
-            <p style="font-size:0.8em; color:#555;">Check all compendiums to search for blueprints under this discipline:</p>
-            ${checkboxes}
-          </form>
-        `,
-        buttons: {
-          save: {
-            label: "Save Packs",
-            callback: async (dHtml) => {
-              const selected = [];
-              dHtml.find('.gm-pack-cb:checked').each((i, el) => selected.push(el.value));
-              savedMap[currentDisc.type] = selected;
-              await game.settings.set(MODULE_ID, "craftCompendiums", savedMap);
-              ui.notifications.info(`Updated compendium sources for ${currentDisc.label}!`);
-              this.render();
-            }
-          }
-        },
-        default: "save"
-      }).render(true);
     });
 
     html.find('#workshop-search-input').on('input', e => {
@@ -640,11 +667,19 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
+    html.find('#workshop-is-masterwork').change(e => {
+      this.isMasterwork = e.target.checked;
+      this.render();
+    });
+
     html.find('#workshop-acc-dc').change(e => {
       this.acceleratedDcBonus = parseInt(e.target.value, 10) || 0;
       this.render();
     });
 
+    /* -------------------------------------------- */
+    /* Start Project Button                         */
+    /* -------------------------------------------- */
     html.find('#start-project-btn').click(async () => {
       if (!this.selectedBaseItem) return;
 
@@ -653,6 +688,7 @@ export class PlayerWorkshopApp extends Application {
         return ui.notifications.error("You do not have all required tangible materials in your inventory!");
       }
 
+      // Deduct items from inventory
       for (const ing of ingredientsInfo.list) {
         let needed = ing.qty;
         for (const itemId of ing.matchingItemIds) {
@@ -672,19 +708,22 @@ export class PlayerWorkshopApp extends Application {
       }
 
       const basePrice = this.selectedBaseItem.system?.price || 10;
-      const targetGp = basePrice + 300;
+      const targetGp = basePrice + (this.isMasterwork ? 300 : 0);
       const disciplines = this._getAvailableCraftDisciplines();
       const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
       const divisor = currentDisc.isGoldMode ? 150 : 35;
-      const requiredRolls = Math.max(3, Math.ceil(targetGp / divisor));
+      const requiredRolls = Math.max(2, Math.ceil(targetGp / divisor));
       const dc = 150 + this.acceleratedDcBonus;
+
+      const prefixLabel = this.isMasterwork ? "Masterwork " : "";
 
       const newProject = {
         id: foundry.utils.randomID(),
-        name: `Masterwork ${this.selectedBaseItem.name}`,
+        name: `${prefixLabel}${this.selectedBaseItem.name}`,
         baseItemId: this.selectedBaseItem.id,
         baseItemData: this.selectedBaseItem.toObject(),
         material: this.selectedMaterial,
+        isMasterwork: this.isMasterwork,
         targetGp,
         currentGp: 0,
         dc,
@@ -703,6 +742,9 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
+    /* -------------------------------------------- */
+    /* Work 1-Hour Shift                            */
+    /* -------------------------------------------- */
     html.find('.work-shift-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
       const projects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
@@ -771,6 +813,9 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
+    /* -------------------------------------------- */
+    /* Claim Finished Item (Full Tags Breakdown)    */
+    /* -------------------------------------------- */
     html.find('.claim-project-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
       const projects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
@@ -782,6 +827,10 @@ export class PlayerWorkshopApp extends Application {
       const isArmor = itemData.type === "armor" || itemData.system?.armor !== undefined;
       const mat = SPECIAL_MATERIALS[proj.material] || SPECIAL_MATERIALS.base;
 
+      const tagsList = ["Crafted"];
+      const identifiedTraits = [];
+
+      // 3-Phase Chronological Variance Mapping
       const totalShifts = proj.shiftsLogged.length;
       const phase1 = proj.shiftsLogged.slice(0, Math.floor(totalShifts / 3));
       const phase2 = proj.shiftsLogged.slice(Math.floor(totalShifts / 3), Math.floor(totalShifts * 2 / 3));
@@ -802,27 +851,65 @@ export class PlayerWorkshopApp extends Application {
       if (tier === 0) tier = precMult >= 1.0 ? 1 : -1;
       const prefix = tierPrefixes[Math.max(-4, Math.min(4, tier))];
 
+      const tierSign = tier > 0 ? `+${tier}` : `${tier}`;
+      tagsList.push(`Craft Quality: Tier ${tierSign}`);
+      identifiedTraits.push(`<strong>Craftsmanship (${prefix}):</strong> Handcrafted to ${prefix.toLowerCase()} specifications.`);
+
       itemData.flags = itemData.flags || {};
       itemData.flags[MODULE_ID] = { is10xScaled: true, disable10xSheet: true, disable10xCard: true };
-      itemData.system.masterwork = true;
+      
+      if (proj.isMasterwork || tier >= 4 || mat.name === "Adamantine" || mat.name === "Mithral") {
+        itemData.system.masterwork = true;
+      } else {
+        itemData.system.masterwork = false;
+      }
       itemData.system.identified = true;
 
-      // Phase 1: Durability
-      let bHard = (typeof itemData.system.hardness === "object" ? itemData.system.hardness.value : itemData.system.hardness) || 0;
-      let bHp = (itemData.system.hp?.base ?? itemData.system.hp?.max ?? 0);
-      itemData.system.hardness = Math.max(0, Math.round((bHard * 10 + mat.hardnessMod) * hardMult));
-      const fHp = Math.max(1, Math.round((bHp * 10 * mat.hpMult) * hardMult));
+      // Phase 1: Durability, Hardness, and Robust HP Floor
+      let rawHardness = (typeof itemData.system.hardness === "object" ? itemData.system.hardness.value : itemData.system.hardness) || 10;
+      let rawBaseHp = (itemData.system.hp?.base ?? itemData.system.hp?.max ?? 0);
+
+      // Structural baseline for weapons (5 HP light, 10 HP 1H, 15 HP 2H)
+      if (isWeapon && rawBaseHp < 5) {
+        const subType = (itemData.system.weaponSubtype || "").toLowerCase();
+        rawBaseHp = subType === "light" ? 5 : subType === "1h" ? 10 : 15;
+      } else if (rawBaseHp === 0) {
+        rawBaseHp = 10;
+      }
+
+      itemData.system.hardness = Math.max(0, Math.round((rawHardness * 10 + mat.hardnessMod) * hardMult));
+      const fHp = Math.max(1, Math.round((rawBaseHp * 10 * mat.hpMult) * hardMult));
       itemData.system.hp = { base: fHp, max: fHp, value: fHp };
 
-      // Phase 2: Physical AC & ACP
+      const hardTier = Math.ceil(((hardMult - 1.0) / 0.25) * 4);
+      tagsList.push(`Hardness: Tier ${hardTier >= 0 ? `+${hardTier || 1}` : hardTier}`);
+      tagsList.push(`Hit Points: Tier ${hardTier >= 0 ? `+${hardTier || 1}` : hardTier}`);
+
+      if (mat.name !== "Base" && mat.name !== "Steel") {
+        identifiedTraits.push(`<strong>Material (${mat.name}):</strong> Hardness ${itemData.system.hardness}, HP ${itemData.system.hp.max}. ${mat.desc || ""}`);
+      }
+
+      // Phase 2: Physical AC, ACP, Weight
+      const weightFactor = Math.max(0.1, 2.0 - physMult);
+      const rawWeight = itemData.system?.weight?.value ?? 0;
+      if (itemData.system?.weight) {
+        itemData.system.weight.value = rawWeight === 0 ? 0 : Math.max(0.1, Math.round((rawWeight * (mat.weightMult || 1.0) * weightFactor) * 100) / 100);
+      }
+      const weightTier = Math.ceil(((weightFactor - 1.0) / 0.25) * 4);
+      tagsList.push(`Weight: Tier ${weightTier >= 0 ? `+${weightTier || 1}` : weightTier}`);
+
       if (isArmor && itemData.system?.armor) {
         itemData.system.armor.value = Math.round((itemData.system.armor.value || 0) * 10 * physMult);
         let adjAcp = Math.round((itemData.system.armor.acp || 0) * 10 * (2.0 - physMult));
         if (mat.acpBonus) adjAcp = Math.min(0, adjAcp + mat.acpBonus);
         itemData.system.armor.acp = adjAcp;
+
+        tagsList.push(`Armor AC: Tier ${tierSign}`);
+        tagsList.push(`ACP: Tier ${tierSign}`);
+        identifiedTraits.push(`<strong>Armor Profile:</strong> AC +${itemData.system.armor.value}, ACP ${itemData.system.armor.acp}.`);
       }
 
-      // Phase 3: Precision & Crit
+      // Phase 3: Precision, Crit Threat & Multipliers
       if (isWeapon && itemData.system?.actions) {
         itemData.system.actions.forEach(act => {
           act.ability = act.ability || {};
@@ -839,15 +926,32 @@ export class PlayerWorkshopApp extends Application {
           act.critMult = fMult;
           act.ability.critMult = fMult;
         });
+
+        tagsList.push(`Crit Threat: Tier ${tierSign}`);
+        tagsList.push(`Crit Mult: Tier ${tierSign}`);
+        identifiedTraits.push(`<strong>Precision:</strong> Crit range ${itemData.system.actions[0]?.critRange}–200, multiplier ×${itemData.system.actions[0]?.critMult}.`);
       }
 
       const matTitle = mat.name !== "Base" && mat.name !== "Steel" ? `${mat.name} ` : "";
       itemData.name = `${prefix} ${matTitle}${itemData.name}`.trim();
-      itemData.system.tags = [
-        `Craft Quality: Tier ${tier > 0 ? `+${tier}` : tier}`,
-        `Hardness: Tier ${hardMult >= 1 ? '+1' : '-1'}`,
-        `Physical: Tier ${physMult >= 1 ? '+1' : '-1'}`
-      ];
+      
+      itemData.system.tags = Array.isArray(itemData.system.tags) ? itemData.system.tags : [];
+      itemData.system.tags.push(...tagsList);
+
+      const tagHtml = tagsList.map(t => `<span style="background:#2f3542;color:#fff;padding:2px 6px;border-radius:3px;font-size:0.75em;margin:2px;display:inline-block;">${t}</span>`).join(" ");
+      const traitListHtml = identifiedTraits.map(tr => `<li>${tr}</li>`).join("");
+      const originalDesc = itemData.system.description?.value || "";
+
+      itemData.system.description = itemData.system.description || {};
+      itemData.system.description.value = `
+        ${originalDesc}
+        <hr/>
+        <h3>Handcrafted Characteristics</h3>
+        <ul style="padding-left:18px;margin:6px 0;font-size:0.9em;line-height:1.4;">
+          ${traitListHtml}
+        </ul>
+        <p><strong>Crafting Tags:</strong><br/>${tagHtml}</p>
+      `.trim();
 
       await this.actor.createEmbeddedDocuments("Item", [itemData]);
       projects.splice(idx, 1);
@@ -857,6 +961,9 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
+    /* -------------------------------------------- */
+    /* Abandon Project                              */
+    /* -------------------------------------------- */
     html.find('.abandon-project-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
       const projects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
