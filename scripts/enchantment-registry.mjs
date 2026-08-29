@@ -1,6 +1,6 @@
 /**
  * @file enchantment-registry.mjs
- * Continuous 10x Granular Engine Registry with Gems, Art Objects, Thematic Presets, and Deep Custom Properties
+ * Continuous 10x Granular Engine Registry with Unique Property Catalysts, Refined Materials, and Loot Pools
  */
 
 export const SPECIAL_MATERIALS = {
@@ -14,35 +14,104 @@ export const SPECIAL_MATERIALS = {
   dragonhide: { name: "Dragonhide", hardnessMod: 50, hpMult: 1.25, weightMult: 1.0, costMod: 1500, desc: "Immune to specific dragon energy type." }
 };
 
+// ─── UNIQUE WEAPON PROPERTY CATALYSTS ───────────────────────────────────────
 export const WEAPON_ENCHANTMENTS = {
-  flaming: { baseName: "Flaming", cost: 1, isDice: true, numDice: 1, type: "fire", allowed: "both" },
-  frost: { baseName: "Frost", cost: 1, isDice: true, numDice: 1, type: "cold", allowed: "both" },
-  shock: { baseName: "Shock", cost: 1, isDice: true, numDice: 1, type: "electric", allowed: "both" },
-  corrosive: { baseName: "Corrosive", cost: 1, isDice: true, numDice: 1, type: "acid", allowed: "both" },
-  holy: { baseName: "Holy", cost: 2, isDice: true, numDice: 2, type: "holy", allowed: "both" },
-  speed: { baseName: "Speed", cost: 3, isDice: false, title: "of Speed", allowed: "both", note: "Grants one additional attack at highest BAB during full-attack." },
-  thundering: { baseName: "Thundering", cost: 1, isDice: false, title: "Thundering", allowed: "both", note: "Deals extra sonic damage on a successful critical hit." },
-  bane: { baseName: "Bane", cost: 1, isDice: false, title: "Bane", allowed: "both", note: "Enhancement bonus is +2 higher against a designated foe, and deals +2d60 damage." },
-  ghost_touch: { baseName: "Ghost Touch", cost: 1, isDice: false, title: "Ghost Touch", allowed: "both", note: "Deals normal damage to incorporeal creatures." },
-
-  vicious: { baseName: "Vicious", cost: 1, isDice: true, numDice: 2, type: "untyped", allowed: "melee", recoilNote: "Deals 1d60 disruptive recoil damage back to the wielder upon striking." },
-  keen: { baseName: "Keen", cost: 1, isDice: false, title: "Keen", allowed: "melee", actionMod: (action) => { let cCrit = action.critRange ?? 191; action.critRange = Math.max(100, 201 - ((201 - cCrit) * 2)); }, note: "Doubles the weapon's base critical threat window." },
-  vorpal: { baseName: "Vorpal", cost: 5, isDice: false, title: "Vorpal", allowed: "melee", note: "On a natural 200 attack roll, confirming critical instantly severs head." },
-  defending: { baseName: "Defending", cost: 1, isDice: false, title: "of Defense", allowed: "melee", note: "Allows wielder to allocate enhancement bonus to Armor AC." },
-
-  distance: { baseName: "Distance", cost: 1, isDice: false, title: "of Distance", allowed: "ranged", note: "Doubles the weapon's range increment." },
-  returning: { baseName: "Returning", cost: 1, isDice: false, title: "Returning", allowed: "ranged", note: "Returns to the thrower just before their next turn." },
-  seeking: { baseName: "Seeking", cost: 1, isDice: false, title: "Seeking", allowed: "ranged", note: "Ignores any miss chance from concealment." }
+  flaming: { 
+    baseName: "Flaming", cost: 1, isDice: true, numDice: 1, type: "fire", allowed: "both",
+    catalystName: "Ruby / Flame Essence", catalystPattern: /(ruby|rubies|flame essence|fire gem|magma core)/i 
+  },
+  frost: { 
+    baseName: "Frost", cost: 1, isDice: true, numDice: 1, type: "cold", allowed: "both",
+    catalystName: "Sapphire / Glacial Shard", catalystPattern: /(sapphire|glacial shard|ice essence|frost gem)/i 
+  },
+  shock: { 
+    baseName: "Shock", cost: 1, isDice: true, numDice: 1, type: "electric", allowed: "both",
+    catalystName: "Topaz / Storm Quartz", catalystPattern: /(topaz|storm quartz|lightning gem|voltaic core)/i 
+  },
+  corrosive: { 
+    baseName: "Corrosive", cost: 1, isDice: true, numDice: 1, type: "acid", allowed: "both",
+    catalystName: "Emerald / Acid Drake Gland", catalystPattern: /(emerald|acid drake gland|caustic gland|vitriol)/i 
+  },
+  holy: { 
+    baseName: "Holy", cost: 2, isDice: true, numDice: 2, type: "holy", allowed: "both",
+    catalystName: "Sunstone / Celestial Feather", catalystPattern: /(sunstone|celestial feather|seraphic dust|radiant opal)/i 
+  },
+  speed: { 
+    baseName: "Speed", cost: 3, isDice: false, title: "of Speed", allowed: "both", note: "Grants one additional attack at highest BAB during full-attack.",
+    catalystName: "Quicksilver Vial / Tempest Agate", catalystPattern: /(quicksilver|tempest agate|wind runner core|chronos pearl)/i 
+  },
+  thundering: { 
+    baseName: "Thundering", cost: 1, isDice: false, title: "Thundering", allowed: "both", note: "Deals extra sonic damage on a critical hit.",
+    catalystName: "Thunderstone Core / Sonic Crystal", catalystPattern: /(thunderstone core|sonic crystal|echoing geode)/i 
+  },
+  bane: { 
+    baseName: "Bane", cost: 1, isDice: false, title: "Bane", allowed: "both", note: "+2 higher enhancement & +2d60 vs designated creature type.",
+    catalystName: "Slayer's Heartstone / Blood Agate", catalystPattern: /(slayer's heartstone|blood agate|nemesis dust)/i 
+  },
+  ghost_touch: { 
+    baseName: "Ghost Touch", cost: 1, isDice: false, title: "Ghost Touch", allowed: "both", note: "Deals full damage to incorporeal creatures.",
+    catalystName: "Ectoplasmic Residue / Ghost Pearl", catalystPattern: /(ectoplasmic residue|ghost pearl|spirit dust|wraith mist)/i 
+  },
+  vicious: { 
+    baseName: "Vicious", cost: 1, isDice: true, numDice: 2, type: "untyped", allowed: "melee", recoilNote: "Deals 1d60 recoil damage to wielder.",
+    catalystName: "Vampiric Garnet / Barbed Shard", catalystPattern: /(vampiric garnet|barbed shard|bloodstone sliver)/i 
+  },
+  keen: { 
+    baseName: "Keen", cost: 1, isDice: false, title: "Keen", allowed: "melee", actionMod: (action) => { let cCrit = action.critRange ?? 191; action.critRange = Math.max(100, 201 - ((201 - cCrit) * 2)); }, note: "Doubles critical threat window.",
+    catalystName: "Adamantine Dust / Razor Obsidian", catalystPattern: /(adamantine dust|razor obsidian|whetstone of sharpness)/i 
+  },
+  vorpal: { 
+    baseName: "Vorpal", cost: 5, isDice: false, title: "Vorpal", allowed: "melee", note: "Natural 200 confirms instant decapitation.",
+    catalystName: "Flawless Diamond / Severing Onyx", catalystPattern: /(flawless diamond|severing onyx|executioner's jewel)/i 
+  },
+  defending: { 
+    baseName: "Defending", cost: 1, isDice: false, title: "of Defense", allowed: "melee", note: "Allows wielder to allocate enhancement bonus to Armor AC.",
+    catalystName: "Aegis Pearl / Bastion Lodestone", catalystPattern: /(aegis pearl|bastion lodestone|warding quartz)/i 
+  },
+  distance: { 
+    baseName: "Distance", cost: 1, isDice: false, title: "of Distance", allowed: "ranged", note: "Doubles weapon's range increment.",
+    catalystName: "Zephyr Feather / Far-Sight Crystal", catalystPattern: /(zephyr feather|far-sight crystal|falcon eye gem)/i 
+  },
+  returning: { 
+    baseName: "Returning", cost: 1, isDice: false, title: "Returning", allowed: "ranged", note: "Returns to thrower right before their next turn.",
+    catalystName: "Lodestone Ingot / Boomerang Tendon", catalystPattern: /(lodestone ingot|boomerang tendon|magnetic core)/i 
+  },
+  seeking: { 
+    baseName: "Seeking", cost: 1, isDice: false, title: "Seeking", allowed: "ranged", note: "Negates miss chance from concealment.",
+    catalystName: "True-Seeing Opal / Hawkeye Geode", catalystPattern: /(true-seeing opal|hawkeye geode|diviner's eye)/i 
+  }
 };
 
+// ─── UNIQUE ARMOR PROPERTY CATALYSTS ────────────────────────────────────────
 export const ARMOR_ENCHANTMENTS = {
-  shadow: { baseName: "Shadow", cost: 1, type: "skill", target: "skill.ste", bonusMath: (mult) => Math.round(50 * mult) },
-  slick: { baseName: "Slick", cost: 1, type: "skill", target: "skill.esc", bonusMath: (mult) => Math.round(50 * mult) },
-  fortification_light: { baseName: "Fortification (Light)", cost: 1, title: "Light Fortified", note: "25% chance to negate critical hits and precision sneak attacks." },
-  fortification_medium: { baseName: "Fortification (Medium)", cost: 3, title: "Medium Fortified", note: "50% chance to negate critical hits and precision sneak attacks." },
-  fortification_heavy: { baseName: "Fortification (Heavy)", cost: 5, title: "Heavy Fortified", note: "75% chance to negate critical hits and precision sneak attacks." },
-  spell_resistance: { baseName: "Spell Resistance", cost: 2, type: "sr", bonusMath: (mult) => Math.round(130 * mult) },
-  invulnerability: { baseName: "Invulnerability", cost: 3, title: "of Invulnerability", note: "Grants Damage Reduction 50/magic (scaled to 10x)." }
+  shadow: { 
+    baseName: "Shadow", cost: 1, type: "skill", target: "skill.ste", bonusMath: (mult) => Math.round(50 * mult),
+    catalystName: "Shadowsilk Spool / Umbral Onyx", catalystPattern: /(shadowsilk spool|umbral onyx|nightshade resin)/i 
+  },
+  slick: { 
+    baseName: "Slick", cost: 1, type: "skill", target: "skill.esc", bonusMath: (mult) => Math.round(50 * mult),
+    catalystName: "Eelskin Oil / Liquid Mica", catalystPattern: /(eelskin oil|liquid mica|grease vial|phase slime)/i 
+  },
+  fortification_light: { 
+    baseName: "Fortification (Light)", cost: 1, title: "Light Fortified", note: "25% chance to negate critical hits and sneak attacks.",
+    catalystName: "Ironwood Core / Guardian Beryl", catalystPattern: /(ironwood core|guardian beryl|protective zircon)/i 
+  },
+  fortification_medium: { 
+    baseName: "Fortification (Medium)", cost: 3, title: "Medium Fortified", note: "50% chance to negate critical hits and sneak attacks.",
+    catalystName: "Adamantine Plate Fragment / Citadel Tourmaline", catalystPattern: /(adamantine plate fragment|citadel tourmaline|bastion sapphire)/i 
+  },
+  fortification_heavy: { 
+    baseName: "Fortification (Heavy)", cost: 5, title: "Heavy Fortified", note: "75% chance to negate critical hits and sneak attacks.",
+    catalystName: "Gorgon Scale / Bulwark Diamond", catalystPattern: /(gorgon scale|bulwark diamond|indomitable core)/i 
+  },
+  spell_resistance: { 
+    baseName: "Spell Resistance", cost: 2, type: "sr", bonusMath: (mult) => Math.round(130 * mult),
+    catalystName: "Aether Pearl / Null-Magic Quartz", catalystPattern: /(aether pearl|null-magic quartz|antimagic dust)/i 
+  },
+  invulnerability: { 
+    baseName: "Invulnerability", cost: 3, title: "of Invulnerability", note: "Grants DR 50/magic (10x scaled).",
+    catalystName: "Adamantine Slag / Titan Bloodstone", catalystPattern: /(adamantine slag|titan bloodstone|colossus marrow)/i 
+  }
 };
 
 export const COMPOUND_FUSIONS = {
@@ -87,7 +156,6 @@ export const LEVEL_LOOT_TIERS = {
   20: { maxEnh: 5, maxItemPrice: 400000, propChance: 1.00, matChance: 1.00, goldBase: 67000 }
 };
 
-// ─── GEMS, JEWELRY & ART OBJECTS ────────────────────────────────────────────
 export const GEMSTONE_DATA = [
   { name: "Banded Agate", basePrice: 10, img: "icons/commodities/gems/gem-rough-grey.webp" },
   { name: "Tiger Eye", basePrice: 10, img: "icons/commodities/gems/gem-rough-cushion-yellow.webp" },
@@ -119,7 +187,33 @@ export const ART_OBJECTS_DATA = [
   { name: "Platinum Scepter of Dominion", basePrice: 7500, img: "icons/weapons/staves/scepter-platinum-jeweled.webp" }
 ];
 
-// ─── THEMATIC ENCOUNTER PRESETS ─────────────────────────────────────────────
+export const ALL_MAGICAL_CATALYSTS = [
+  { name: "Arcane Residue", price: 50, img: "icons/commodities/materials/dust-fine-blue.webp" },
+  { name: "Ruby / Flame Essence", price: 500, img: "icons/commodities/gems/gem-faceted-heart-red.webp" },
+  { name: "Sapphire / Glacial Shard", price: 500, img: "icons/commodities/gems/gem-faceted-cushion-blue.webp" },
+  { name: "Topaz / Storm Quartz", price: 500, img: "icons/commodities/gems/gem-rough-cushion-yellow.webp" },
+  { name: "Emerald / Acid Drake Gland", price: 500, img: "icons/commodities/gems/gem-faceted-emerald-green.webp" },
+  { name: "Sunstone / Celestial Feather", price: 1000, img: "icons/commodities/materials/feather-glowing-gold.webp" },
+  { name: "Quicksilver Vial / Tempest Agate", price: 1500, img: "icons/consumables/potions/vial-cork-silver.webp" },
+  { name: "Thunderstone Core / Sonic Crystal", price: 500, img: "icons/commodities/gems/gem-faceted-radiant-teal.webp" },
+  { name: "Slayer's Heartstone / Blood Agate", price: 500, img: "icons/commodities/gems/gem-rough-oval-red.webp" },
+  { name: "Ectoplasmic Residue / Ghost Pearl", price: 500, img: "icons/commodities/gems/pearl-white.webp" },
+  { name: "Vampiric Garnet / Barbed Shard", price: 500, img: "icons/commodities/materials/shard-blood-red.webp" },
+  { name: "Adamantine Dust / Razor Obsidian", price: 500, img: "icons/commodities/materials/dust-dark-purple.webp" },
+  { name: "Flawless Diamond / Severing Onyx", price: 5000, img: "icons/commodities/gems/gem-faceted-round-white.webp" },
+  { name: "Aegis Pearl / Bastion Lodestone", price: 500, img: "icons/commodities/gems/pearl-black.webp" },
+  { name: "Zephyr Feather / Far-Sight Crystal", price: 500, img: "icons/commodities/materials/feather-soft-white.webp" },
+  { name: "Lodestone Ingot / Boomerang Tendon", price: 500, img: "icons/commodities/metal/ingot-iron.webp" },
+  { name: "True-Seeing Opal / Hawkeye Geode", price: 500, img: "icons/commodities/gems/gem-faceted-cushion-orange.webp" },
+  { name: "Shadowsilk Spool / Umbral Onyx", price: 500, img: "icons/commodities/cloth/thread-spool-black.webp" },
+  { name: "Eelskin Oil / Liquid Mica", price: 500, img: "icons/consumables/potions/bottle-flask-shimmering-blue.webp" },
+  { name: "Ironwood Core / Guardian Beryl", price: 500, img: "icons/commodities/materials/wood-log-green.webp" },
+  { name: "Adamantine Plate Fragment / Citadel Tourmaline", price: 1500, img: "icons/commodities/metal/scrap-iron.webp" },
+  { name: "Gorgon Scale / Bulwark Diamond", price: 5000, img: "icons/commodities/biological/scale-reptile-grey.webp" },
+  { name: "Aether Pearl / Null-Magic Quartz", price: 1000, img: "icons/commodities/gems/gem-faceted-radiant-blue.webp" },
+  { name: "Adamantine Slag / Titan Bloodstone", price: 1500, img: "icons/commodities/metal/ingot-engraved-metal.webp" }
+];
+
 export const THEMATIC_PRESETS = {
   none: {
     label: "None (Standard Random)",
