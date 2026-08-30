@@ -260,6 +260,42 @@ export class PlayerWorkshopApp extends Application {
     return { dc: baseDc, costMult, isExotic, isSimple };
   }
 
+  _getItemMaterialCategory(item) {
+    if (!item) return "general";
+    const type = item.type;
+    const subType = (item.system?.subType || item.system?.weaponSubtype || "").toLowerCase();
+    const name = item.name.toLowerCase();
+
+    if (/\b(club|greatclub|quarterstaff|staff|bo staff|nunchaku|bow|crossbow)\b/i.test(name)) {
+      if (/\b(bow|crossbow)\b/i.test(name)) return "bow";
+      return "wood_weapon";
+    }
+
+    if (type === "weapon" && subType !== "ranged") return "metal_weapon";
+
+    if (type === "armor" || item.system?.armor !== undefined) {
+      if (subType === "light" || /\b(leather|padded|hide|quilted)\b/i.test(name)) return "leather_armor";
+      if (type === "shield" || subType === "shield") return "shield";
+      return "metal_armor";
+    }
+
+    if (type === "ammo") return "ammo";
+    return "general";
+  }
+
+  _getValidMaterialsForItem(item) {
+    if (!item) return { base: CRAFT_MATERIAL_RULES.base };
+    const itemCat = this._getItemMaterialCategory(item);
+    const valid = {};
+
+    for (const [key, rule] of Object.entries(CRAFT_MATERIAL_RULES)) {
+      if (rule.allowed.includes(itemCat) || rule.allowed.includes("general") || key === "base") {
+        valid[key] = rule;
+      }
+    }
+    return valid;
+  }
+
   _calculateRequiredIngredients(baseItem, chosenMaterialKey, isMasterwork = true) {
     if (baseItem.isRefiningRecipe) {
       const inventory = this.actor.items.contents;
@@ -677,7 +713,6 @@ export class PlayerWorkshopApp extends Application {
             </span>
           </div>
 
-          <!-- DETAILED ROLL LOG (EXPANDED BY DEFAULT) -->
           <details open style="background:#f8f9fa; border:1px solid #ced6e0; border-radius:4px; padding:6px; margin-bottom:6px;">
             <summary style="font-size:0.78em; font-weight:bold; cursor:pointer; color:#2f3542; outline:none; user-select:none;">
               📜 Detailed Shift Roll History & Facet Breakdown (${proj.shiftsLogged.length} shifts recorded)
@@ -738,7 +773,6 @@ export class PlayerWorkshopApp extends Application {
 
     const isEnhAllowed = data.totalEquivalentBonus <= data.magicPrereqs.maxAllowedTier;
 
-    // EXPANDED INVENTORY SUPPLIES GRID
     const suppliesGridHtml = data.suppliesGrid.length > 0 ? data.suppliesGrid.map(s => `
       <div style="display:flex; align-items:center; gap:6px; background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:4px 6px; font-size:0.78em; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
         <img src="${s.img}" width="22" height="22" style="border-radius:3px;" />
@@ -1276,7 +1310,6 @@ export class PlayerWorkshopApp extends Application {
         shiftProgress = ((totalRoll * proj.dc) / 3000) * velocity * buffInfo.totalSpeedMult;
       }
 
-      // Compute exact modifier tier for this roll
       let baseRatio = mos / 200;
       let shiftTier = Math.ceil(baseRatio * 4) + (isNatBoon ? 1 : isNatFlaw ? -1 : 0);
       if (shiftTier === 0) shiftTier = (baseRatio >= 0 ? 1 : -1) + (isNatBoon ? 1 : isNatFlaw ? -1 : 0);
@@ -1414,7 +1447,6 @@ export class PlayerWorkshopApp extends Application {
         projects.splice(idx, 1);
         await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
 
-        // Completion Chat Card for Refined Component
         const refineCardHtml = `
           <div style="border:1px solid #747d8c; border-radius:6px; overflow:hidden; background:#fff; font-family:var(--font-primary); box-shadow:0 2px 5px rgba(0,0,0,0.15);">
             <div style="background:linear-gradient(135deg, #2f3542, #1e272e); color:#fff; padding:6px 10px; display:flex; align-items:center; gap:8px;">
@@ -1634,7 +1666,7 @@ export class PlayerWorkshopApp extends Application {
       projects.splice(idx, 1);
       await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
 
-      // ─── POST BEAUTIFUL SUMMARY CHAT CARD ───
+      // ─── POST SHOWCASE SUMMARY CHAT CARD ───
       const completionCardHtml = `
         <div class="aeris-craft-completion-card" style="border: 1px solid #747d8c; border-radius: 6px; overflow: hidden; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.15); font-family: var(--font-primary);">
           <div style="background: linear-gradient(135deg, #2f3542, #1e272e); color: #fff; padding: 8px 10px; display: flex; align-items: center; gap: 8px;">
@@ -1803,5 +1835,7 @@ export class PlayerWorkshopApp extends Application {
       },
       default: "save"
     }).render(true);
+  }
+}
   }
 }
