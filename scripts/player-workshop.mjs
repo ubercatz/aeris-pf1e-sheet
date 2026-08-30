@@ -1,13 +1,12 @@
 /**
  * @file player-workshop.mjs
- * Player-Facing Procedural Crafting Workbench with Crash-Proof Setting Getters, Verified Core Icons, and Stable Execution
+ * Player-Facing Procedural Crafting Workbench with Compounding Magic DCs, Rank Caps, Flaws/Boons, and Limit-Breaks
  */
 
-import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS } from "./enchantment-registry.mjs";
+import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS, CRAFT_TIER_PREFIXES } from "./enchantment-registry.mjs";
 
 const MODULE_ID = "pf1-altsheet-reworked";
 
-// Safe Game Setting Helpers (Prevents Unregistered Setting Crashes)
 function getSafeSetting(key, fallback) {
   try {
     return game.settings.get(MODULE_ID, key) || fallback;
@@ -37,7 +36,6 @@ export const CRAFT_MATERIAL_RULES = {
   dragonhide: { name: "Dragonhide", rawUnit: "Dragon Scales / Hide", refinedUnit: "Refined Dragon Scales", allowed: ["leather_armor", "metal_armor", "shield"] }
 };
 
-// Verified Core Foundry Icon Paths (Zero 404 Errors)
 export const REFINING_RECIPES = [
   { id: "refine_steel", name: "Refined Steel Ingot", rawLabel: "2x Steel Ingot", rawPattern: /steel ingot|iron bar|steel bar/i, rawQty: 2, dc: 150, minRanks: 30, targetPrice: 25, weight: 2.0, img: "icons/commodities/metal/ingot-iron.webp" },
   { id: "refine_timber", name: "Refined Crafting Timber", rawLabel: "2x Crafting Timber", rawPattern: /crafting timber|wood log|hardwood/i, rawQty: 2, dc: 150, minRanks: 30, targetPrice: 15, weight: 3.0, img: "icons/commodities/materials/wood-log.webp" },
@@ -64,10 +62,13 @@ export class PlayerWorkshopApp extends Application {
     this.acceleratedDcBonus = 0;
     this.searchTerm = "";
 
+    // Magic state
     this.selectedMagicItem = null;
     this.magicEnhLevel = 1;
     this.selectedMagicProperties = new Set();
     this.magicShortCompoundNames = true;
+    this.isRushedMagic = false;
+    this.applyLimitBreak = false;
   }
 
   static get defaultOptions() {
@@ -95,6 +96,23 @@ export class PlayerWorkshopApp extends Application {
     return buttons;
   }
 
+  /* -------------------------------------------- */
+  /* Buff Flags & Actor Modifier Gathering        */
+  /* -------------------------------------------- */
+
+  _getActorBuffModifiers() {
+    const flags = this.actor.flags?.[MODULE_ID] || {};
+    const checkBonus = Number(flags.craftingCheckBonus || 0);
+    const speedMultiplier = Number(flags.craftingSpeedMult || 1.0);
+    const facilityBonus = Number(flags.facilityCheckBonus || 0);
+    const facilitySpeed = Number(flags.facilitySpeedMult || 1.0);
+
+    return {
+      totalCheckMod: checkBonus + facilityBonus,
+      totalSpeedMult: Math.max(0.1, speedMultiplier * facilitySpeed)
+    };
+  }
+
   _getAvailableCraftDisciplines() {
     const subSkills = this.actor.system?.skills?.crf?.subSkills || {};
     const disciplines = [];
@@ -115,23 +133,14 @@ export class PlayerWorkshopApp extends Application {
       const subName = (sub.name || "").toLowerCase();
       let matchedType = "general";
 
-      if (disciplineMap[key]) {
-        matchedType = disciplineMap[key].type;
-      } else if (subName.includes("weap") || subName.includes("blacksmith")) {
-        matchedType = "weapon";
-      } else if (subName.includes("arm")) {
-        matchedType = "armor";
-      } else if (subName.includes("bow") || subName.includes("fletch")) {
-        matchedType = "bow";
-      } else if (subName.includes("gun") || subName.includes("firearm")) {
-        matchedType = "firearm";
-      } else if (subName.includes("alc")) {
-        matchedType = "alchemy";
-      } else if (subName.includes("poi") || subName.includes("tox")) {
-        matchedType = "poison";
-      } else if (subName.includes("siege")) {
-        matchedType = "siege";
-      }
+      if (disciplineMap[key]) matchedType = disciplineMap[key].type;
+      else if (subName.includes("weap") || subName.includes("blacksmith")) matchedType = "weapon";
+      else if (subName.includes("arm")) matchedType = "armor";
+      else if (subName.includes("bow") || subName.includes("fletch")) matchedType = "bow";
+      else if (subName.includes("gun") || subName.includes("firearm")) matchedType = "firearm";
+      else if (subName.includes("alc")) matchedType = "alchemy";
+      else if (subName.includes("poi") || subName.includes("tox")) matchedType = "poison";
+      else if (subName.includes("siege")) matchedType = "siege";
 
       disciplines.push({
         key: `subSkills.${key}`,
@@ -163,25 +172,66 @@ export class PlayerWorkshopApp extends Application {
     return disciplines;
   }
 
+  /* -------------------------------------------- */
+  /* Rank Caps & Magic Prereqs                    */
+  /* -------------------------------------------- */
+
+  _getMaxAllowedEnhancement(rank) {
+    const gmConfig = getSafeSetting("workshopGmConfig", {});
+    const caps = gmConfig.rankEnhancementCaps || { 50: 1, 80: 2, 110: 3, 140: 4, 170: 5, 200: 10 };
+    
+    let allowed = 0;
+    const sortedThresholds = Object.keys(caps).map(Number).sort((a, b) => a - b);
+    for (const thresh of sortedThresholds) {
+      if (rank >= thresh) allowed = caps[thresh];
+    }
+    return allowed;
+  }
+
   _checkMagicCraftPrerequisites() {
     const hasFeat = this.actor.items.some(i => /\b(craft magic arms|craft magic arms and armor)\b/i.test(i.name));
     const spellcraftRank = this.actor.system?.skills?.spl?.rank || 0;
     const disciplines = this._getAvailableCraftDisciplines();
     const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
     
-    const hasRank50 = (currentDisc.rank >= 50) || (spellcraftRank >= 50);
+    const effectiveRank = Math.max(currentDisc.rank, spellcraftRank);
+    const hasRank50 = effectiveRank >= 50;
     const hasArcaneEtcher = this.actor.items.some(i => /(arcane etcher|runecarver's chisel|enchanting stylus|arcane scribe)/i.test(i.name));
-    const canReEnchant = (currentDisc.rank >= 100) || (spellcraftRank >= 100);
+    const canReEnchant = effectiveRank >= 100;
+    const maxAllowedTier = this._getMaxAllowedEnhancement(effectiveRank);
 
     return {
       canCraftMagic: (hasFeat || hasRank50) && hasArcaneEtcher,
       hasArcaneEtcher,
       canReEnchant,
+      maxAllowedTier,
+      effectiveRank,
       reason: !hasArcaneEtcher 
         ? "⚠️ Missing Required Tool: Arcane Etcher (Must be in inventory)" 
         : !(hasFeat || hasRank50) 
         ? "Requires 50+ Craft/Spellcraft Ranks or Craft Magic Arms & Armor Feat" 
         : "Unlocked"
+    };
+  }
+
+  _getLimitBreakAvailability() {
+    const gmConfig = getSafeSetting("workshopGmConfig", {});
+    const minRank = gmConfig.limitBreakMinRank ?? 100;
+    const maxDaily = gmConfig.limitBreakMaxDaily ?? 1;
+
+    const disciplines = this._getAvailableCraftDisciplines();
+    const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
+    if (currentDisc.rank < minRank) return { available: false, reason: `Requires ${minRank}+ Craft Ranks` };
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const flagData = this.actor.getFlag(MODULE_ID, "limitBreakTracker") || { date: todayStr, uses: 0 };
+    const currentUses = flagData.date === todayStr ? flagData.uses : 0;
+
+    return {
+      available: currentUses < maxDaily,
+      remaining: Math.max(0, maxDaily - currentUses),
+      maxDaily,
+      reason: currentUses >= maxDaily ? "Daily Limit-Break uses exhausted" : "Available"
     };
   }
 
@@ -423,7 +473,7 @@ export class PlayerWorkshopApp extends Application {
     const residueNeeded = netBonus * 4;
 
     reagents.push({
-      label: `${residueNeeded}x Arcane Residue (4 per equivalent +1)`,
+      label: `${residueNeeded}x Arcane Residue (4 per net tier)`,
       pattern: /(arcane residue|enchanting dust|arcane dust)/i,
       qty: residueNeeded
     });
@@ -463,6 +513,8 @@ export class PlayerWorkshopApp extends Application {
     const rawProjects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
     const disciplines = this._getAvailableCraftDisciplines();
     const magicPrereqs = this._checkMagicCraftPrerequisites();
+    const limitBreakInfo = this._getLimitBreakAvailability();
+    const buffInfo = this._getActorBuffModifiers();
 
     if (!this.selectedDiscipline && disciplines.length > 0) {
       this.selectedDiscipline = disciplines[0].key;
@@ -523,6 +575,9 @@ export class PlayerWorkshopApp extends Application {
       magicReagentsInfo = this._calculateMagicReagents(totalEquivalentBonus, this.selectedMagicProperties, this.selectedMagicItem);
     }
 
+    // Compounding Magic DC: 220 + 15*T + 5*T^2
+    const compoundingMagicDc = 220 + (15 * totalEquivalentBonus) + (5 * Math.pow(totalEquivalentBonus, 2)) + (this.isRushedMagic ? 50 : 0);
+
     return {
       actor: this.actor,
       isGM: game.user.isGM,
@@ -539,12 +594,17 @@ export class PlayerWorkshopApp extends Application {
       ingredientsInfo,
       projects: rawProjects,
       searchTerm: this.searchTerm,
+      buffInfo,
+      limitBreakInfo,
+      applyLimitBreak: this.applyLimitBreak,
       
       magicPrereqs,
       enchantableInventoryItems,
       selectedMagicItem: this.selectedMagicItem,
       magicEnhLevel: this.magicEnhLevel,
       totalEquivalentBonus,
+      compoundingMagicDc,
+      isRushedMagic: this.isRushedMagic,
       availableMagicProperties,
       selectedMagicProperties: this.selectedMagicProperties,
       magicReagentsInfo,
@@ -554,7 +614,7 @@ export class PlayerWorkshopApp extends Application {
 
   async _renderInner(data) {
     const discOpts = data.disciplines.map(d => 
-      `<option value="${d.key}" ${d.key === data.selectedDiscipline ? "selected" : ""}>${d.label} (+${d.mod} | ${d.rank} Ranks${d.isGoldMode ? ' ⚡ Gold' : ''}${d.hasMagicAccess ? ' ✨ Magic' : ''})</option>`
+      `<option value="${d.key}" ${d.key === data.selectedDiscipline ? "selected" : ""}>${d.label} (+${d.mod + data.buffInfo.totalCheckMod} | ${d.rank} Ranks${d.isGoldMode ? ' ⚡ Gold' : ''}${d.hasMagicAccess ? ' ✨ Magic' : ''})</option>`
     ).join("");
 
     const matOpts = Object.entries(data.validMaterials).map(([k, v]) => 
@@ -571,11 +631,11 @@ export class PlayerWorkshopApp extends Application {
 
     const activeProjectsHtml = data.projects.length > 0 ? data.projects.map((proj, idx) => {
       const pct = Math.min(100, Math.round((proj.currentGp / proj.targetGp) * 100));
-      const failLimit = proj.failMode === "zero" ? "Ruin at 0 GP" : Math.max(2, Math.floor(proj.requiredRolls / 3));
+      const failLimit = proj.failMode === "zero" ? "Ruin at 0 GP" : (proj.maxAllowedStrikes || Math.max(2, Math.floor(proj.requiredRolls / 3)));
       
       const shiftsLogHtml = proj.shiftsLogged.map((s, sIdx) => `
-        <div style="font-size:0.72em; padding:2px 4px; border-bottom:1px solid #f1f2f6; display:flex; justify-content:space-between; color:${s.success ? '#27ae60' : '#c0392b'};">
-          <span><strong>Shift ${sIdx+1} [${s.phaseLabel}]:</strong> Check ${s.roll} (vs DC ${proj.dc}, ${s.mos >= 0 ? '+' : ''}${s.mos})</span>
+        <div style="font-size:0.72em; padding:2px 4px; border-bottom:1px solid #f1f2f6; display:flex; justify-content:space-between; color:${s.isNatBoon ? '#9b59b6' : s.isNatFlaw ? '#e74c3c' : s.success ? '#27ae60' : '#c0392b'};">
+          <span><strong>Shift ${sIdx+1} [${s.phaseLabel}]:</strong> ${s.isNatBoon ? '🌟 NAT BOON! ' : s.isNatFlaw ? '💀 NAT FLAW! ' : ''}Check ${s.roll} (vs DC ${proj.dc}, ${s.mos >= 0 ? '+' : ''}${s.mos})</span>
           <span><strong>${s.targetFacet}:</strong> ${s.modifierText}</span>
         </div>
       `).join("");
@@ -585,7 +645,7 @@ export class PlayerWorkshopApp extends Application {
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
             <div>
               <strong style="font-size:1.05em; color:var(--color-text-dark-primary);">${proj.name}</strong>
-              <span style="font-size:0.8em; color:#666; margin-left:6px;">(DC ${proj.dc} | ${proj.isMagic ? (proj.isUpgrade ? '✨ Magic Upgrade' : '✨ Magic Infusion') : `Material: ${proj.material}`})</span>
+              <span style="font-size:0.8em; color:#666; margin-left:6px;">(DC ${proj.dc} | ${proj.isMagic ? (proj.isUpgrade ? '✨ Magic Upgrade' : '✨ Magic Infusion') : `Material: ${proj.material}`} ${proj.limitBreakApplied ? ' | ⚡ Limit-Break' : ''})</span>
             </div>
             <div>
               <span style="font-size:0.8em; font-weight:bold; color:${proj.failedChecks >= (typeof failLimit === 'number' ? failLimit - 1 : 99) ? '#c0392b' : '#555'};">
@@ -602,15 +662,15 @@ export class PlayerWorkshopApp extends Application {
           </div>
 
           <details style="background:#f8f9fa; border:1px solid #e9ecef; border-radius:4px; padding:4px; margin-bottom:6px;">
-            <summary style="font-size:0.75em; font-weight:bold; cursor:pointer; color:#495057;">📜 Shift Roll History & Facet Allocation (${proj.shiftsLogged.length} shifts)</summary>
-            <div style="max-height:90px; overflow-y:auto; margin-top:4px;">
+            <summary style="font-size:0.75em; font-weight:bold; cursor:pointer; color:#495057;">📜 Shift Roll History & Flaw/Boon Log (${proj.shiftsLogged.length} shifts)</summary>
+            <div style="max-height:100px; overflow-y:auto; margin-top:4px;">
               ${shiftsLogHtml || '<span style="font-size:0.7em; color:#777; padding:2px;">No shifts rolled yet.</span>'}
             </div>
           </details>
 
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <span style="font-size:0.75em; color:#777;">
-              Phase: ${proj.shiftsLogged.length < Math.floor(proj.requiredRolls/3) ? "Phase 1: Smelting / Aether Influx" : proj.shiftsLogged.length < Math.floor(proj.requiredRolls*2/3) ? "Phase 2: Geometry / Runeweave" : "Phase 3: Honing & Stabilization"}
+              Active Phase: ${proj.shiftsLogged.length < Math.floor(proj.requiredRolls/3) ? "Phase 1: Smelting / Aether Influx" : proj.shiftsLogged.length < Math.floor(proj.requiredRolls*2/3) ? "Phase 2: Geometry / Runeweave" : "Phase 3: Honing & Stabilization"}
             </span>
             <div style="display:flex; gap:6px;">
               ${pct >= 100 ? `
@@ -651,6 +711,8 @@ export class PlayerWorkshopApp extends Application {
     const oldTier = data.selectedMagicItem ? Math.max(0, Math.floor((data.selectedMagicItem.system?.enh || 0) / 10)) : 0;
     const oldCost = Math.pow(oldTier, 2) * baseMultCost;
     const totalGoldCost = Math.max(baseMultCost, (Math.pow(data.totalEquivalentBonus, 2) * baseMultCost) - oldCost);
+
+    const isEnhAllowed = data.totalEquivalentBonus <= data.magicPrereqs.maxAllowedTier;
 
     const html = `
       <div style="display:flex; flex-direction:column; height:100%; gap:8px; padding:8px; font-family:var(--font-primary);">
@@ -713,7 +775,7 @@ export class PlayerWorkshopApp extends Application {
                       </div>
                     </div>
 
-                    <div style="margin-bottom:8px;">
+                    <div style="margin-bottom:6px;">
                       <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; font-weight:bold; cursor:pointer;">
                         <input type="checkbox" id="workshop-is-masterwork" ${data.isMasterwork ? "checked" : ""}>
                         <span>Masterwork Quality (Requires Refined Materials, +300 GP)</span>
@@ -722,6 +784,16 @@ export class PlayerWorkshopApp extends Application {
                   ` : `
                     <p style="font-size:0.8em; color:#2980b9; margin-bottom:6px;"><em>Refining recipe: Treats raw ingots and hides into refined components needed for masterwork forging.</em></p>
                   `}
+
+                  <!-- LIMIT-BREAK TOGGLE -->
+                  ${data.limitBreakInfo.available ? `
+                    <div style="background:rgba(155,89,182,0.1); border:1px solid #8e44ad; border-radius:4px; padding:4px 6px; margin-bottom:6px;">
+                      <label style="display:flex; align-items:center; gap:6px; font-size:0.8em; font-weight:bold; cursor:pointer; color:#8e44ad;">
+                        <input type="checkbox" id="workshop-limit-break" ${data.applyLimitBreak ? "checked" : ""}>
+                        <span>⚡ Artisan Limit-Break (${data.limitBreakInfo.remaining}/${data.limitBreakInfo.maxDaily} Uses: Unlocks Tier ±5 / ±35% Variance)</span>
+                      </label>
+                    </div>
+                  ` : ""}
 
                   <strong style="font-size:0.85em;">Required Inventory Materials:</strong>
                   <div style="background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:6px; margin:4px 0 8px 0;">
@@ -735,8 +807,7 @@ export class PlayerWorkshopApp extends Application {
 
                   <div style="font-size:0.8em; color:#666; line-height:1.3;">
                     <div>• <strong>Hourly Craft DC:</strong> ${data.selectedBaseItem.isRefiningRecipe ? data.selectedBaseItem.dc : 150 + data.acceleratedDcBonus}</div>
-                    <div>• <strong>Progress Rate:</strong> ${data.currentDiscipline.isGoldMode ? 'Gold Mode (100x Speed)' : 'Silver Mode (10x Speed)'}</div>
-                    <div>• <strong>Estimated Shifts:</strong> ${Math.max(2, Math.ceil((data.selectedBaseItem.isRefiningRecipe ? (data.selectedBaseItem.targetPrice || 50) : (data.selectedBaseItem.system?.price || 10) + (data.isMasterwork ? 300 : 0)) / (data.currentDiscipline.isGoldMode ? 150 : 35)))} Shifts</div>
+                    <div>• <strong>Buffs Active:</strong> +${data.buffInfo.totalCheckMod} Check | ${data.buffInfo.totalSpeedMult}x Speed</div>
                   </div>
                 </div>
 
@@ -773,30 +844,36 @@ export class PlayerWorkshopApp extends Application {
                       <img src="${data.selectedMagicItem.img}" width="32" height="32" style="border-radius:3px;" />
                       <div>
                         <strong style="font-size:1.05em;">${data.selectedMagicItem.name}</strong><br/>
-                        <span style="color:#555;">Current Enhancement: +${data.selectedMagicItem.system?.enh || 0} | Total Equivalent: +${data.totalEquivalentBonus * 10} (+${data.totalEquivalentBonus})</span>
+                        <span style="color:#555;">Current Enhancement: +${data.selectedMagicItem.system?.enh || 0} | Equivalent Tier: +${data.totalEquivalentBonus * 10} (+${data.totalEquivalentBonus})</span>
                       </div>
                     </div>
 
                     <div style="margin-bottom:6px;">
-                      <label style="font-size:0.8em; font-weight:bold;">Enhancement Bonus</label>
+                      <label style="font-size:0.8em; font-weight:bold;">Enhancement Bonus (Cap: Tier +${data.magicPrereqs.maxAllowedTier})</label>
                       <select id="magic-enh-select" style="width:100%; padding:3px; font-size:0.85em;">
-                        <option value="1" ${data.magicEnhLevel===1?"selected":""}>+1 (+10 Scaled)</option>
-                        <option value="2" ${data.magicEnhLevel===2?"selected":""}>+2 (+20 Scaled)</option>
-                        <option value="3" ${data.magicEnhLevel===3?"selected":""}>+3 (+30 Scaled)</option>
-                        <option value="4" ${data.magicEnhLevel===4?"selected":""}>+4 (+40 Scaled)</option>
-                        <option value="5" ${data.magicEnhLevel===5?"selected":""}>+5 (+50 Scaled)</option>
+                        <option value="1" ${data.magicEnhLevel===1?"selected":""} ${data.magicPrereqs.maxAllowedTier < 1 ? 'disabled' : ''}>+1 (+10 Scaled)</option>
+                        <option value="2" ${data.magicEnhLevel===2?"selected":""} ${data.magicPrereqs.maxAllowedTier < 2 ? 'disabled' : ''}>+2 (+20 Scaled)</option>
+                        <option value="3" ${data.magicEnhLevel===3?"selected":""} ${data.magicPrereqs.maxAllowedTier < 3 ? 'disabled' : ''}>+3 (+30 Scaled)</option>
+                        <option value="4" ${data.magicEnhLevel===4?"selected":""} ${data.magicPrereqs.maxAllowedTier < 4 ? 'disabled' : ''}>+4 (+40 Scaled)</option>
+                        <option value="5" ${data.magicEnhLevel===5?"selected":""} ${data.magicPrereqs.maxAllowedTier < 5 ? 'disabled' : ''}>+5 (+50 Scaled)</option>
                       </select>
                     </div>
 
                     <strong style="font-size:0.85em;">Special Enchantments:</strong>
-                    <div style="max-height:140px; overflow-y:auto; background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:4px; margin:4px 0;">
+                    <div style="max-height:120px; overflow-y:auto; background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:4px; margin:4px 0;">
                       ${magicPropRows || '<span style="font-size:0.8em; color:#777;">No special properties available for this item.</span>'}
                     </div>
 
-                    <label style="display:flex; align-items:center; gap:6px; font-size:0.8em; margin-bottom:6px; cursor:pointer;">
-                      <input type="checkbox" id="magic-short-names" ${data.magicShortCompoundNames ? "checked" : ""}>
-                      <span>Use Compound Names (e.g. <em>Sunstrike</em>)</span>
-                    </label>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                      <label style="display:flex; align-items:center; gap:4px; font-size:0.8em; cursor:pointer;">
+                        <input type="checkbox" id="magic-rushed-cb" ${data.isRushedMagic ? "checked" : ""}>
+                        <span><strong>Rushed (+50 DC, 2.0x Speed)</strong></span>
+                      </label>
+                      <label style="display:flex; align-items:center; gap:4px; font-size:0.8em; cursor:pointer;">
+                        <input type="checkbox" id="magic-short-names" ${data.magicShortCompoundNames ? "checked" : ""}>
+                        <span>Compound Names</span>
+                      </label>
+                    </div>
 
                     <strong style="font-size:0.85em;">Required Magical Catalysts & Residue:</strong>
                     <div style="background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:6px; margin:4px 0 8px 0;">
@@ -809,13 +886,14 @@ export class PlayerWorkshopApp extends Application {
                     </div>
 
                     <div style="font-size:0.8em; color:#666; line-height:1.3;">
-                      <div>• <strong>Enchanting DC:</strong> ${150 + (data.totalEquivalentBonus * 10)} | <strong>CL:</strong> ${data.totalEquivalentBonus * 3}</div>
-                      <div>• <strong>Upgrade Craft Cost:</strong> ${totalGoldCost} GP (Based on +${data.totalEquivalentBonus} equivalent)</div>
+                      <div>• <strong>Compounding Enchanting DC:</strong> ${data.compoundingMagicDc}</div>
+                      <div>• <strong>Upgrade Craft Cost:</strong> ${totalGoldCost} GP</div>
+                      ${!isEnhAllowed ? `<div style="color:#c0392b; font-weight:bold;">⚠️ Exceeds rank cap (+${data.magicPrereqs.maxAllowedTier} allowed at ${data.magicPrereqs.effectiveRank} ranks).</div>` : ''}
                     </div>
                   </div>
 
-                  <button type="button" id="start-magic-project-btn" ${!data.magicReagentsInfo.allSatisfied ? 'disabled style="opacity:0.6; cursor:not-allowed;"' : ''} style="margin-top:auto; padding:10px; font-weight:bold; background:#8e44ad; color:#fff; border:none; border-radius:4px; cursor:pointer;">
-                    ${data.magicReagentsInfo.allSatisfied ? '🔮 Infuse & Begin Magic Project' : '⚠️ Missing Required Catalysts or Residue'}
+                  <button type="button" id="start-magic-project-btn" ${(!data.magicReagentsInfo.allSatisfied || !isEnhAllowed) ? 'disabled style="opacity:0.6; cursor:not-allowed;"' : ''} style="margin-top:auto; padding:10px; font-weight:bold; background:#8e44ad; color:#fff; border:none; border-radius:4px; cursor:pointer;">
+                    ${!isEnhAllowed ? '⚠️ Rank Too Low for This Tier' : data.magicReagentsInfo.allSatisfied ? '🔮 Infuse & Begin Magic Project' : '⚠️ Missing Required Catalysts or Residue'}
                   </button>
                 ` : '<p style="text-align:center; color:#777; margin-top:60px;">Select an item from your inventory on the left to configure enchantments.</p>'}
               </div>
@@ -888,6 +966,10 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
+    html.find('#workshop-limit-break').change(e => {
+      this.applyLimitBreak = e.target.checked;
+    });
+
     html.find('#workshop-acc-dc').change(e => {
       this.acceleratedDcBonus = parseInt(e.target.value, 10) || 0;
       this.render();
@@ -911,12 +993,17 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
+    html.find('#magic-rushed-cb').change(e => {
+      this.isRushedMagic = e.target.checked;
+      this.render();
+    });
+
     html.find('#magic-short-names').change(e => {
       this.magicShortCompoundNames = e.target.checked;
     });
 
     /* -------------------------------------------- */
-    /* Start Project Execution                      */
+    /* Start Mundane / Refining Project             */
     /* -------------------------------------------- */
     html.find('#start-project-btn').click(async () => {
       if (!this.selectedBaseItem) return;
@@ -945,7 +1032,7 @@ export class PlayerWorkshopApp extends Application {
         }
       }
 
-      const gmSettings = getSafeSetting("workshopGmConfig", { failMode: "strikes", maxStrikes: 3 });
+      const gmSettings = getSafeSetting("workshopGmConfig", { failMode: "strikes", fixedStrikes: 3 });
       const disciplines = this._getAvailableCraftDisciplines();
       const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
 
@@ -958,6 +1045,17 @@ export class PlayerWorkshopApp extends Application {
 
       const rawBaseData = isRefining ? { ...this.selectedBaseItem } : (typeof this.selectedBaseItem.toObject === "function" ? this.selectedBaseItem.toObject() : foundry.utils.deepClone(this.selectedBaseItem));
 
+      let maxStrikes = gmSettings.strikeThresholdType === "dynamic" 
+        ? Math.max(2, Math.floor(requiredRolls / 3)) 
+        : (gmSettings.fixedStrikes || 3);
+
+      if (this.applyLimitBreak) {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const flagData = this.actor.getFlag(MODULE_ID, "limitBreakTracker") || { date: todayStr, uses: 0 };
+        const uses = flagData.date === todayStr ? flagData.uses + 1 : 1;
+        await this.actor.setFlag(MODULE_ID, "limitBreakTracker", { date: todayStr, uses });
+      }
+
       const newProject = {
         id: foundry.utils.randomID(),
         name: `${prefixLabel}${this.selectedBaseItem.name}`,
@@ -968,6 +1066,8 @@ export class PlayerWorkshopApp extends Application {
         isRefining,
         isMagic: false,
         failMode: gmSettings.failMode || "strikes",
+        maxAllowedStrikes: maxStrikes,
+        limitBreakApplied: this.applyLimitBreak,
         targetGp,
         currentGp: 0,
         dc,
@@ -983,6 +1083,7 @@ export class PlayerWorkshopApp extends Application {
 
       ui.notifications.info(`Deducted materials and initialized project for ${newProject.name}!`);
       this.activeTab = "active";
+      this.applyLimitBreak = false;
       this.render();
     });
 
@@ -998,6 +1099,11 @@ export class PlayerWorkshopApp extends Application {
       
       let totalEqBonus = this.magicEnhLevel;
       for (const p of this.selectedMagicProperties) totalEqBonus += (availableProps[p]?.cost || 0);
+
+      const magicPrereqs = this._checkMagicCraftPrerequisites();
+      if (totalEqBonus > magicPrereqs.maxAllowedTier) {
+        return ui.notifications.error(`Cannot enchant Tier +${totalEqBonus}! Your ranks cap you at Tier +${magicPrereqs.maxAllowedTier}.`);
+      }
 
       const reagentsInfo = this._calculateMagicReagents(totalEqBonus, this.selectedMagicProperties, this.selectedMagicItem);
       if (!reagentsInfo.allSatisfied) {
@@ -1022,13 +1128,17 @@ export class PlayerWorkshopApp extends Application {
         }
       }
 
-      const gmSettings = getSafeSetting("workshopGmConfig", { failMode: "strikes", maxStrikes: 3 });
+      const gmSettings = getSafeSetting("workshopGmConfig", { failMode: "strikes", fixedStrikes: 3 });
       const baseMultCost = isArmorEnchant ? 500 : 1000;
       const oldTier = Math.max(0, Math.floor((this.selectedMagicItem.system?.enh || 0) / 10));
       const oldCost = Math.pow(oldTier, 2) * baseMultCost;
       const targetGp = Math.max(baseMultCost, (Math.pow(totalEqBonus, 2) * baseMultCost) - oldCost);
       const requiredRolls = Math.max(3, Math.ceil(targetGp / 250));
-      const dc = 150 + (totalEqBonus * 10);
+      const compoundingDc = 220 + (15 * totalEqBonus) + (5 * Math.pow(totalEqBonus, 2)) + (this.isRushedMagic ? 50 : 0);
+
+      let maxStrikes = gmSettings.strikeThresholdType === "dynamic" 
+        ? Math.max(2, Math.floor(requiredRolls / 3)) 
+        : (gmSettings.fixedStrikes || 3);
 
       const newProject = {
         id: foundry.utils.randomID(),
@@ -1039,13 +1149,15 @@ export class PlayerWorkshopApp extends Application {
         material: "base",
         isMasterwork: true,
         isMagic: true,
+        isRushed: this.isRushedMagic,
         failMode: gmSettings.failMode || "strikes",
+        maxAllowedStrikes: maxStrikes,
         magicEnhLevel: this.magicEnhLevel,
         selectedMagicProperties: Array.from(this.selectedMagicProperties),
         magicShortCompoundNames: this.magicShortCompoundNames,
         targetGp,
         currentGp: 0,
-        dc,
+        dc: compoundingDc,
         requiredRolls,
         failedChecks: 0,
         shiftsLogged: [],
@@ -1062,7 +1174,7 @@ export class PlayerWorkshopApp extends Application {
     });
 
     /* -------------------------------------------- */
-    /* Work 1-Hour Shift                            */
+    /* Work 1-Hour Shift (Flaw & Boon Engine)       */
     /* -------------------------------------------- */
     html.find('.work-shift-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
@@ -1072,20 +1184,38 @@ export class PlayerWorkshopApp extends Application {
 
       const disciplines = this._getAvailableCraftDisciplines();
       const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
+      const buffInfo = this._getActorBuffModifiers();
+      const gmConfig = getSafeSetting("workshopGmConfig", { flawBoonEnabled: true, flawBoonMagnitude: 1 });
 
-      const roll = await new Roll("1d200 + @mod", { mod: currentDisc.mod }).evaluate({ async: true });
+      const totalMod = currentDisc.mod + buffInfo.totalCheckMod;
+      const roll = await new Roll("1d200 + @mod", { mod: totalMod }).evaluate({ async: true });
       
       await roll.toMessage({
         speaker: ChatMessage.getSpeaker({ actor: this.actor }),
         flavor: `⚒️ <strong>${this.actor.name}</strong> works 1 hour on <em>${proj.name}</em> (DC ${proj.dc})`
       });
 
+      const dieResult = roll.terms[0]?.results?.[0]?.result ?? (roll.total - totalMod);
       const totalRoll = roll.total;
       const mos = totalRoll - proj.dc;
-      const failLimit = Math.max(2, Math.floor(proj.requiredRolls / 3));
+      const failLimit = proj.failMode === "zero" ? 999 : (proj.maxAllowedStrikes || Math.max(2, Math.floor(proj.requiredRolls / 3)));
 
-      const divisor = currentDisc.isGoldMode ? 100 : 1000;
-      const shiftProgress = (totalRoll * proj.dc) / divisor;
+      // Detect Natural Flaws (1-10) and Boons (191-200)
+      const isNatFlaw = gmConfig.flawBoonEnabled && (dieResult <= 10);
+      const isNatBoon = gmConfig.flawBoonEnabled && (dieResult >= 191);
+
+      // Hourly Progress Computation
+      let shiftProgress = 0;
+      if (proj.isMagic) {
+        const spellcraftRank = this.actor.system?.skills?.spl?.rank || 0;
+        const baseRate = 125 + (spellcraftRank * 2);
+        const rushMult = proj.isRushed ? 2.0 : 1.0;
+        shiftProgress = baseRate * Math.max(0.2, totalRoll / proj.dc) * rushMult * buffInfo.totalSpeedMult;
+      } else {
+        const rank = currentDisc.rank || 0;
+        const velocity = rank >= 100 ? 4.0 : rank >= 60 ? 2.5 : rank >= 30 ? 1.5 : 1.0;
+        shiftProgress = ((totalRoll * proj.dc) / 8000) * velocity * buffInfo.totalSpeedMult;
+      }
 
       const totalShiftsSoFar = proj.shiftsLogged.length;
       let phaseLabel = "Smelting & Ingot Prep";
@@ -1098,24 +1228,28 @@ export class PlayerWorkshopApp extends Application {
         targetFacet = "Physical AC & Weight";
       }
 
-      if (mos >= 0) {
+      if (mos >= 0 || isNatBoon) {
         proj.currentGp += shiftProgress;
         proj.shiftsLogged.push({ 
-          roll: totalRoll, mos, success: true, phaseLabel, targetFacet,
-          modifierText: `+${shiftProgress.toFixed(1)} GP (Tier +${Math.min(4, Math.max(1, Math.ceil(mos / 25)))})`
+          roll: totalRoll, dieResult, mos, success: true, phaseLabel, targetFacet,
+          isNatBoon, isNatFlaw,
+          modifierText: isNatBoon ? `+${shiftProgress.toFixed(1)} GP (🌟 Eureka Boon +1 Tier!)` : `+${shiftProgress.toFixed(1)} GP`
         });
         ui.notifications.info(`Shift Successful! Added +${shiftProgress.toFixed(1)} GP progress.`);
       } else {
         proj.failedChecks += 1;
         proj.currentGp = Math.max(0, proj.currentGp - (shiftProgress * 0.5));
         proj.shiftsLogged.push({ 
-          roll: totalRoll, mos, success: false, phaseLabel, targetFacet,
-          modifierText: `Failed Strike (-${(shiftProgress * 0.5).toFixed(1)} GP)`
+          roll: totalRoll, dieResult, mos, success: false, phaseLabel, targetFacet,
+          isNatBoon, isNatFlaw,
+          modifierText: isNatFlaw ? `Failed Strike (-${(shiftProgress * 0.5).toFixed(1)} GP, 💀 Flaw Imparted)` : `Failed Strike (-${(shiftProgress * 0.5).toFixed(1)} GP)`
         });
-        ui.notifications.warn(`Shift Failed (Strike ${proj.failedChecks}). Progress lost.`);
+        ui.notifications.warn(`Shift Failed (Strike ${proj.failedChecks}/${failLimit}). Progress lost.`);
       }
 
-      const isRuined = proj.failMode === "zero" ? (proj.shiftsLogged.length > 1 && proj.currentGp <= 0) : (proj.failedChecks >= failLimit || (proj.shiftsLogged.length > 1 && proj.currentGp <= 0));
+      const isRuined = proj.failMode === "zero" 
+        ? (proj.shiftsLogged.length > 1 && proj.currentGp <= 0) 
+        : (proj.failedChecks >= failLimit || (proj.shiftsLogged.length > 1 && proj.currentGp <= 0));
 
       if (isRuined) {
         ui.notifications.error(`Project Ruined! Work on ${proj.name} collapsed.`);
@@ -1148,10 +1282,14 @@ export class PlayerWorkshopApp extends Application {
         const needed = proj.requiredRolls - proj.shiftsLogged.length;
         ui.notifications.info(`GP Goal achieved early! Rolling remaining ${needed} modifier checks.`);
         for (let i = 0; i < needed; i++) {
-          const modRoll = await new Roll("1d200 + @mod", { mod: currentDisc.mod }).evaluate({ async: true });
+          const modRoll = await new Roll("1d200 + @mod", { mod: totalMod }).evaluate({ async: true });
+          const dRes = modRoll.terms[0]?.results?.[0]?.result ?? (modRoll.total - totalMod);
           proj.shiftsLogged.push({ 
-            roll: modRoll.total, mos: modRoll.total - proj.dc, success: true, 
-            phaseLabel: "Rapid Tuning", targetFacet: "Precision & Balance", modifierText: `Rolled: ${modRoll.total}` 
+            roll: modRoll.total, dieResult: dRes, mos: modRoll.total - proj.dc, success: true, 
+            phaseLabel: "Rapid Tuning", targetFacet: "Precision & Balance",
+            isNatBoon: gmConfig.flawBoonEnabled && (dRes >= 191),
+            isNatFlaw: gmConfig.flawBoonEnabled && (dRes <= 10),
+            modifierText: `Rolled: ${modRoll.total}` 
           });
         }
       }
@@ -1161,7 +1299,7 @@ export class PlayerWorkshopApp extends Application {
     });
 
     /* -------------------------------------------- */
-    /* Claim Finished Item                          */
+    /* Claim Finished Item (Tier 5 Paragon & Flaws) */
     /* -------------------------------------------- */
     html.find('.claim-project-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
@@ -1191,9 +1329,10 @@ export class PlayerWorkshopApp extends Application {
 
       const disciplines = this._getAvailableCraftDisciplines();
       const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
+      const buffInfo = this._getActorBuffModifiers();
 
       while (proj.shiftsLogged.length < 3) {
-        const autoRoll = await new Roll("1d200 + @mod", { mod: currentDisc.mod }).evaluate({ async: true });
+        const autoRoll = await new Roll("1d200 + @mod", { mod: currentDisc.mod + buffInfo.totalCheckMod }).evaluate({ async: true });
         proj.shiftsLogged.push({ roll: autoRoll.total, mos: autoRoll.total - proj.dc, success: true, phaseLabel: "Instant Tuning", targetFacet: "Facet Allocation", modifierText: `Auto: ${autoRoll.total}` });
       }
 
@@ -1205,35 +1344,49 @@ export class PlayerWorkshopApp extends Application {
       const phase2 = proj.shiftsLogged.slice(Math.floor(totalShifts / 3), Math.floor(totalShifts * 2 / 3));
       const phase3 = proj.shiftsLogged.slice(Math.floor(totalShifts * 2 / 3));
 
-      const getPhaseMult = (phaseArr) => {
-        if (!phaseArr || phaseArr.length === 0) return 1.0;
+      const evaluatePhase = (phaseArr) => {
+        if (!phaseArr || phaseArr.length === 0) return { mult: 1.0, tier: 1 };
         const avgMos = phaseArr.reduce((acc, s) => acc + s.mos, 0) / phaseArr.length;
-        return 1.0 + Math.max(-0.25, Math.min(0.25, avgMos / 200));
+        
+        let boonCount = phaseArr.filter(s => s.isNatBoon).length;
+        let flawCount = phaseArr.filter(s => s.isNatFlaw).length;
+        let deltaTier = boonCount - flawCount;
+
+        const maxTierCap = proj.limitBreakApplied ? 5 : 4;
+        const minTierCap = proj.limitBreakApplied ? -5 : -4;
+
+        let baseRatio = avgMos / 200;
+        let tier = Math.ceil(baseRatio * 4) + deltaTier;
+        if (tier === 0) tier = (baseRatio >= 0 ? 1 : -1) + deltaTier;
+        tier = Math.max(minTierCap, Math.min(maxTierCap, tier));
+
+        let mult = 1.0 + (tier * (proj.limitBreakApplied ? 0.07 : 0.0625));
+        return { mult, tier, boonCount, flawCount };
       };
 
-      const hardMult = getPhaseMult(phase1);
-      const physMult = getPhaseMult(phase2);
-      const precMult = getPhaseMult(phase3);
+      const hardEval = evaluatePhase(phase1);
+      const physEval = evaluatePhase(phase2);
+      const precEval = evaluatePhase(phase3);
 
-      const tierPrefixes = { "-4": "Ruined", "-3": "Flawed", "-2": "Worn", "-1": "Serviceable", "1": "Tempered", "2": "Honed", "3": "Superior", "4": "Mastercraft" };
-      let tier = Math.ceil(((precMult - 1.0) / 0.25) * 4);
-      if (tier === 0) tier = precMult >= 1.0 ? 1 : -1;
-      const prefix = tierPrefixes[Math.max(-4, Math.min(4, tier))];
-
-      const tierSign = tier > 0 ? `+${tier}` : `${tier}`;
+      const prefix = CRAFT_TIER_PREFIXES[`${precEval.tier}`] || "Serviceable";
+      const tierSign = precEval.tier > 0 ? `+${precEval.tier}` : `${precEval.tier}`;
       tagsList.push(`Craft Quality: Tier ${tierSign}`);
       identifiedTraits.push(`<strong>Craftsmanship (${prefix}):</strong> Handcrafted to ${prefix.toLowerCase()} specifications.`);
+
+      if (precEval.boonCount > 0) tagsList.push("Boon: Flawless Edge");
+      if (precEval.flawCount > 0) tagsList.push("Flaw: Imbalanced Polish");
 
       itemData.flags = itemData.flags || {};
       itemData.flags[MODULE_ID] = { is10xScaled: true, disable10xSheet: true, disable10xCard: true };
       
-      if (proj.isMasterwork || tier >= 4 || mat.name === "Adamantine" || mat.name === "Mithral" || proj.isMagic) {
+      if (proj.isMasterwork || precEval.tier >= 4 || mat.name === "Adamantine" || mat.name === "Mithral" || proj.isMagic) {
         itemData.system.masterwork = true;
       } else {
         itemData.system.masterwork = false;
       }
       itemData.system.identified = true;
 
+      // Phase 1: Durability & HP Floor
       let rawHardness = (typeof itemData.system.hardness === "object" ? itemData.system.hardness.value : itemData.system.hardness) || 10;
       let rawBaseHp = (itemData.system.hp?.base ?? itemData.system.hp?.max ?? 0);
 
@@ -1244,25 +1397,24 @@ export class PlayerWorkshopApp extends Application {
         rawBaseHp = 10;
       }
 
-      itemData.system.hardness = Math.max(0, Math.round((rawHardness * 10 + mat.hardnessMod) * hardMult));
-      const fHp = Math.max(1, Math.round((rawBaseHp * 10 * mat.hpMult) * hardMult));
+      itemData.system.hardness = Math.max(0, Math.round((rawHardness * 10 + mat.hardnessMod) * hardEval.mult));
+      const fHp = Math.max(1, Math.round((rawBaseHp * 10 * mat.hpMult) * hardEval.mult));
       itemData.system.hp = { base: fHp, max: fHp, value: fHp };
 
-      const hardTier = Math.ceil(((hardMult - 1.0) / 0.25) * 4);
-      tagsList.push(`Hardness: Tier ${hardTier >= 0 ? `+${hardTier || 1}` : hardTier}`);
-      tagsList.push(`Hit Points: Tier ${hardTier >= 0 ? `+${hardTier || 1}` : hardTier}`);
+      tagsList.push(`Hardness: Tier ${hardEval.tier >= 0 ? `+${hardEval.tier || 1}` : hardEval.tier}`);
+      tagsList.push(`Hit Points: Tier ${hardEval.tier >= 0 ? `+${hardEval.tier || 1}` : hardEval.tier}`);
 
-      const weightFactor = Math.max(0.1, 2.0 - physMult);
+      // Phase 2: Physical AC & Weight
+      const weightFactor = Math.max(0.1, 2.0 - physEval.mult);
       const rawWeight = itemData.system?.weight?.value ?? 0;
       if (itemData.system?.weight) {
         itemData.system.weight.value = rawWeight === 0 ? 0 : Math.max(0.1, Math.round((rawWeight * (mat.weightMult || 1.0) * weightFactor) * 100) / 100);
       }
-      const weightTier = Math.ceil(((weightFactor - 1.0) / 0.25) * 4);
-      tagsList.push(`Weight: Tier ${weightTier >= 0 ? `+${weightTier || 1}` : weightTier}`);
+      tagsList.push(`Weight: Tier ${physEval.tier >= 0 ? `+${physEval.tier || 1}` : physEval.tier}`);
 
       if (isArmor && itemData.system?.armor) {
-        itemData.system.armor.value = Math.round((itemData.system.armor.value || 0) * 10 * physMult);
-        let adjAcp = Math.round((itemData.system.armor.acp || 0) * 10 * (2.0 - physMult));
+        itemData.system.armor.value = Math.round((itemData.system.armor.value || 0) * 10 * physEval.mult);
+        let adjAcp = Math.round((itemData.system.armor.acp || 0) * 10 * (2.0 - physEval.mult));
         if (mat.acpBonus) adjAcp = Math.min(0, adjAcp + mat.acpBonus);
         itemData.system.armor.acp = adjAcp;
 
@@ -1271,6 +1423,7 @@ export class PlayerWorkshopApp extends Application {
         identifiedTraits.push(`<strong>Armor Profile:</strong> AC +${itemData.system.armor.value}, ACP ${itemData.system.armor.acp}.`);
       }
 
+      // Phase 3: Precision & Crit
       if (isWeapon && itemData.system?.actions) {
         itemData.system.actions.forEach(act => {
           act.ability = act.ability || {};
@@ -1278,12 +1431,12 @@ export class PlayerWorkshopApp extends Application {
           
           let cBase = act.ability.critRange ?? act.critRange ?? 191;
           if (cBase <= 20) cBase = (cBase * 10) - 9;
-          act.critRange = Math.min(199, Math.max(100, Math.round(cBase - ((precMult - 1.0) * 40))));
+          act.critRange = Math.min(199, Math.max(100, Math.round(cBase - ((precEval.mult - 1.0) * 40))));
           act.ability.critRange = act.critRange;
 
           let fMult = Number(act.ability.critMult ?? act.critMult ?? 2);
-          if (precMult >= 1.20) fMult += 1;
-          else if (precMult <= 0.80) fMult = Math.max(1, fMult - 1);
+          if (precEval.mult >= 1.20) fMult += 1;
+          else if (precEval.mult <= 0.80) fMult = Math.max(1, fMult - 1);
           act.critMult = fMult;
           act.ability.critMult = fMult;
         });
@@ -1293,6 +1446,7 @@ export class PlayerWorkshopApp extends Application {
         identifiedTraits.push(`<strong>Precision:</strong> Crit range ${itemData.system.actions[0]?.critRange}–200, multiplier ×${itemData.system.actions[0]?.critMult}.`);
       }
 
+      // Magic Infusion
       let propPrefixes = [];
       let enhSuffix = "";
 
@@ -1392,8 +1546,16 @@ export class PlayerWorkshopApp extends Application {
     });
   }
 
+  /* -------------------------------------------- */
+  /* Expanded GM Workshop Settings Dialog         */
+  /* -------------------------------------------- */
+
   _openGmWorkshopSettingsDialog() {
-    const gmSettings = getSafeSetting("workshopGmConfig", { failMode: "strikes", maxStrikes: 3 });
+    const gmSettings = getSafeSetting("workshopGmConfig", { 
+      failMode: "strikes", strikeThresholdType: "fixed", fixedStrikes: 3, 
+      flawBoonEnabled: true, limitBreakMinRank: 100, limitBreakMaxDaily: 1,
+      rankEnhancementCaps: { 50: 1, 80: 2, 110: 3, 140: 4, 170: 5, 200: 10 }
+    });
     const savedPacksMap = getSafeSetting("craftCompendiums", {});
     const disciplines = this._getAvailableCraftDisciplines();
     const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
@@ -1410,17 +1572,37 @@ export class PlayerWorkshopApp extends Application {
     new Dialog({
       title: `⚙️ Workshop Settings & Packs (${currentDisc.label})`,
       content: `
-        <form style="max-height:420px; overflow-y:auto; padding:6px; font-size:0.85em;">
-          <div style="font-weight:bold; border-bottom:1px solid #ccc; margin-bottom:6px;">GM Failure Strike Rules</div>
-          <div class="form-group" style="margin-bottom:6px;">
-            <label>Failure Mode</label>
-            <select id="gm-fail-mode">
-              <option value="strikes" ${gmSettings.failMode === "strikes" ? "selected" : ""}>Strikes Tolerance (Default: 1/3 required shifts)</option>
-              <option value="zero" ${gmSettings.failMode === "zero" ? "selected" : ""}>Zero-Progress Ruin (No strike limit, fails only at 0 GP)</option>
-            </select>
+        <form style="max-height:460px; overflow-y:auto; padding:6px; font-size:0.85em;">
+          <div style="font-weight:bold; border-bottom:1px solid #ccc; margin-bottom:6px;">GM Failure & Strike Tolerances</div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-bottom:6px;">
+            <div>
+              <label>Failure Mode:</label>
+              <select id="gm-fail-mode">
+                <option value="strikes" ${gmSettings.failMode === "strikes" ? "selected" : ""}>Strikes Tolerance</option>
+                <option value="zero" ${gmSettings.failMode === "zero" ? "selected" : ""}>Zero-Progress Ruin (0 GP)</option>
+              </select>
+            </div>
+            <div>
+              <label>Strike Limit:</label>
+              <input type="number" id="gm-fixed-strikes" value="${gmSettings.fixedStrikes || 3}" min="1" max="10">
+            </div>
           </div>
 
-          <div style="font-weight:bold; border-bottom:1px solid #ccc; margin:10px 0 6px 0;">Source Compendiums for ${currentDisc.label}</div>
+          <div style="font-weight:bold; border-bottom:1px solid #ccc; margin:8px 0 6px 0;">Flaws, Boons & Limit-Breaks</div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-bottom:6px;">
+            <label style="display:flex; align-items:center; gap:4px;">
+              <input type="checkbox" id="gm-flaw-boon-cb" ${gmSettings.flawBoonEnabled ? "checked" : ""}> Enable Nat 1-10 Flaws & 191-200 Boons
+            </label>
+            <div>
+              <label>Limit-Break Min Rank / Daily Uses:</label>
+              <div style="display:flex; gap:4px;">
+                <input type="number" id="gm-lb-rank" value="${gmSettings.limitBreakMinRank || 100}" min="10" placeholder="Rank">
+                <input type="number" id="gm-lb-daily" value="${gmSettings.limitBreakMaxDaily || 1}" min="1" max="10" placeholder="Uses">
+              </div>
+            </div>
+          </div>
+
+          <div style="font-weight:bold; border-bottom:1px solid #ccc; margin:8px 0 6px 0;">Source Compendiums for ${currentDisc.label}</div>
           <p style="font-size:0.8em; color:#555;">Check all compendiums to search for blueprints under this discipline:</p>
           ${checkboxes}
         </form>
@@ -1430,7 +1612,19 @@ export class PlayerWorkshopApp extends Application {
           label: "Save Workshop Settings",
           callback: async (dHtml) => {
             const failMode = dHtml.find('#gm-fail-mode').val();
-            await setSafeSetting("workshopGmConfig", { failMode });
+            const fixedStrikes = parseInt(dHtml.find('#gm-fixed-strikes').val(), 10) || 3;
+            const flawBoonEnabled = dHtml.find('#gm-flaw-boon-cb').is(':checked');
+            const limitBreakMinRank = parseInt(dHtml.find('#gm-lb-rank').val(), 10) || 100;
+            const limitBreakMaxDaily = parseInt(dHtml.find('#gm-lb-daily').val(), 10) || 1;
+
+            await setSafeSetting("workshopGmConfig", {
+              ...gmSettings,
+              failMode,
+              fixedStrikes,
+              flawBoonEnabled,
+              limitBreakMinRank,
+              limitBreakMaxDaily
+            });
 
             const selected = [];
             dHtml.find('.gm-pack-cb:checked').each((i, el) => selected.push(el.value));

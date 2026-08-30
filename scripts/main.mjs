@@ -16,13 +16,29 @@ Hooks.once("init", () => {
   if (game.system?.id !== "pf1") return;
 
   registerHandlebarsHelpers();
-// World Settings for Workshop GM Failure & Strike Rules
+// World Settings for Workshop GM Failure Rules, Caps, and Limit-Break
   game.settings.register(MODULE_ID, "workshopGmConfig", {
     name: "Workshop GM Configuration",
     scope: "world",
     config: false,
     type: Object,
-    default: { failMode: "strikes", maxStrikes: 3 }
+    default: {
+      failMode: "strikes",
+      strikeThresholdType: "fixed", // "fixed" | "dynamic"
+      fixedStrikes: 3,
+      flawBoonEnabled: true,
+      flawBoonMagnitude: 1,
+      limitBreakMinRank: 100,
+      limitBreakMaxDaily: 1,
+      rankEnhancementCaps: {
+        50: 1,   // Rank 50 = Max +1 (+10)
+        80: 2,   // Rank 80 = Max +2 (+20)
+        110: 3,  // Rank 110 = Max +3 (+30)
+        140: 4,  // Rank 140 = Max +4 (+40)
+        170: 5,  // Rank 170 = Max +5 (+50)
+        200: 10  // Rank 200 = Max +10 (+100)
+      }
+    }
   });
   // World Storage for Forge Settings & Batch Preferences
   game.settings.register(MODULE_ID, "forgeSettings", {

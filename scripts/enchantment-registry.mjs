@@ -1,6 +1,6 @@
 /**
  * @file enchantment-registry.mjs
- * Continuous 10x Granular Engine Registry with Discrete Catalysts, Refined Material Economics, and Weighted Loot Tables
+ * Continuous 10x Granular Engine Registry with Discrete Catalysts, Tier 5 Paragon Traits, and Flaw/Boon Registers
  */
 
 export const SPECIAL_MATERIALS = {
@@ -12,6 +12,19 @@ export const SPECIAL_MATERIALS = {
   silversheen: { name: "Alchemical Silver", hardnessMod: -20, hpMult: 1.0, weightMult: 1.0, costMod: 100, rawPrice: 25, refinedPrice: 100, unitWeight: 2.0, desc: "Overcomes DR of lycanthropes/undead (-10 base damage)." },
   darkwood: { name: "Darkwood", hardnessMod: -20, hpMult: 1.0, weightMult: 0.5, costMod: 300, acpBonus: 20, asfBonus: 10, rawPrice: 50, refinedPrice: 200, unitWeight: 1.5, desc: "Halves weapon/shield weight; -10% ASF; reduces ACP." },
   dragonhide: { name: "Dragonhide", hardnessMod: 50, hpMult: 1.25, weightMult: 1.0, costMod: 1500, rawPrice: 250, refinedPrice: 1000, unitWeight: 2.0, desc: "Immune to specific dragon energy type." }
+};
+
+export const CRAFT_TIER_PREFIXES = {
+  "-5": "Catastrophic",
+  "-4": "Ruined",
+  "-3": "Flawed",
+  "-2": "Worn",
+  "-1": "Serviceable",
+  "1": "Tempered",
+  "2": "Honed",
+  "3": "Superior",
+  "4": "Mastercraft",
+  "5": "Masterwork Paragon"
 };
 
 // ─── UNIQUE WEAPON PROPERTIES & DEDICATED DISCRETE CATALYSTS ─────────────────
@@ -187,7 +200,6 @@ export const ART_OBJECTS_DATA = [
   { name: "Platinum Scepter of Dominion", basePrice: 7500, weight: 3.5, img: "icons/weapons/staves/scepter-platinum-jeweled.webp" }
 ];
 
-// ─── DISCRETE SINGLE-NAME MAGICAL CATALYSTS (ALL WEIGHTED) ──────────────────
 export const ALL_MAGICAL_CATALYSTS = [
   { name: "Arcane Residue", price: 50, weight: 0.1, img: "icons/commodities/materials/dust-fine-blue.webp" },
   { name: "Ruby", price: 500, weight: 0.1, img: "icons/commodities/gems/gem-faceted-heart-red.webp" },
