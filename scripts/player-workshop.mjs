@@ -1,6 +1,6 @@
 /**
  * @file player-workshop.mjs
- * Player-Facing Procedural Crafting Workbench with Inventory Stock Grid, 4-Hour Shifts, Recipe Sorting, Dynamic Material Scaling, and Arcane Flavor
+ * Player-Facing Procedural Crafting Workbench with Expanded Inventory Grid, Detailed Roll Logs with Exact Tiers, and Showcase Completion Chat Cards
  */
 
 import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS, CRAFT_TIER_PREFIXES } from "./enchantment-registry.mjs";
@@ -61,7 +61,7 @@ export class PlayerWorkshopApp extends Application {
     this.isMasterwork = true;
     this.acceleratedDcBonus = 0;
     this.searchTerm = "";
-    this.recipeSortBy = "name_asc"; // "name_asc" | "dc_asc" | "dc_desc" | "price_asc" | "price_desc"
+    this.recipeSortBy = "name_asc";
 
     // Magic state
     this.selectedMagicItem = null;
@@ -77,8 +77,8 @@ export class PlayerWorkshopApp extends Application {
       id: "aeris-player-workshop",
       title: "⚒️ Artisan's Workbench & Crafting Forge",
       template: "",
-      width: 1120,
-      height: 900,
+      width: 1140,
+      height: 920,
       resizable: true,
       classes: ["aeris-workshop-app"]
     });
@@ -228,13 +228,9 @@ export class PlayerWorkshopApp extends Application {
     };
   }
 
-  /* -------------------------------------------- */
-  /* Inventory Ingredients Grid Scanner           */
-  /* -------------------------------------------- */
-
   _getInventorySuppliesGrid() {
     const inventory = this.actor.items.contents;
-    const pattern = /(ingot|bar|timber|wood|leather|hide|scale|scrap|mechanism|reagent|extract|dust|residue|gem|ruby|sapphire|topaz|emerald|diamond|opal|feather|oil|shard|core|etcher)/i;
+    const pattern = /(ingot|bar|timber|wood|leather|hide|scale|scrap|mechanism|reagent|extract|dust|residue|gem|ruby|sapphire|topaz|emerald|diamond|opal|feather|oil|shard|core|etcher|stone|quartz)/i;
     
     return inventory.filter(i => pattern.test(i.name) && (i.system?.quantity ?? 1) > 0).map(i => ({
       name: i.name,
@@ -244,16 +240,11 @@ export class PlayerWorkshopApp extends Application {
     }));
   }
 
-  /* -------------------------------------------- */
-  /* Dynamic DC, Cost & Handedness Scaling        */
-  /* -------------------------------------------- */
-
   _computeItemCraftMetrics(item) {
     if (item.isRefiningRecipe) {
       return { dc: item.dc, materialUnits: item.rawQty, costMult: 1.0, isExotic: false, isSimple: false };
     }
 
-    const type = item.type;
     const subType = (item.system?.subType || item.system?.weaponSubtype || "").toLowerCase();
     const name = item.name.toLowerCase();
     const baseTypes = item.system?.baseTypes || [];
@@ -307,7 +298,6 @@ export class PlayerWorkshopApp extends Application {
 
     const exoticExtra = metrics.isExotic ? 1 : 0;
 
-    // Melee & Thrown Handedness Scaling
     if (type === "weapon" && subType !== "ranged" && !/\b(bow|crossbow|pistol|musket)\b/i.test(name)) {
       const isWoodWeapon = /\b(club|greatclub|quarterstaff|staff|bo staff|nunchaku)\b/i.test(name);
       
@@ -320,7 +310,7 @@ export class PlayerWorkshopApp extends Application {
         } else if (subType === "1h" || !subType.includes("2h")) {
           ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 2 + exoticExtra });
           ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 1 });
-        } else { // 2-Handed
+        } else {
           ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 4 + exoticExtra });
           ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 2 });
         }
@@ -513,45 +503,6 @@ export class PlayerWorkshopApp extends Application {
     return true;
   }
 
-  _getItemMaterialCategory(item) {
-    const type = item.type;
-    const subType = (item.system?.subType || item.system?.weaponSubtype || "").toLowerCase();
-    const name = item.name.toLowerCase();
-
-    if (/\b(club|greatclub|quarterstaff|staff|bo staff|nunchaku|bow|crossbow)\b/i.test(name)) {
-      if (/\b(bow|crossbow)\b/i.test(name)) return "bow";
-      return "wood_weapon";
-    }
-
-    if (type === "weapon" && subType !== "ranged") return "metal_weapon";
-
-    if (type === "armor" || item.system?.armor !== undefined) {
-      if (subType === "light" || /\b(leather|padded|hide|quilted)\b/i.test(name)) return "leather_armor";
-      if (type === "shield" || subType === "shield") return "shield";
-      return "metal_armor";
-    }
-
-    if (type === "ammo") return "ammo";
-    return "general";
-  }
-
-  _getValidMaterialsForItem(item) {
-    if (!item) return { base: CRAFT_MATERIAL_RULES.base };
-    const itemCat = this._getItemMaterialCategory(item);
-    const valid = {};
-
-    for (const [key, rule] of Object.entries(CRAFT_MATERIAL_RULES)) {
-      if (rule.allowed.includes(itemCat) || rule.allowed.includes("general") || key === "base") {
-        valid[key] = rule;
-      }
-    }
-    return valid;
-  }
-
-  /* -------------------------------------------- */
-  /* Data Preparation                             */
-  /* -------------------------------------------- */
-
   async getData() {
     const rawProjects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
     const disciplines = this._getAvailableCraftDisciplines();
@@ -587,7 +538,6 @@ export class PlayerWorkshopApp extends Application {
 
     let combinedItems = [...availableRefining, ...this.compendiumItems];
 
-    // Apply Sorting
     if (this.recipeSortBy === "name_asc") combinedItems.sort((a, b) => a.name.localeCompare(b.name));
     else if (this.recipeSortBy === "dc_asc") combinedItems.sort((a, b) => (a.computedDc || 150) - (b.computedDc || 150));
     else if (this.recipeSortBy === "dc_desc") combinedItems.sort((a, b) => (b.computedDc || 150) - (a.computedDc || 150));
@@ -629,9 +579,7 @@ export class PlayerWorkshopApp extends Application {
       magicReagentsInfo = this._calculateMagicReagents(totalEquivalentBonus, this.selectedMagicProperties, this.selectedMagicItem);
     }
 
-    // Quadratic compounding DC
     const compoundingMagicDc = 220 + (15 * totalEquivalentBonus) + (5 * Math.pow(totalEquivalentBonus, 2)) + (this.isRushedMagic ? 50 : 0);
-
     const baseItemMetrics = this.selectedBaseItem ? this._computeItemCraftMetrics(this.selectedBaseItem) : { dc: 150, costMult: 1.0 };
 
     return {
@@ -694,12 +642,19 @@ export class PlayerWorkshopApp extends Application {
       const pct = Math.min(100, Math.round((proj.currentGp / proj.targetGp) * 100));
       const failLimit = proj.failMode === "zero" ? "Ruin at 0 GP" : (proj.maxAllowedStrikes || Math.max(2, Math.floor(proj.requiredRolls / 3)));
       
-      const shiftsLogHtml = proj.shiftsLogged.map((s, sIdx) => `
-        <div style="font-size:0.72em; padding:2px 4px; border-bottom:1px solid #f1f2f6; display:flex; justify-content:space-between; color:${s.isNatBoon ? '#9b59b6' : s.isNatFlaw ? '#e74c3c' : s.success ? '#27ae60' : '#c0392b'};">
-          <span><strong>Shift ${sIdx+1} [${s.phaseLabel}]:</strong> ${s.isNatBoon ? '🌟 NAT BOON! ' : s.isNatFlaw ? '💀 NAT FLAW! ' : ''}Check ${s.roll} (vs DC ${proj.dc}, ${s.mos >= 0 ? '+' : ''}${s.mos})</span>
-          <span><strong>${s.targetFacet}:</strong> ${s.modifierText}</span>
-        </div>
-      `).join("");
+      const shiftsLogHtml = proj.shiftsLogged.map((s, sIdx) => {
+        let tierLabel = s.shiftTier !== undefined ? `[Tier ${s.shiftTier >= 0 ? '+' : ''}${s.shiftTier} (${s.shiftPctMod >= 0 ? '+' : ''}${s.shiftPctMod}%)]` : "";
+        return `
+          <div style="font-size:0.75em; padding:3px 6px; border-bottom:1px solid #e9ecef; display:flex; justify-content:space-between; align-items:center; color:${s.isNatBoon ? '#8e44ad' : s.isNatFlaw ? '#c0392b' : s.success ? '#27ae60' : '#d35400'}; background:${sIdx % 2 === 0 ? '#fff' : '#fdfdfe'};">
+            <div>
+              <strong>Shift ${sIdx+1} [${s.phaseLabel}]:</strong> ${s.isNatBoon ? '🌟 NAT BOON! ' : s.isNatFlaw ? '💀 NAT FLAW! ' : ''}Check <strong>${s.roll}</strong> (vs DC ${proj.dc}, Margin: ${s.mos >= 0 ? '+' : ''}${s.mos})
+            </div>
+            <div style="text-align:right;">
+              <span style="font-weight:bold; color:#2f3542;">${s.targetFacet}:</span> <code style="background:#edf2f7; padding:1px 4px; border-radius:3px;">${tierLabel} ${s.modifierText}</code>
+            </div>
+          </div>
+        `;
+      }).join("");
 
       return `
         <div style="background:#fff; border:1px solid #ced6e0; border-radius:6px; padding:10px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
@@ -722,10 +677,13 @@ export class PlayerWorkshopApp extends Application {
             </span>
           </div>
 
-          <details style="background:#f8f9fa; border:1px solid #e9ecef; border-radius:4px; padding:4px; margin-bottom:6px;">
-            <summary style="font-size:0.75em; font-weight:bold; cursor:pointer; color:#495057;">📜 Shift Roll History & Facet Breakdown (${proj.shiftsLogged.length} shifts)</summary>
-            <div style="max-height:100px; overflow-y:auto; margin-top:4px;">
-              ${shiftsLogHtml || '<span style="font-size:0.7em; color:#777; padding:2px;">No shifts rolled yet.</span>'}
+          <!-- DETAILED ROLL LOG (EXPANDED BY DEFAULT) -->
+          <details open style="background:#f8f9fa; border:1px solid #ced6e0; border-radius:4px; padding:6px; margin-bottom:6px;">
+            <summary style="font-size:0.78em; font-weight:bold; cursor:pointer; color:#2f3542; outline:none; user-select:none;">
+              📜 Detailed Shift Roll History & Facet Breakdown (${proj.shiftsLogged.length} shifts recorded)
+            </summary>
+            <div style="max-height:140px; overflow-y:auto; margin-top:6px; border:1px solid #ced6e0; border-radius:3px;">
+              ${shiftsLogHtml || '<span style="font-size:0.75em; color:#777; padding:6px; display:block;">No shifts worked yet. Click Work 1-Hour or 4-Hours below to begin.</span>'}
             </div>
           </details>
 
@@ -737,7 +695,7 @@ export class PlayerWorkshopApp extends Application {
             </span>
             <div style="display:flex; gap:6px;">
               ${pct >= 100 ? `
-                <button type="button" class="claim-project-btn" data-idx="${idx}" style="background:#27ae60; color:#fff; font-size:0.8em; padding:4px 12px; font-weight:bold; border:none; border-radius:3px; cursor:pointer;">
+                <button type="button" class="claim-project-btn" data-idx="${idx}" style="background:#27ae60; color:#fff; font-size:0.8em; padding:4px 14px; font-weight:bold; border:none; border-radius:3px; cursor:pointer;">
                   ✨ Claim Finished Item
                 </button>
               ` : `
@@ -780,14 +738,14 @@ export class PlayerWorkshopApp extends Application {
 
     const isEnhAllowed = data.totalEquivalentBonus <= data.magicPrereqs.maxAllowedTier;
 
-    // Supplies Grid Rendering
+    // EXPANDED INVENTORY SUPPLIES GRID
     const suppliesGridHtml = data.suppliesGrid.length > 0 ? data.suppliesGrid.map(s => `
-      <div style="display:flex; align-items:center; gap:4px; background:#fff; border:1px solid #ced6e0; border-radius:3px; padding:3px 5px; font-size:0.75em;">
-        <img src="${s.img}" width="20" height="20" style="border-radius:2px;" />
-        <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${s.name}">${s.name}</span>
-        <strong style="color:#2f3542;">x${s.quantity}</strong>
+      <div style="display:flex; align-items:center; gap:6px; background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:4px 6px; font-size:0.78em; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
+        <img src="${s.img}" width="22" height="22" style="border-radius:3px;" />
+        <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:500;" title="${s.name}">${s.name}</span>
+        <strong style="color:#2f3542; background:#e2e8f0; padding:1px 5px; border-radius:3px;">x${s.quantity}</strong>
       </div>
-    `).join("") : '<span style="font-size:0.75em; color:#777; grid-column:span 3;">No crafting supplies found in inventory.</span>';
+    `).join("") : '<span style="font-size:0.8em; color:#777; grid-column:span 3; padding:8px;">No crafting materials or reagents found in character inventory.</span>';
 
     const html = `
       <div style="display:flex; flex-direction:column; height:100%; gap:8px; padding:8px; font-family:var(--font-primary);">
@@ -845,7 +803,7 @@ export class PlayerWorkshopApp extends Application {
                     <img src="${data.selectedBaseItem.img}" width="30" height="30" style="border-radius:3px;" />
                     <div>
                       <strong style="font-size:1.05em;">${data.selectedBaseItem.name}</strong><br/>
-                      <span style="color:#555;">Base Price: ${data.selectedBaseItem.targetPrice || data.selectedBaseItem.system?.price || 0} GP | Goal: ${data.selectedBaseItem.isRefiningRecipe ? (data.selectedBaseItem.targetPrice || 50) : (data.selectedBaseItem.system?.price || 10) + (data.isMasterwork ? 300 : 0)} GP</span>
+                      <span style="color:#555;">Base Price: ${data.selectedBaseItem.targetPrice || data.selectedBaseItem.system?.price || 0} GP | Target Goal: ${data.selectedBaseItem.isRefiningRecipe ? (data.selectedBaseItem.targetPrice || 50) : (data.selectedBaseItem.system?.price || 10) + (data.isMasterwork ? 300 : 0)} GP</span>
                     </div>
                   </div>
 
@@ -894,13 +852,13 @@ export class PlayerWorkshopApp extends Application {
                     `).join("")}
                   </div>
 
-                  <!-- INVENTORY SUPPLIES ACCORDION GRID -->
-                  <details style="background:#f1f2f6; border:1px solid #ced6e0; border-radius:4px; padding:4px; margin-bottom:6px;">
-                    <summary style="font-size:0.75em; font-weight:bold; cursor:pointer; color:#2f3542;">📦 Inventory Crafting Stock (${data.suppliesGrid.length} items)</summary>
-                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:4px; max-height:80px; overflow-y:auto; margin-top:4px;">
+                  <!-- EXPANDED INVENTORY SUPPLIES SECTION -->
+                  <div style="background:#f8f9fa; border:1px solid #ced6e0; border-radius:4px; padding:6px; margin-bottom:6px;">
+                    <strong style="font-size:0.8em; color:#2f3542; display:block; margin-bottom:4px;">📦 Inventory Crafting Stock (${data.suppliesGrid.length} items)</strong>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap:4px; max-height:130px; overflow-y:auto; padding:2px;">
                       ${suppliesGridHtml}
                     </div>
-                  </details>
+                  </div>
 
                   <div style="font-size:0.75em; color:#666; line-height:1.25;">
                     <div>• <strong>Hourly Craft DC:</strong> ${data.selectedBaseItem.isRefiningRecipe ? data.selectedBaseItem.dc : data.baseItemMetrics.dc + data.acceleratedDcBonus} (Base ${data.baseItemMetrics.dc} + Speed)</div>
@@ -1278,7 +1236,7 @@ export class PlayerWorkshopApp extends Application {
     });
 
     /* -------------------------------------------- */
-    /* Single-Hour & 4-Hour Shift Evaluators        */
+    /* Shift Roll Core Executor                     */
     /* -------------------------------------------- */
     const executeShiftRoll = async (proj) => {
       const disciplines = this._getAvailableCraftDisciplines();
@@ -1318,6 +1276,13 @@ export class PlayerWorkshopApp extends Application {
         shiftProgress = ((totalRoll * proj.dc) / 3000) * velocity * buffInfo.totalSpeedMult;
       }
 
+      // Compute exact modifier tier for this roll
+      let baseRatio = mos / 200;
+      let shiftTier = Math.ceil(baseRatio * 4) + (isNatBoon ? 1 : isNatFlaw ? -1 : 0);
+      if (shiftTier === 0) shiftTier = (baseRatio >= 0 ? 1 : -1) + (isNatBoon ? 1 : isNatFlaw ? -1 : 0);
+      shiftTier = Math.max(proj.limitBreakApplied ? -5 : -4, Math.min(proj.limitBreakApplied ? 5 : 4, shiftTier));
+      let shiftPctMod = Number((shiftTier * (proj.limitBreakApplied ? 7.0 : 6.25)).toFixed(1));
+
       const totalShiftsSoFar = proj.shiftsLogged.length;
       let phaseLabel = proj.isMagic ? "Attunement & Scribing" : "Smelting & Ingot Prep";
       let targetFacet = proj.isMagic ? "Aetheric Matrix" : "Hardness & HP";
@@ -1333,7 +1298,7 @@ export class PlayerWorkshopApp extends Application {
         proj.currentGp += shiftProgress;
         proj.shiftsLogged.push({ 
           roll: totalRoll, dieResult, mos, success: true, phaseLabel, targetFacet,
-          isNatBoon, isNatFlaw,
+          isNatBoon, isNatFlaw, shiftTier, shiftPctMod,
           modifierText: isNatBoon ? `+${shiftProgress.toFixed(1)} GP (🌟 Eureka Boon +1 Tier!)` : `+${shiftProgress.toFixed(1)} GP`
         });
       } else {
@@ -1341,7 +1306,7 @@ export class PlayerWorkshopApp extends Application {
         proj.currentGp = Math.max(0, proj.currentGp - (shiftProgress * 0.15));
         proj.shiftsLogged.push({ 
           roll: totalRoll, dieResult, mos, success: false, phaseLabel, targetFacet,
-          isNatBoon, isNatFlaw,
+          isNatBoon, isNatFlaw, shiftTier, shiftPctMod,
           modifierText: isNatFlaw ? `Failed Strike (-${(shiftProgress * 0.15).toFixed(1)} GP, 💀 Flaw Imparted)` : `Failed Strike (-${(shiftProgress * 0.15).toFixed(1)} GP)`
         });
       }
@@ -1380,6 +1345,7 @@ export class PlayerWorkshopApp extends Application {
             phaseLabel: "Rapid Tuning", targetFacet: "Precision & Balance",
             isNatBoon: res.gmConfig.flawBoonEnabled && (dRes >= 191),
             isNatFlaw: res.gmConfig.flawBoonEnabled && (dRes <= 10),
+            shiftTier: 1, shiftPctMod: 6.25,
             modifierText: `Rolled: ${modRoll.total}` 
           });
         }
@@ -1417,7 +1383,9 @@ export class PlayerWorkshopApp extends Application {
           const modRoll = await new Roll("1d200 + @mod", { mod: totalMod }).evaluate({ async: true });
           proj.shiftsLogged.push({ 
             roll: modRoll.total, mos: modRoll.total - proj.dc, success: true, 
-            phaseLabel: "Rapid Tuning", targetFacet: "Precision & Balance", modifierText: `Rolled: ${modRoll.total}` 
+            phaseLabel: "Rapid Tuning", targetFacet: "Precision & Balance", 
+            shiftTier: 1, shiftPctMod: 6.25,
+            modifierText: `Rolled: ${modRoll.total}` 
           });
         }
       }
@@ -1427,7 +1395,7 @@ export class PlayerWorkshopApp extends Application {
     });
 
     /* -------------------------------------------- */
-    /* Claim Finished Item                          */
+    /* Claim Finished Item & Post Summary Card      */
     /* -------------------------------------------- */
     html.find('.claim-project-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
@@ -1445,7 +1413,32 @@ export class PlayerWorkshopApp extends Application {
         await this.actor.createEmbeddedDocuments("Item", [refinedItem]);
         projects.splice(idx, 1);
         await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
-        ui.notifications.info(`Successfully refined ${refinedItem.name} and added to inventory!`);
+
+        // Completion Chat Card for Refined Component
+        const refineCardHtml = `
+          <div style="border:1px solid #747d8c; border-radius:6px; overflow:hidden; background:#fff; font-family:var(--font-primary); box-shadow:0 2px 5px rgba(0,0,0,0.15);">
+            <div style="background:linear-gradient(135deg, #2f3542, #1e272e); color:#fff; padding:6px 10px; display:flex; align-items:center; gap:8px;">
+              <img src="${refinedItem.img}" width="28" height="28" style="border-radius:3px;" />
+              <div>
+                <strong style="font-size:1.05em; display:block;">${refinedItem.name}</strong>
+                <span style="font-size:0.75em; color:#bdc3c7;">Artisan Material Refining Complete</span>
+              </div>
+            </div>
+            <div style="padding:8px; font-size:0.85em; color:#333;">
+              <p style="margin:0 0 4px 0;"><strong>${this.actor.name}</strong> has successfully treated and refined raw stock into high-grade material.</p>
+              <div style="background:#f1f2f6; padding:4px 8px; border-radius:4px; font-size:0.8em; display:flex; justify-content:space-between;">
+                <span><strong>Appraised Value:</strong> ${refinedItem.system.price} GP</span>
+                <span><strong>Weight:</strong> ${refinedItem.system.weight.value} lbs</span>
+              </div>
+            </div>
+          </div>
+        `;
+        await ChatMessage.create({
+          speaker: ChatMessage.getSpeaker({ actor: this.actor }),
+          content: refineCardHtml
+        });
+
+        ui.notifications.info(`Successfully refined ${refinedItem.name}!`);
         this.render();
         return;
       }
@@ -1461,7 +1454,7 @@ export class PlayerWorkshopApp extends Application {
 
       while (proj.shiftsLogged.length < 3) {
         const autoRoll = await new Roll("1d200 + @mod", { mod: currentDisc.mod + buffInfo.totalCheckMod }).evaluate({ async: true });
-        proj.shiftsLogged.push({ roll: autoRoll.total, mos: autoRoll.total - proj.dc, success: true, phaseLabel: "Instant Tuning", targetFacet: "Facet Allocation", modifierText: `Auto: ${autoRoll.total}` });
+        proj.shiftsLogged.push({ roll: autoRoll.total, mos: autoRoll.total - proj.dc, success: true, phaseLabel: "Instant Tuning", targetFacet: "Facet Allocation", shiftTier: 1, shiftPctMod: 6.25, modifierText: `Auto: ${autoRoll.total}` });
       }
 
       const tagsList = [proj.isMagic ? "Magic Infused" : "Crafted"];
@@ -1500,6 +1493,9 @@ export class PlayerWorkshopApp extends Application {
       const tierSign = precEval.tier > 0 ? `+${precEval.tier}` : `${precEval.tier}`;
       tagsList.push(`Craft Quality: Tier ${tierSign}`);
       identifiedTraits.push(`<strong>Craftsmanship (${prefix}):</strong> Handcrafted to ${prefix.toLowerCase()} specifications.`);
+
+      if (precEval.boonCount > 0) tagsList.push("Boon: Flawless Edge");
+      if (precEval.flawCount > 0) tagsList.push("Flaw: Imbalanced Polish");
 
       itemData.flags = itemData.flags || {};
       itemData.flags[MODULE_ID] = { is10xScaled: true, disable10xSheet: true, disable10xCard: true };
@@ -1638,7 +1634,53 @@ export class PlayerWorkshopApp extends Application {
       projects.splice(idx, 1);
       await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
 
-      ui.notifications.info(`Successfully completed and added ${itemData.name} to inventory!`);
+      // ─── POST BEAUTIFUL SUMMARY CHAT CARD ───
+      const completionCardHtml = `
+        <div class="aeris-craft-completion-card" style="border: 1px solid #747d8c; border-radius: 6px; overflow: hidden; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.15); font-family: var(--font-primary);">
+          <div style="background: linear-gradient(135deg, #2f3542, #1e272e); color: #fff; padding: 8px 10px; display: flex; align-items: center; gap: 8px;">
+            <img src="${itemData.img}" width="32" height="32" style="border-radius: 4px; border: 1px solid rgba(255,255,255,0.2);" />
+            <div>
+              <strong style="font-size: 1.05em; display: block; line-height: 1.2;">${itemData.name}</strong>
+              <span style="font-size: 0.75em; color: #dfe4ea;">${proj.isMagic ? '✨ Arcane Enchantment Finalized' : '⚒️ Artisan Crafting Complete'} by ${this.actor.name}</span>
+            </div>
+          </div>
+          
+          <div style="padding: 8px 10px; font-size: 0.82em; line-height: 1.4; color: #2f3542;">
+            <div style="background: #f1f2f6; border-radius: 4px; padding: 6px; margin-bottom: 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+              <div><strong>Quality:</strong> <span style="color:#27ae60; font-weight:bold;">${prefix} (${tierSign})</span></div>
+              <div><strong>Material:</strong> ${mat.name}</div>
+              <div><strong>Hardness / HP:</strong> ${itemData.system.hardness} / ${itemData.system.hp.max}</div>
+              <div><strong>Weight:</strong> ${itemData.system.weight.value} lbs</div>
+              ${isArmor ? `
+                <div><strong>Armor AC:</strong> +${itemData.system.armor.value}</div>
+                <div><strong>ACP:</strong> ${itemData.system.armor.acp}</div>
+              ` : isWeapon && itemData.system.actions?.[0] ? `
+                <div><strong>Damage:</strong> ${itemData.system.actions[0].damage?.parts?.map(p => p.formula).join(" + ") || "N/A"}</div>
+                <div><strong>Crit:</strong> ${itemData.system.actions[0].critRange}–200 / ×${itemData.system.actions[0].critMult}</div>
+              ` : ""}
+            </div>
+
+            <div style="margin-bottom: 6px;">
+              <strong style="font-size: 0.85em; display: block; margin-bottom: 2px;">Handcrafted Traits & Enchantments:</strong>
+              <ul style="padding-left: 16px; margin: 2px 0; font-size: 0.8em; color: #495057;">
+                ${traitListHtml}
+              </ul>
+            </div>
+
+            <div>
+              <strong style="font-size: 0.8em; display: block; margin-bottom: 2px;">Applied Tags:</strong>
+              <div>${tagHtml}</div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      await ChatMessage.create({
+        speaker: ChatMessage.getSpeaker({ actor: this.actor }),
+        content: completionCardHtml
+      });
+
+      ui.notifications.info(`Successfully completed and claimed ${itemData.name}!`);
       this.render();
     });
 
