@@ -16,7 +16,14 @@ Hooks.once("init", () => {
   if (game.system?.id !== "pf1") return;
 
   registerHandlebarsHelpers();
-
+// World Settings for Workshop GM Failure & Strike Rules
+  game.settings.register(MODULE_ID, "workshopGmConfig", {
+    name: "Workshop GM Configuration",
+    scope: "world",
+    config: false,
+    type: Object,
+    default: { failMode: "strikes", maxStrikes: 3 }
+  });
   // World Storage for Forge Settings & Batch Preferences
   game.settings.register(MODULE_ID, "forgeSettings", {
     name: "Forge Preferences",
