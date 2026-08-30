@@ -1,6 +1,6 @@
 /**
  * @file player-workshop.mjs
- * Player-Facing Procedural Crafting Workbench with Compounding Magic DCs, Rank Caps, Flaws/Boons, and Limit-Breaks
+ * Player-Facing Procedural Crafting Workbench with Inventory Stock Grid, 4-Hour Shifts, Recipe Sorting, Dynamic Material Scaling, and Arcane Flavor
  */
 
 import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS, CRAFT_TIER_PREFIXES } from "./enchantment-registry.mjs";
@@ -37,16 +37,16 @@ export const CRAFT_MATERIAL_RULES = {
 };
 
 export const REFINING_RECIPES = [
-  { id: "refine_steel", name: "Refined Steel Ingot", rawLabel: "2x Steel Ingot", rawPattern: /steel ingot|iron bar|steel bar/i, rawQty: 2, dc: 150, minRanks: 30, targetPrice: 25, weight: 2.0, img: "icons/commodities/metal/ingot-iron.webp" },
-  { id: "refine_timber", name: "Refined Crafting Timber", rawLabel: "2x Crafting Timber", rawPattern: /crafting timber|wood log|hardwood/i, rawQty: 2, dc: 150, minRanks: 30, targetPrice: 15, weight: 3.0, img: "icons/commodities/materials/wood-log.webp" },
-  { id: "refine_leather", name: "Refined Treated Leather", rawLabel: "2x Treated Leather", rawPattern: /treated leather|cured hide|leather roll/i, rawQty: 2, dc: 150, minRanks: 30, targetPrice: 20, weight: 1.5, img: "icons/commodities/leather/leather-brown.webp" },
+  { id: "refine_steel", name: "Refined Steel Ingot", rawLabel: "2x Steel Ingot", rawPattern: /steel ingot|iron bar|steel bar/i, rawQty: 2, dc: 140, minRanks: 30, targetPrice: 25, weight: 2.0, img: "icons/commodities/metal/ingot-iron.webp" },
+  { id: "refine_timber", name: "Refined Crafting Timber", rawLabel: "2x Crafting Timber", rawPattern: /crafting timber|wood log|hardwood/i, rawQty: 2, dc: 140, minRanks: 30, targetPrice: 15, weight: 3.0, img: "icons/commodities/materials/wood-log.webp" },
+  { id: "refine_leather", name: "Refined Treated Leather", rawLabel: "2x Treated Leather", rawPattern: /treated leather|cured hide|leather roll/i, rawQty: 2, dc: 140, minRanks: 30, targetPrice: 20, weight: 1.5, img: "icons/commodities/leather/leather-brown.webp" },
   { id: "refine_mithral", name: "Refined Mithral Ingot", rawLabel: "2x Mithral Ingot", rawPattern: /mithral ingot|mithral bar/i, rawQty: 2, dc: 180, minRanks: 30, targetPrice: 1500, weight: 1.0, img: "icons/commodities/metal/ingot-silver.webp" },
   { id: "refine_adamantine", name: "Refined Adamantine Ingot", rawLabel: "2x Adamantine Ingot", rawPattern: /adamantine ingot|adamantine bar/i, rawQty: 2, dc: 220, minRanks: 30, targetPrice: 3000, weight: 2.0, img: "icons/commodities/metal/ingot-engraved-metal.webp" },
-  { id: "refine_coldiron", name: "Refined Cold Iron Ingot", rawLabel: "2x Cold Iron Ingot", rawPattern: /cold iron ingot|cold iron bar/i, rawQty: 2, dc: 170, minRanks: 30, targetPrice: 200, weight: 2.0, img: "icons/commodities/metal/ingot-iron.webp" },
-  { id: "refine_silversheen", name: "Refined Alchemical Silver Ingot", rawLabel: "2x Alchemical Silver Ingot", rawPattern: /alchemical silver|silver ingot/i, rawQty: 2, dc: 160, minRanks: 30, targetPrice: 100, weight: 2.0, img: "icons/commodities/metal/ingot-silver.webp" },
+  { id: "refine_coldiron", name: "Refined Cold Iron Ingot", rawLabel: "2x Cold Iron Ingot", rawPattern: /cold iron ingot|cold iron bar/i, rawQty: 2, dc: 160, minRanks: 30, targetPrice: 200, weight: 2.0, img: "icons/commodities/metal/ingot-iron.webp" },
+  { id: "refine_silversheen", name: "Refined Alchemical Silver Ingot", rawLabel: "2x Alchemical Silver Ingot", rawPattern: /alchemical silver|silver ingot/i, rawQty: 2, dc: 150, minRanks: 30, targetPrice: 100, weight: 2.0, img: "icons/commodities/metal/ingot-silver.webp" },
   { id: "refine_darkwood", name: "Refined Darkwood Timber", rawLabel: "2x Darkwood Timber", rawPattern: /darkwood timber|darkwood log/i, rawQty: 2, dc: 180, minRanks: 30, targetPrice: 200, weight: 1.5, img: "icons/commodities/materials/wood-log.webp" },
   { id: "refine_dragonhide", name: "Refined Dragon Scales", rawLabel: "2x Dragon Scales / Hide", rawPattern: /dragon scale|dragonhide/i, rawQty: 2, dc: 220, minRanks: 30, targetPrice: 1000, weight: 2.0, img: "icons/commodities/biological/scale-reptile-grey.webp" },
-  { id: "craft_arcane_etcher", name: "Arcane Etcher", rawLabel: "1x Refined Steel Ingot + 1x Quartz/Glass", rawPattern: /(refined steel|quartz|glass|crystal)/i, rawQty: 2, dc: 160, minRanks: 20, targetPrice: 150, weight: 1.0, img: "icons/tools/hand/chisel.webp", isTool: true }
+  { id: "craft_arcane_etcher", name: "Arcane Etcher", rawLabel: "1x Refined Steel Ingot + 1x Quartz/Glass", rawPattern: /(refined steel|quartz|glass|crystal)/i, rawQty: 2, dc: 150, minRanks: 20, targetPrice: 150, weight: 1.0, img: "icons/tools/hand/chisel.webp", isTool: true }
 ];
 
 export class PlayerWorkshopApp extends Application {
@@ -61,6 +61,7 @@ export class PlayerWorkshopApp extends Application {
     this.isMasterwork = true;
     this.acceleratedDcBonus = 0;
     this.searchTerm = "";
+    this.recipeSortBy = "name_asc"; // "name_asc" | "dc_asc" | "dc_desc" | "price_asc" | "price_desc"
 
     // Magic state
     this.selectedMagicItem = null;
@@ -76,8 +77,8 @@ export class PlayerWorkshopApp extends Application {
       id: "aeris-player-workshop",
       title: "⚒️ Artisan's Workbench & Crafting Forge",
       template: "",
-      width: 1080,
-      height: 880,
+      width: 1120,
+      height: 900,
       resizable: true,
       classes: ["aeris-workshop-app"]
     });
@@ -95,10 +96,6 @@ export class PlayerWorkshopApp extends Application {
     }
     return buttons;
   }
-
-  /* -------------------------------------------- */
-  /* Buff Flags & Actor Modifier Gathering        */
-  /* -------------------------------------------- */
 
   _getActorBuffModifiers() {
     const flags = this.actor.flags?.[MODULE_ID] || {};
@@ -172,10 +169,6 @@ export class PlayerWorkshopApp extends Application {
     return disciplines;
   }
 
-  /* -------------------------------------------- */
-  /* Rank Caps & Magic Prereqs                    */
-  /* -------------------------------------------- */
-
   _getMaxAllowedEnhancement(rank) {
     const gmConfig = getSafeSetting("workshopGmConfig", {});
     const caps = gmConfig.rankEnhancementCaps || { 50: 1, 80: 2, 110: 3, 140: 4, 170: 5, 200: 10 };
@@ -235,6 +228,202 @@ export class PlayerWorkshopApp extends Application {
     };
   }
 
+  /* -------------------------------------------- */
+  /* Inventory Ingredients Grid Scanner           */
+  /* -------------------------------------------- */
+
+  _getInventorySuppliesGrid() {
+    const inventory = this.actor.items.contents;
+    const pattern = /(ingot|bar|timber|wood|leather|hide|scale|scrap|mechanism|reagent|extract|dust|residue|gem|ruby|sapphire|topaz|emerald|diamond|opal|feather|oil|shard|core|etcher)/i;
+    
+    return inventory.filter(i => pattern.test(i.name) && (i.system?.quantity ?? 1) > 0).map(i => ({
+      name: i.name,
+      img: i.img || "icons/svg/item-bag.svg",
+      quantity: i.system?.quantity ?? 1,
+      weight: i.system?.weight?.value ?? 0.1
+    }));
+  }
+
+  /* -------------------------------------------- */
+  /* Dynamic DC, Cost & Handedness Scaling        */
+  /* -------------------------------------------- */
+
+  _computeItemCraftMetrics(item) {
+    if (item.isRefiningRecipe) {
+      return { dc: item.dc, materialUnits: item.rawQty, costMult: 1.0, isExotic: false, isSimple: false };
+    }
+
+    const type = item.type;
+    const subType = (item.system?.subType || item.system?.weaponSubtype || "").toLowerCase();
+    const name = item.name.toLowerCase();
+    const baseTypes = item.system?.baseTypes || [];
+
+    let baseDc = 150;
+    let costMult = 1.0;
+    let isExotic = subType === "exotic" || baseTypes.some(b => b.toLowerCase().includes("exotic")) || /\b(bastard|kama|kusarigama|falchion|spiked chain|shuriken)\b/i.test(name);
+    let isSimple = subType === "simple" || baseTypes.some(b => b.toLowerCase().includes("simple")) || /\b(dagger|club|spear|shortbow|sling|staff|mace)\b/i.test(name);
+
+    if (isSimple) { baseDc = 120; costMult = 0.8; }
+    else if (isExotic) { baseDc = 180; costMult = 1.25; }
+
+    return { dc: baseDc, costMult, isExotic, isSimple };
+  }
+
+  _calculateRequiredIngredients(baseItem, chosenMaterialKey, isMasterwork = true) {
+    if (baseItem.isRefiningRecipe) {
+      const inventory = this.actor.items.contents;
+      const matchingItems = inventory.filter(invItem => baseItem.rawPattern.test(invItem.name) && (invItem.system?.quantity ?? 1) > 0);
+      const totalAvailable = matchingItems.reduce((acc, it) => acc + (it.system?.quantity ?? 1), 0);
+      return {
+        list: [{ label: baseItem.rawLabel, qty: baseItem.rawQty, available: totalAvailable, satisfied: totalAvailable >= baseItem.rawQty, matchingItemIds: matchingItems.map(m => m.id) }],
+        allSatisfied: totalAvailable >= baseItem.rawQty
+      };
+    }
+
+    const type = baseItem.type;
+    const subType = (baseItem.system?.subType || baseItem.system?.weaponSubtype || "").toLowerCase();
+    const name = baseItem.name.toLowerCase();
+    const ingredients = [];
+
+    const matRule = CRAFT_MATERIAL_RULES[chosenMaterialKey] || CRAFT_MATERIAL_RULES.base;
+    const isSpecialMat = chosenMaterialKey !== "base" && chosenMaterialKey !== "steel";
+    const metrics = this._computeItemCraftMetrics(baseItem);
+
+    const getMetalName = () => isMasterwork ? (isSpecialMat ? matRule.refinedUnit : "Refined Steel Ingot") : (isSpecialMat ? matRule.rawUnit : "Steel Ingot");
+    const getWoodName = () => isMasterwork ? (isSpecialMat ? matRule.refinedUnit : "Refined Crafting Timber") : (isSpecialMat ? matRule.rawUnit : "Crafting Timber / Wood");
+    const getLeatherName = () => isMasterwork ? (isSpecialMat ? matRule.refinedUnit : "Refined Treated Leather") : (isSpecialMat ? matRule.rawUnit : "Treated Leather");
+
+    const getMetalPat = () => isMasterwork 
+      ? (isSpecialMat ? new RegExp(`refined.*${matRule.name}`, "i") : /refined.*(steel|iron|metal|bar|ingot|plate)/i)
+      : (isSpecialMat ? new RegExp(matRule.name, "i") : /(steel|iron|metal|bar|ingot|plate)/i);
+
+    const getWoodPat = () => isMasterwork
+      ? (isSpecialMat ? new RegExp(`refined.*${matRule.name}`, "i") : /refined.*(wood|timber|lumber|haft|stave)/i)
+      : (isSpecialMat ? new RegExp(matRule.name, "i") : /(wood|timber|lumber|haft|stave)/i);
+
+    const getLeatherPat = () => isMasterwork
+      ? (isSpecialMat ? new RegExp(`refined.*${matRule.name}`, "i") : /refined.*(leather|hide|pelt|skin)/i)
+      : (isSpecialMat ? new RegExp(matRule.name, "i") : /(leather|hide|pelt|skin)/i);
+
+    const exoticExtra = metrics.isExotic ? 1 : 0;
+
+    // Melee & Thrown Handedness Scaling
+    if (type === "weapon" && subType !== "ranged" && !/\b(bow|crossbow|pistol|musket)\b/i.test(name)) {
+      const isWoodWeapon = /\b(club|greatclub|quarterstaff|staff|bo staff|nunchaku)\b/i.test(name);
+      
+      if (isWoodWeapon) {
+        ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: (subType === "2h" ? 3 : 2) + exoticExtra });
+      } else {
+        if (subType === "light" || /\b(dagger|knife|kukri|kama)\b/i.test(name)) {
+          ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 1 + exoticExtra });
+          ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 1 });
+        } else if (subType === "1h" || !subType.includes("2h")) {
+          ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 2 + exoticExtra });
+          ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 1 });
+        } else { // 2-Handed
+          ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 4 + exoticExtra });
+          ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 2 });
+        }
+      }
+    } else if (type === "weapon" && /\b(bow|crossbow)\b/i.test(name)) {
+      if (/\bcrossbow\b/i.test(name)) {
+        ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 3 + exoticExtra });
+        ingredients.push({ label: "Mechanical Components", pattern: /(mechanism|fittings|lock|gear|scrap|spring|metal)/i, qty: 1 });
+      } else {
+        ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 2 + exoticExtra });
+        ingredients.push({ label: "Mechanical Components / String", pattern: /(string|cord|sinew|wire|mechanism)/i, qty: 1 });
+      }
+    } else if (type === "weapon" && /\b(pistol|musket|rifle|blunderbuss)\b/i.test(name)) {
+      ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 3 + exoticExtra });
+      ingredients.push({ label: "Mechanical Components", pattern: /(mechanism|fittings|lock|gear|scrap|spring)/i, qty: 1 });
+      ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 1 });
+    } else if (type === "armor" || type === "shield" || baseItem.system?.armor !== undefined) {
+      if (subType === "light" || /\b(leather|padded|hide|quilted)\b/i.test(name)) {
+        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 3 });
+      } else if (subType === "medium") {
+        ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 4 });
+        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 2 });
+      } else if (subType === "heavy") {
+        ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 6 });
+        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 3 });
+      } else {
+        ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 2 });
+        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 1 });
+      }
+    } else if (type === "ammo") {
+      ingredients.push({ label: "Crafting Timber / Metal", pattern: /(wood|timber|steel|iron|lead|metal)/i, qty: 1 });
+      ingredients.push({ label: "Mechanical Components / Fletchings", pattern: /(feather|fletching|powder|casing|mechanism|scrap)/i, qty: 1 });
+    } else {
+      if (/\b(poison|toxin|venom)\b/i.test(name)) {
+        ingredients.push({ label: "Toxic Extracts", pattern: /(venom|toxin|poison|gland|extract)/i, qty: 2 });
+      } else {
+        ingredients.push({ label: "Alchemical Reagents", pattern: /(reagent|extract|salt|sulfur|phosphorus|solvent|herb)/i, qty: 2 });
+      }
+    }
+
+    const inventory = this.actor.items.contents;
+    const resolvedIngredients = ingredients.map(req => {
+      const matchingItems = inventory.filter(invItem => 
+        req.pattern.test(invItem.name) && (invItem.system?.quantity ?? 1) > 0
+      );
+      const totalAvailable = matchingItems.reduce((acc, it) => acc + (it.system?.quantity ?? 1), 0);
+      return {
+        ...req,
+        available: totalAvailable,
+        satisfied: totalAvailable >= req.qty,
+        matchingItemIds: matchingItems.map(m => m.id)
+      };
+    });
+
+    const allSatisfied = resolvedIngredients.every(r => r.satisfied);
+    return { list: resolvedIngredients, allSatisfied };
+  }
+
+  _calculateMagicReagents(totalEquivalentBonus, selectedPropsSet, existingItem = null) {
+    const reagents = [];
+    const inventory = this.actor.items.contents;
+
+    const oldBonus = existingItem ? Math.max(0, Math.floor((existingItem.system?.enh || 0) / 10)) : 0;
+    const netBonus = Math.max(1, totalEquivalentBonus - oldBonus);
+    const residueNeeded = netBonus * 4;
+
+    reagents.push({
+      label: `${residueNeeded}x Arcane Residue (4 per net tier)`,
+      pattern: /(arcane residue|enchanting dust|arcane dust)/i,
+      qty: residueNeeded
+    });
+
+    const customProps = getSafeSetting("customProperties", {});
+    const propRegistry = { ...WEAPON_ENCHANTMENTS, ...ARMOR_ENCHANTMENTS, ...customProps };
+
+    for (const pKey of selectedPropsSet) {
+      const prop = propRegistry[pKey];
+      if (prop && prop.catalystName) {
+        reagents.push({
+          label: `1x ${prop.catalystName}`,
+          pattern: prop.catalystPattern || new RegExp(prop.catalystName, "i"),
+          qty: 1
+        });
+      }
+    }
+
+    const resolved = reagents.map(req => {
+      const matchingItems = inventory.filter(invItem => 
+        req.pattern.test(invItem.name) && (invItem.system?.quantity ?? 1) > 0
+      );
+      const totalAvailable = matchingItems.reduce((acc, it) => acc + (it.system?.quantity ?? 1), 0);
+      return {
+        ...req,
+        available: totalAvailable,
+        satisfied: totalAvailable >= req.qty,
+        matchingItemIds: matchingItems.map(m => m.id)
+      };
+    });
+
+    const allSatisfied = resolved.every(r => r.satisfied);
+    return { list: resolved, allSatisfied, residueNeeded };
+  }
+
   async _loadCompendiumItemsForDiscipline(disciplineType) {
     const savedPacksMap = getSafeSetting("craftCompendiums", {});
     let packKeys = savedPacksMap[disciplineType];
@@ -267,6 +456,7 @@ export class PlayerWorkshopApp extends Application {
       for (const entry of index) {
         if (this._filterItemByDiscipline(entry, disciplineType)) {
           entry._packCollection = pack.collection;
+          entry.computedDc = this._computeItemCraftMetrics(entry).dc;
           items.push(entry);
         }
       }
@@ -358,156 +548,9 @@ export class PlayerWorkshopApp extends Application {
     return valid;
   }
 
-  _calculateRequiredIngredients(baseItem, chosenMaterialKey, isMasterwork = true) {
-    if (baseItem.isRefiningRecipe) {
-      const inventory = this.actor.items.contents;
-      const matchingItems = inventory.filter(invItem => baseItem.rawPattern.test(invItem.name) && (invItem.system?.quantity ?? 1) > 0);
-      const totalAvailable = matchingItems.reduce((acc, it) => acc + (it.system?.quantity ?? 1), 0);
-      return {
-        list: [{ label: baseItem.rawLabel, qty: baseItem.rawQty, available: totalAvailable, satisfied: totalAvailable >= baseItem.rawQty, matchingItemIds: matchingItems.map(m => m.id) }],
-        allSatisfied: totalAvailable >= baseItem.rawQty
-      };
-    }
-
-    const type = baseItem.type;
-    const subType = (baseItem.system?.subType || baseItem.system?.weaponSubtype || "").toLowerCase();
-    const name = baseItem.name.toLowerCase();
-    const ingredients = [];
-
-    const matRule = CRAFT_MATERIAL_RULES[chosenMaterialKey] || CRAFT_MATERIAL_RULES.base;
-    const isSpecialMat = chosenMaterialKey !== "base" && chosenMaterialKey !== "steel";
-
-    const getMetalName = () => isMasterwork ? (isSpecialMat ? matRule.refinedUnit : "Refined Steel Ingot") : (isSpecialMat ? matRule.rawUnit : "Steel Ingot");
-    const getWoodName = () => isMasterwork ? (isSpecialMat ? matRule.refinedUnit : "Refined Crafting Timber") : (isSpecialMat ? matRule.rawUnit : "Crafting Timber / Wood");
-    const getLeatherName = () => isMasterwork ? (isSpecialMat ? matRule.refinedUnit : "Refined Treated Leather") : (isSpecialMat ? matRule.rawUnit : "Treated Leather");
-
-    const getMetalPat = () => isMasterwork 
-      ? (isSpecialMat ? new RegExp(`refined.*${matRule.name}`, "i") : /refined.*(steel|iron|metal|bar|ingot|plate)/i)
-      : (isSpecialMat ? new RegExp(matRule.name, "i") : /(steel|iron|metal|bar|ingot|plate)/i);
-
-    const getWoodPat = () => isMasterwork
-      ? (isSpecialMat ? new RegExp(`refined.*${matRule.name}`, "i") : /refined.*(wood|timber|lumber|haft|stave)/i)
-      : (isSpecialMat ? new RegExp(matRule.name, "i") : /(wood|timber|lumber|haft|stave)/i);
-
-    const getLeatherPat = () => isMasterwork
-      ? (isSpecialMat ? new RegExp(`refined.*${matRule.name}`, "i") : /refined.*(leather|hide|pelt|skin)/i)
-      : (isSpecialMat ? new RegExp(matRule.name, "i") : /(leather|hide|pelt|skin)/i);
-
-    if (type === "weapon" && subType !== "ranged" && !/\b(bow|crossbow|pistol|musket)\b/i.test(name)) {
-      const isWoodWeapon = /\b(club|greatclub|quarterstaff|staff|bo staff|nunchaku)\b/i.test(name);
-      
-      if (isWoodWeapon) {
-        ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: subType === "2h" ? 3 : 2 });
-      } else {
-        if (subType === "light") {
-          ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 1 });
-          ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 1 });
-        } else if (subType === "1h") {
-          ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 2 });
-          ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 1 });
-        } else {
-          ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 4 });
-          ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 2 });
-        }
-      }
-    } else if (type === "weapon" && /\b(bow|crossbow)\b/i.test(name)) {
-      if (/\bcrossbow\b/i.test(name)) {
-        ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 3 });
-        ingredients.push({ label: "Mechanical Components", pattern: /(mechanism|fittings|lock|gear|scrap|spring|metal)/i, qty: 1 });
-      } else {
-        ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 2 });
-        ingredients.push({ label: "Mechanical Components / String", pattern: /(string|cord|sinew|wire|mechanism)/i, qty: 1 });
-      }
-    } else if (type === "weapon" && /\b(pistol|musket|rifle|blunderbuss)\b/i.test(name)) {
-      ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 3 });
-      ingredients.push({ label: "Mechanical Components", pattern: /(mechanism|fittings|lock|gear|scrap|spring)/i, qty: 1 });
-      ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 1 });
-    } else if (type === "armor" || type === "shield" || baseItem.system?.armor !== undefined) {
-      if (subType === "light" || /\b(leather|padded|hide|quilted)\b/i.test(name)) {
-        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 3 });
-      } else if (subType === "medium") {
-        ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 4 });
-        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 2 });
-      } else if (subType === "heavy") {
-        ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 6 });
-        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 3 });
-      } else {
-        ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 2 });
-        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 1 });
-      }
-    } else if (type === "ammo") {
-      ingredients.push({ label: "Crafting Timber / Metal", pattern: /(wood|timber|steel|iron|lead|metal)/i, qty: 1 });
-      ingredients.push({ label: "Mechanical Components / Fletchings", pattern: /(feather|fletching|powder|casing|mechanism|scrap)/i, qty: 1 });
-    } else {
-      if (/\b(poison|toxin|venom)\b/i.test(name)) {
-        ingredients.push({ label: "Toxic Extracts", pattern: /(venom|toxin|poison|gland|extract)/i, qty: 2 });
-      } else {
-        ingredients.push({ label: "Alchemical Reagents", pattern: /(reagent|extract|salt|sulfur|phosphorus|solvent|herb)/i, qty: 2 });
-      }
-    }
-
-    const inventory = this.actor.items.contents;
-    const resolvedIngredients = ingredients.map(req => {
-      const matchingItems = inventory.filter(invItem => 
-        req.pattern.test(invItem.name) && (invItem.system?.quantity ?? 1) > 0
-      );
-      const totalAvailable = matchingItems.reduce((acc, it) => acc + (it.system?.quantity ?? 1), 0);
-      return {
-        ...req,
-        available: totalAvailable,
-        satisfied: totalAvailable >= req.qty,
-        matchingItemIds: matchingItems.map(m => m.id)
-      };
-    });
-
-    const allSatisfied = resolvedIngredients.every(r => r.satisfied);
-    return { list: resolvedIngredients, allSatisfied };
-  }
-
-  _calculateMagicReagents(totalEquivalentBonus, selectedPropsSet, existingItem = null) {
-    const reagents = [];
-    const inventory = this.actor.items.contents;
-
-    const oldBonus = existingItem ? Math.max(0, Math.floor((existingItem.system?.enh || 0) / 10)) : 0;
-    const netBonus = Math.max(1, totalEquivalentBonus - oldBonus);
-    const residueNeeded = netBonus * 4;
-
-    reagents.push({
-      label: `${residueNeeded}x Arcane Residue (4 per net tier)`,
-      pattern: /(arcane residue|enchanting dust|arcane dust)/i,
-      qty: residueNeeded
-    });
-
-    const customProps = getSafeSetting("customProperties", {});
-    const propRegistry = { ...WEAPON_ENCHANTMENTS, ...ARMOR_ENCHANTMENTS, ...customProps };
-
-    for (const pKey of selectedPropsSet) {
-      const prop = propRegistry[pKey];
-      if (prop && prop.catalystName) {
-        reagents.push({
-          label: `1x ${prop.catalystName}`,
-          pattern: prop.catalystPattern || new RegExp(prop.catalystName, "i"),
-          qty: 1
-        });
-      }
-    }
-
-    const resolved = reagents.map(req => {
-      const matchingItems = inventory.filter(invItem => 
-        req.pattern.test(invItem.name) && (invItem.system?.quantity ?? 1) > 0
-      );
-      const totalAvailable = matchingItems.reduce((acc, it) => acc + (it.system?.quantity ?? 1), 0);
-      return {
-        ...req,
-        available: totalAvailable,
-        satisfied: totalAvailable >= req.qty,
-        matchingItemIds: matchingItems.map(m => m.id)
-      };
-    });
-
-    const allSatisfied = resolved.every(r => r.satisfied);
-    return { list: resolved, allSatisfied, residueNeeded };
-  }
+  /* -------------------------------------------- */
+  /* Data Preparation                             */
+  /* -------------------------------------------- */
 
   async getData() {
     const rawProjects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
@@ -515,6 +558,7 @@ export class PlayerWorkshopApp extends Application {
     const magicPrereqs = this._checkMagicCraftPrerequisites();
     const limitBreakInfo = this._getLimitBreakAvailability();
     const buffInfo = this._getActorBuffModifiers();
+    const suppliesGrid = this._getInventorySuppliesGrid();
 
     if (!this.selectedDiscipline && disciplines.length > 0) {
       this.selectedDiscipline = disciplines[0].key;
@@ -535,10 +579,20 @@ export class PlayerWorkshopApp extends Application {
       rawPattern: r.rawPattern,
       rawQty: r.rawQty,
       dc: r.dc,
+      computedDc: r.dc,
       targetPrice: r.targetPrice,
       weight: r.weight,
       system: { price: r.targetPrice, weight: { value: r.weight } }
     }));
+
+    let combinedItems = [...availableRefining, ...this.compendiumItems];
+
+    // Apply Sorting
+    if (this.recipeSortBy === "name_asc") combinedItems.sort((a, b) => a.name.localeCompare(b.name));
+    else if (this.recipeSortBy === "dc_asc") combinedItems.sort((a, b) => (a.computedDc || 150) - (b.computedDc || 150));
+    else if (this.recipeSortBy === "dc_desc") combinedItems.sort((a, b) => (b.computedDc || 150) - (a.computedDc || 150));
+    else if (this.recipeSortBy === "price_asc") combinedItems.sort((a, b) => (a.system?.price || 0) - (b.system?.price || 0));
+    else if (this.recipeSortBy === "price_desc") combinedItems.sort((a, b) => (b.system?.price || 0) - (a.system?.price || 0));
 
     const validMaterials = this._getValidMaterialsForItem(this.selectedBaseItem);
     if (!validMaterials[this.selectedMaterial]) {
@@ -559,7 +613,7 @@ export class PlayerWorkshopApp extends Application {
 
     const customProps = getSafeSetting("customProperties", {});
     let availableMagicProperties = {};
-    let totalEquivalentBonus = this.magicEnhLevel;
+    let totalEquivalentBonus = Number(this.magicEnhLevel);
 
     if (this.selectedMagicItem) {
       const isArmor = this.selectedMagicItem.type === "armor" || this.selectedMagicItem.system?.armor !== undefined;
@@ -575,8 +629,10 @@ export class PlayerWorkshopApp extends Application {
       magicReagentsInfo = this._calculateMagicReagents(totalEquivalentBonus, this.selectedMagicProperties, this.selectedMagicItem);
     }
 
-    // Compounding Magic DC: 220 + 15*T + 5*T^2
+    // Quadratic compounding DC
     const compoundingMagicDc = 220 + (15 * totalEquivalentBonus) + (5 * Math.pow(totalEquivalentBonus, 2)) + (this.isRushedMagic ? 50 : 0);
+
+    const baseItemMetrics = this.selectedBaseItem ? this._computeItemCraftMetrics(this.selectedBaseItem) : { dc: 150, costMult: 1.0 };
 
     return {
       actor: this.actor,
@@ -585,7 +641,7 @@ export class PlayerWorkshopApp extends Application {
       disciplines,
       selectedDiscipline: this.selectedDiscipline,
       currentDiscipline,
-      items: [...availableRefining, ...this.compendiumItems],
+      items: combinedItems,
       selectedBaseItem: this.selectedBaseItem,
       selectedMaterial: this.selectedMaterial,
       isMasterwork: this.isMasterwork,
@@ -594,9 +650,12 @@ export class PlayerWorkshopApp extends Application {
       ingredientsInfo,
       projects: rawProjects,
       searchTerm: this.searchTerm,
+      recipeSortBy: this.recipeSortBy,
       buffInfo,
       limitBreakInfo,
       applyLimitBreak: this.applyLimitBreak,
+      suppliesGrid,
+      baseItemMetrics,
       
       magicPrereqs,
       enchantableInventoryItems,
@@ -624,8 +683,10 @@ export class PlayerWorkshopApp extends Application {
     const itemRows = data.items.map(i => `
       <div class="bench-item-row ${data.selectedBaseItem?._id === i._id ? "selected" : ""}" data-id="${i._id}" data-pack="${i._packCollection || ''}" data-refining="${i.isRefiningRecipe ? 'true' : 'false'}" style="display:flex; align-items:center; gap:6px; padding:5px; cursor:pointer; border-bottom:1px solid rgba(0,0,0,0.06); background:${data.selectedBaseItem?._id === i._id ? "rgba(46,204,113,0.15)" : "transparent"};">
         <img src="${i.img || "icons/svg/item-bag.svg"}" width="26" height="26" style="border-radius:3px;" />
-        <span style="font-size:0.85em; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${i.name}</span>
-        <span style="font-size:0.75em; color:#777;">${i.system?.price || 0} GP</span>
+        <div style="flex:1; overflow:hidden;">
+          <strong style="font-size:0.85em; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${i.name}</strong>
+          <span style="font-size:0.75em; color:#777;">DC ${i.computedDc || 150} | Val: ${i.system?.price || 0} GP</span>
+        </div>
       </div>
     `).join("");
 
@@ -662,7 +723,7 @@ export class PlayerWorkshopApp extends Application {
           </div>
 
           <details style="background:#f8f9fa; border:1px solid #e9ecef; border-radius:4px; padding:4px; margin-bottom:6px;">
-            <summary style="font-size:0.75em; font-weight:bold; cursor:pointer; color:#495057;">📜 Shift Roll History & Flaw/Boon Log (${proj.shiftsLogged.length} shifts)</summary>
+            <summary style="font-size:0.75em; font-weight:bold; cursor:pointer; color:#495057;">📜 Shift Roll History & Facet Breakdown (${proj.shiftsLogged.length} shifts)</summary>
             <div style="max-height:100px; overflow-y:auto; margin-top:4px;">
               ${shiftsLogHtml || '<span style="font-size:0.7em; color:#777; padding:2px;">No shifts rolled yet.</span>'}
             </div>
@@ -670,7 +731,9 @@ export class PlayerWorkshopApp extends Application {
 
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <span style="font-size:0.75em; color:#777;">
-              Active Phase: ${proj.shiftsLogged.length < Math.floor(proj.requiredRolls/3) ? "Phase 1: Smelting / Aether Influx" : proj.shiftsLogged.length < Math.floor(proj.requiredRolls*2/3) ? "Phase 2: Geometry / Runeweave" : "Phase 3: Honing & Stabilization"}
+              Active Phase: ${proj.isMagic 
+                ? (proj.shiftsLogged.length < Math.floor(proj.requiredRolls/3) ? "Phase 1: Aetheric Attunement & Matrix Inscription" : proj.shiftsLogged.length < Math.floor(proj.requiredRolls*2/3) ? "Phase 2: Elemental & Weave Binding" : "Phase 3: Harmonic Resonance & Sealing")
+                : (proj.shiftsLogged.length < Math.floor(proj.requiredRolls/3) ? "Phase 1: Smelting & Ingot Prep" : proj.shiftsLogged.length < Math.floor(proj.requiredRolls*2/3) ? "Phase 2: Forging & Geometry" : "Phase 3: Honing & Stabilization")}
             </span>
             <div style="display:flex; gap:6px;">
               ${pct >= 100 ? `
@@ -678,8 +741,11 @@ export class PlayerWorkshopApp extends Application {
                   ✨ Claim Finished Item
                 </button>
               ` : `
-                <button type="button" class="work-shift-btn" data-idx="${idx}" style="background:#2f3542; color:#fff; font-size:0.8em; padding:4px 12px; font-weight:bold; border:none; border-radius:3px; cursor:pointer;">
-                  🔨 Work 1-Hour Shift
+                <button type="button" class="work-shift-btn" data-idx="${idx}" style="background:#2f3542; color:#fff; font-size:0.8em; padding:4px 10px; font-weight:bold; border:none; border-radius:3px; cursor:pointer;">
+                  🔨 Work 1 Hour
+                </button>
+                <button type="button" class="work-4hour-btn" data-idx="${idx}" style="background:#34495e; color:#fff; font-size:0.8em; padding:4px 10px; font-weight:bold; border:none; border-radius:3px; cursor:pointer;">
+                  🔨 Work 4 Hours (4x)
                 </button>
               `}
               <button type="button" class="abandon-project-btn" data-idx="${idx}" style="background:#c0392b; color:#fff; font-size:0.8em; padding:4px 8px; border:none; border-radius:3px; cursor:pointer;" title="Abandon project and recover 50% scrap">
@@ -714,6 +780,15 @@ export class PlayerWorkshopApp extends Application {
 
     const isEnhAllowed = data.totalEquivalentBonus <= data.magicPrereqs.maxAllowedTier;
 
+    // Supplies Grid Rendering
+    const suppliesGridHtml = data.suppliesGrid.length > 0 ? data.suppliesGrid.map(s => `
+      <div style="display:flex; align-items:center; gap:4px; background:#fff; border:1px solid #ced6e0; border-radius:3px; padding:3px 5px; font-size:0.75em;">
+        <img src="${s.img}" width="20" height="20" style="border-radius:2px;" />
+        <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${s.name}">${s.name}</span>
+        <strong style="color:#2f3542;">x${s.quantity}</strong>
+      </div>
+    `).join("") : '<span style="font-size:0.75em; color:#777; grid-column:span 3;">No crafting supplies found in inventory.</span>';
+
     const html = `
       <div style="display:flex; flex-direction:column; height:100%; gap:8px; padding:8px; font-family:var(--font-primary);">
         
@@ -733,41 +808,56 @@ export class PlayerWorkshopApp extends Application {
         ${data.activeTab === "bench" ? `
           <!-- MUNDANE & REFINING RECIPE BENCH -->
           <div style="display:flex; flex:1; gap:12px; overflow:hidden;">
-            <div style="flex:1.15; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
-              <div>
-                <label style="font-size:0.8em; font-weight:bold;">Active Craft Discipline</label>
-                <select id="workshop-discipline-select" style="width:100%; padding:4px; font-size:0.85em;">${discOpts}</select>
+            
+            <!-- LEFT COLUMN: BLUEPRINTS & SORTING -->
+            <div style="flex:1.1; display:flex; flex-direction:column; gap:6px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
+              <div style="display:flex; gap:6px;">
+                <div style="flex:1;">
+                  <label style="font-size:0.75em; font-weight:bold;">Craft Discipline</label>
+                  <select id="workshop-discipline-select" style="width:100%; padding:3px; font-size:0.8em;">${discOpts}</select>
+                </div>
+                <div style="flex:0.9;">
+                  <label style="font-size:0.75em; font-weight:bold;">Sort By</label>
+                  <select id="workshop-sort-select" style="width:100%; padding:3px; font-size:0.8em;">
+                    <option value="name_asc" ${data.recipeSortBy==='name_asc'?'selected':''}>Name (A-Z)</option>
+                    <option value="dc_asc" ${data.recipeSortBy==='dc_asc'?'selected':''}>DC (Lowest)</option>
+                    <option value="dc_desc" ${data.recipeSortBy==='dc_desc'?'selected':''}>DC (Highest)</option>
+                    <option value="price_asc" ${data.recipeSortBy==='price_asc'?'selected':''}>Price (Lowest)</option>
+                    <option value="price_desc" ${data.recipeSortBy==='price_desc'?'selected':''}>Price (Highest)</option>
+                  </select>
+                </div>
               </div>
 
-              <input type="text" id="workshop-search-input" value="${data.searchTerm}" placeholder="🔍 Search blueprints & refining recipes..." style="padding:4px; font-size:0.85em; border:1px solid #ced6e0; border-radius:3px;">
+              <input type="text" id="workshop-search-input" value="${data.searchTerm}" placeholder="🔍 Search blueprints..." style="padding:4px; font-size:0.8em; border:1px solid #ced6e0; border-radius:3px;">
               
-              <div style="flex-grow:1; max-height:540px; overflow-y:auto; border:1px solid #ced6e0; border-radius:4px; padding:4px; background:#fff;">
+              <div style="flex-grow:1; max-height:480px; overflow-y:auto; border:1px solid #ced6e0; border-radius:4px; padding:4px; background:#fff;">
                 ${itemRows || `<p style="padding:10px; font-size:0.85em; color:#777;">No blueprints found. Use ⚙️ Settings on the title bar to configure source compendiums.</p>`}
               </div>
             </div>
 
-            <div style="flex:1.15; display:flex; flex-direction:column; gap:8px; background:rgba(0,0,0,0.02); padding:10px; border-radius:6px; border:1px solid #ced6e0; overflow-y:auto;">
-              <strong style="font-size:0.95em; border-bottom:1px solid #ccc; padding-bottom:3px;">Blueprint & Material Requirements</strong>
+            <!-- RIGHT COLUMN: BLUEPRINT SPECS & MATERIAL CHECK -->
+            <div style="flex:1.2; display:flex; flex-direction:column; gap:6px; background:rgba(0,0,0,0.02); padding:8px; border-radius:6px; border:1px solid #ced6e0; overflow-y:auto;">
+              <strong style="font-size:0.9em; border-bottom:1px solid #ccc; padding-bottom:3px;">Blueprint & Material Requirements</strong>
               
               ${data.selectedBaseItem ? `
-                <div style="font-size:0.85em; line-height:1.4;">
-                  <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-                    <img src="${data.selectedBaseItem.img}" width="32" height="32" style="border-radius:3px;" />
+                <div style="font-size:0.82em; line-height:1.35;">
+                  <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                    <img src="${data.selectedBaseItem.img}" width="30" height="30" style="border-radius:3px;" />
                     <div>
                       <strong style="font-size:1.05em;">${data.selectedBaseItem.name}</strong><br/>
-                      <span style="color:#555;">Base Price: ${data.selectedBaseItem.targetPrice || data.selectedBaseItem.system?.price || 0} GP | Target Goal: ${data.selectedBaseItem.isRefiningRecipe ? (data.selectedBaseItem.targetPrice || 50) : (data.selectedBaseItem.system?.price || 10) + (data.isMasterwork ? 300 : 0)} GP</span>
+                      <span style="color:#555;">Base Price: ${data.selectedBaseItem.targetPrice || data.selectedBaseItem.system?.price || 0} GP | Goal: ${data.selectedBaseItem.isRefiningRecipe ? (data.selectedBaseItem.targetPrice || 50) : (data.selectedBaseItem.system?.price || 10) + (data.isMasterwork ? 300 : 0)} GP</span>
                     </div>
                   </div>
 
                   ${!data.selectedBaseItem.isRefiningRecipe ? `
-                    <div style="display:flex; gap:6px; margin-bottom:6px;">
+                    <div style="display:flex; gap:6px; margin-bottom:4px;">
                       <div style="flex:1;">
-                        <label style="font-size:0.8em; font-weight:bold;">Special Material</label>
-                        <select id="workshop-material-select" style="width:100%; padding:3px; font-size:0.85em;">${matOpts}</select>
+                        <label style="font-size:0.75em; font-weight:bold;">Special Material</label>
+                        <select id="workshop-material-select" style="width:100%; padding:2px; font-size:0.8em;">${matOpts}</select>
                       </div>
                       <div style="flex:1;">
-                        <label style="font-size:0.8em; font-weight:bold;">Pacing (Accelerated DC)</label>
-                        <select id="workshop-acc-dc" style="width:100%; padding:3px; font-size:0.85em;">
+                        <label style="font-size:0.75em; font-weight:bold;">Pacing (Accelerated DC)</label>
+                        <select id="workshop-acc-dc" style="width:100%; padding:2px; font-size:0.8em;">
                           <option value="0" ${data.acceleratedDcBonus===0?"selected":""}>Standard DC (+0)</option>
                           <option value="50" ${data.acceleratedDcBonus===50?"selected":""}>Accelerated (+50 DC)</option>
                           <option value="100" ${data.acceleratedDcBonus===100?"selected":""}>Rapid Rush (+100 DC)</option>
@@ -775,43 +865,50 @@ export class PlayerWorkshopApp extends Application {
                       </div>
                     </div>
 
-                    <div style="margin-bottom:6px;">
-                      <label style="display:flex; align-items:center; gap:6px; font-size:0.85em; font-weight:bold; cursor:pointer;">
+                    <div style="margin-bottom:4px;">
+                      <label style="display:flex; align-items:center; gap:4px; font-size:0.8em; font-weight:bold; cursor:pointer;">
                         <input type="checkbox" id="workshop-is-masterwork" ${data.isMasterwork ? "checked" : ""}>
                         <span>Masterwork Quality (Requires Refined Materials, +300 GP)</span>
                       </label>
                     </div>
                   ` : `
-                    <p style="font-size:0.8em; color:#2980b9; margin-bottom:6px;"><em>Refining recipe: Treats raw ingots and hides into refined components needed for masterwork forging.</em></p>
+                    <p style="font-size:0.75em; color:#2980b9; margin-bottom:4px;"><em>Refining recipe: Treats raw stock into refined components for masterwork forging.</em></p>
                   `}
 
-                  <!-- LIMIT-BREAK TOGGLE -->
                   ${data.limitBreakInfo.available ? `
-                    <div style="background:rgba(155,89,182,0.1); border:1px solid #8e44ad; border-radius:4px; padding:4px 6px; margin-bottom:6px;">
-                      <label style="display:flex; align-items:center; gap:6px; font-size:0.8em; font-weight:bold; cursor:pointer; color:#8e44ad;">
+                    <div style="background:rgba(155,89,182,0.1); border:1px solid #8e44ad; border-radius:3px; padding:3px 6px; margin-bottom:4px;">
+                      <label style="display:flex; align-items:center; gap:4px; font-size:0.75em; font-weight:bold; cursor:pointer; color:#8e44ad;">
                         <input type="checkbox" id="workshop-limit-break" ${data.applyLimitBreak ? "checked" : ""}>
-                        <span>⚡ Artisan Limit-Break (${data.limitBreakInfo.remaining}/${data.limitBreakInfo.maxDaily} Uses: Unlocks Tier ±5 / ±35% Variance)</span>
+                        <span>⚡ Artisan Limit-Break (${data.limitBreakInfo.remaining}/${data.limitBreakInfo.maxDaily} Uses: Tier ±5 / ±35% Variance)</span>
                       </label>
                     </div>
                   ` : ""}
 
-                  <strong style="font-size:0.85em;">Required Inventory Materials:</strong>
-                  <div style="background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:6px; margin:4px 0 8px 0;">
+                  <strong style="font-size:0.8em;">Required Inventory Materials:</strong>
+                  <div style="background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:4px; margin:2px 0 6px 0;">
                     ${data.ingredientsInfo.list.map(ing => `
-                      <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.8em; padding:2px 0; color:${ing.satisfied ? '#27ae60' : '#c0392b'};">
+                      <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.75em; padding:1px 0; color:${ing.satisfied ? '#27ae60' : '#c0392b'};">
                         <span>${ing.satisfied ? '✔️' : '❌'} ${ing.qty}x ${ing.label}</span>
                         <span>(You have: ${ing.available})</span>
                       </div>
                     `).join("")}
                   </div>
 
-                  <div style="font-size:0.8em; color:#666; line-height:1.3;">
-                    <div>• <strong>Hourly Craft DC:</strong> ${data.selectedBaseItem.isRefiningRecipe ? data.selectedBaseItem.dc : 150 + data.acceleratedDcBonus}</div>
-                    <div>• <strong>Buffs Active:</strong> +${data.buffInfo.totalCheckMod} Check | ${data.buffInfo.totalSpeedMult}x Speed</div>
+                  <!-- INVENTORY SUPPLIES ACCORDION GRID -->
+                  <details style="background:#f1f2f6; border:1px solid #ced6e0; border-radius:4px; padding:4px; margin-bottom:6px;">
+                    <summary style="font-size:0.75em; font-weight:bold; cursor:pointer; color:#2f3542;">📦 Inventory Crafting Stock (${data.suppliesGrid.length} items)</summary>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:4px; max-height:80px; overflow-y:auto; margin-top:4px;">
+                      ${suppliesGridHtml}
+                    </div>
+                  </details>
+
+                  <div style="font-size:0.75em; color:#666; line-height:1.25;">
+                    <div>• <strong>Hourly Craft DC:</strong> ${data.selectedBaseItem.isRefiningRecipe ? data.selectedBaseItem.dc : data.baseItemMetrics.dc + data.acceleratedDcBonus} (Base ${data.baseItemMetrics.dc} + Speed)</div>
+                    <div>• <strong>Buffs Active:</strong> +${data.buffInfo.totalCheckMod} Check | ${data.buffInfo.totalSpeedMult}x Speed Multiplier</div>
                   </div>
                 </div>
 
-                <button type="button" id="start-project-btn" ${!data.ingredientsInfo.allSatisfied ? 'disabled style="opacity:0.6; cursor:not-allowed;"' : ''} style="margin-top:auto; padding:10px; font-weight:bold; background:#2f3542; color:#fff; border:none; border-radius:4px; cursor:pointer;">
+                <button type="button" id="start-project-btn" ${!data.ingredientsInfo.allSatisfied ? 'disabled style="opacity:0.6; cursor:not-allowed;"' : ''} style="margin-top:auto; padding:8px; font-weight:bold; background:#2f3542; color:#fff; border:none; border-radius:4px; cursor:pointer;">
                   ${data.ingredientsInfo.allSatisfied ? '🔥 Consume Materials & Begin Project' : '⚠️ Missing Required Ingredients in Inventory'}
                 </button>
               ` : '<p style="text-align:center; color:#777; margin-top:60px;">Select a blueprint on the left to verify required inventory materials.</p>'}
@@ -828,29 +925,30 @@ export class PlayerWorkshopApp extends Application {
                 <p style="font-size:0.8em; color:#555;">Craft an <strong>Arcane Etcher</strong> on the Recipe Bench to unlock rune-scribing capabilities.</p>
               </div>
             ` : `
-              <div style="flex:1.15; display:flex; flex-direction:column; gap:8px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
-                <strong style="font-size:0.9em;">Select Masterwork or Magic Base Item from Inventory:</strong>
+              <div style="flex:1.1; display:flex; flex-direction:column; gap:6px; border-right:1px solid var(--color-border-light-2); padding-right:8px; overflow-y:auto;">
+                <strong style="font-size:0.85em;">Select Masterwork Base Item from Inventory:</strong>
                 <div style="flex-grow:1; max-height:540px; overflow-y:auto; border:1px solid #ced6e0; border-radius:4px; padding:4px; background:#fff;">
                   ${enchantableRows || '<p style="padding:10px; font-size:0.85em; color:#777;">No masterwork or forged equipment in inventory available to enchant.</p>'}
                 </div>
               </div>
 
-              <div style="flex:1.15; display:flex; flex-direction:column; gap:8px; background:rgba(0,0,0,0.02); padding:10px; border-radius:6px; border:1px solid #ced6e0; overflow-y:auto;">
-                <strong style="font-size:0.95em; border-bottom:1px solid #ccc; padding-bottom:3px;">✨ Enchantment Blueprint & Catalysts</strong>
+              <div style="flex:1.2; display:flex; flex-direction:column; gap:6px; background:rgba(0,0,0,0.02); padding:8px; border-radius:6px; border:1px solid #ced6e0; overflow-y:auto;">
+                <strong style="font-size:0.9em; border-bottom:1px solid #ccc; padding-bottom:3px;">✨ Arcane Enchantment Blueprint & Catalysts</strong>
                 
                 ${data.selectedMagicItem ? `
-                  <div style="font-size:0.85em; line-height:1.4;">
-                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-                      <img src="${data.selectedMagicItem.img}" width="32" height="32" style="border-radius:3px;" />
+                  <div style="font-size:0.82em; line-height:1.35;">
+                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                      <img src="${data.selectedMagicItem.img}" width="30" height="30" style="border-radius:3px;" />
                       <div>
                         <strong style="font-size:1.05em;">${data.selectedMagicItem.name}</strong><br/>
-                        <span style="color:#555;">Current Enhancement: +${data.selectedMagicItem.system?.enh || 0} | Equivalent Tier: +${data.totalEquivalentBonus * 10} (+${data.totalEquivalentBonus})</span>
+                        <span style="color:#555;">Base Enhancement: +${data.selectedMagicItem.system?.enh || 0} | Total Equivalent Tier: +${data.totalEquivalentBonus * 10} (+${data.totalEquivalentBonus})</span>
                       </div>
                     </div>
 
-                    <div style="margin-bottom:6px;">
-                      <label style="font-size:0.8em; font-weight:bold;">Enhancement Bonus (Cap: Tier +${data.magicPrereqs.maxAllowedTier})</label>
-                      <select id="magic-enh-select" style="width:100%; padding:3px; font-size:0.85em;">
+                    <div style="margin-bottom:4px;">
+                      <label style="font-size:0.75em; font-weight:bold;">Enhancement Bonus (Cap: Tier +${data.magicPrereqs.maxAllowedTier})</label>
+                      <select id="magic-enh-select" style="width:100%; padding:2px; font-size:0.8em;">
+                        <option value="0" ${data.magicEnhLevel===0?"selected":""}>+0 (Properties Only)</option>
                         <option value="1" ${data.magicEnhLevel===1?"selected":""} ${data.magicPrereqs.maxAllowedTier < 1 ? 'disabled' : ''}>+1 (+10 Scaled)</option>
                         <option value="2" ${data.magicEnhLevel===2?"selected":""} ${data.magicPrereqs.maxAllowedTier < 2 ? 'disabled' : ''}>+2 (+20 Scaled)</option>
                         <option value="3" ${data.magicEnhLevel===3?"selected":""} ${data.magicPrereqs.maxAllowedTier < 3 ? 'disabled' : ''}>+3 (+30 Scaled)</option>
@@ -859,40 +957,40 @@ export class PlayerWorkshopApp extends Application {
                       </select>
                     </div>
 
-                    <strong style="font-size:0.85em;">Special Enchantments:</strong>
-                    <div style="max-height:120px; overflow-y:auto; background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:4px; margin:4px 0;">
-                      ${magicPropRows || '<span style="font-size:0.8em; color:#777;">No special properties available for this item.</span>'}
+                    <strong style="font-size:0.8em;">Special Enchantments:</strong>
+                    <div style="max-height:110px; overflow-y:auto; background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:3px; margin:2px 0;">
+                      ${magicPropRows || '<span style="font-size:0.75em; color:#777;">No special properties available for this item.</span>'}
                     </div>
 
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                      <label style="display:flex; align-items:center; gap:4px; font-size:0.8em; cursor:pointer;">
+                      <label style="display:flex; align-items:center; gap:4px; font-size:0.75em; cursor:pointer;">
                         <input type="checkbox" id="magic-rushed-cb" ${data.isRushedMagic ? "checked" : ""}>
                         <span><strong>Rushed (+50 DC, 2.0x Speed)</strong></span>
                       </label>
-                      <label style="display:flex; align-items:center; gap:4px; font-size:0.8em; cursor:pointer;">
+                      <label style="display:flex; align-items:center; gap:4px; font-size:0.75em; cursor:pointer;">
                         <input type="checkbox" id="magic-short-names" ${data.magicShortCompoundNames ? "checked" : ""}>
                         <span>Compound Names</span>
                       </label>
                     </div>
 
-                    <strong style="font-size:0.85em;">Required Magical Catalysts & Residue:</strong>
-                    <div style="background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:6px; margin:4px 0 8px 0;">
+                    <strong style="font-size:0.8em;">Required Magical Catalysts & Residue:</strong>
+                    <div style="background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:4px; margin:2px 0 6px 0;">
                       ${data.magicReagentsInfo.list.map(ing => `
-                        <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.8em; padding:2px 0; color:${ing.satisfied ? '#27ae60' : '#c0392b'};">
+                        <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.75em; padding:1px 0; color:${ing.satisfied ? '#27ae60' : '#c0392b'};">
                           <span>${ing.satisfied ? '✔️' : '❌'} ${ing.label}</span>
                           <span>(You have: ${ing.available})</span>
                         </div>
                       `).join("")}
                     </div>
 
-                    <div style="font-size:0.8em; color:#666; line-height:1.3;">
+                    <div style="font-size:0.75em; color:#666; line-height:1.25;">
                       <div>• <strong>Compounding Enchanting DC:</strong> ${data.compoundingMagicDc}</div>
-                      <div>• <strong>Upgrade Craft Cost:</strong> ${totalGoldCost} GP</div>
+                      <div>• <strong>Upgrade Craft Cost:</strong> ${totalGoldCost} GP (Based on +${data.totalEquivalentBonus} tier)</div>
                       ${!isEnhAllowed ? `<div style="color:#c0392b; font-weight:bold;">⚠️ Exceeds rank cap (+${data.magicPrereqs.maxAllowedTier} allowed at ${data.magicPrereqs.effectiveRank} ranks).</div>` : ''}
                     </div>
                   </div>
 
-                  <button type="button" id="start-magic-project-btn" ${(!data.magicReagentsInfo.allSatisfied || !isEnhAllowed) ? 'disabled style="opacity:0.6; cursor:not-allowed;"' : ''} style="margin-top:auto; padding:10px; font-weight:bold; background:#8e44ad; color:#fff; border:none; border-radius:4px; cursor:pointer;">
+                  <button type="button" id="start-magic-project-btn" ${(!data.magicReagentsInfo.allSatisfied || !isEnhAllowed) ? 'disabled style="opacity:0.6; cursor:not-allowed;"' : ''} style="margin-top:auto; padding:8px; font-weight:bold; background:#8e44ad; color:#fff; border:none; border-radius:4px; cursor:pointer;">
                     ${!isEnhAllowed ? '⚠️ Rank Too Low for This Tier' : data.magicReagentsInfo.allSatisfied ? '🔮 Infuse & Begin Magic Project' : '⚠️ Missing Required Catalysts or Residue'}
                   </button>
                 ` : '<p style="text-align:center; color:#777; margin-top:60px;">Select an item from your inventory on the left to configure enchantments.</p>'}
@@ -921,6 +1019,11 @@ export class PlayerWorkshopApp extends Application {
     html.find('#workshop-discipline-select').change(e => {
       this.selectedDiscipline = e.target.value;
       this.selectedBaseItem = null;
+      this.render();
+    });
+
+    html.find('#workshop-sort-select').change(e => {
+      this.recipeSortBy = e.target.value;
       this.render();
     });
 
@@ -983,7 +1086,7 @@ export class PlayerWorkshopApp extends Application {
     });
 
     html.find('#magic-enh-select').change(e => {
-      this.magicEnhLevel = parseInt(e.target.value, 10) || 1;
+      this.magicEnhLevel = parseInt(e.target.value, 10) || 0;
       this.render();
     });
 
@@ -1035,12 +1138,13 @@ export class PlayerWorkshopApp extends Application {
       const gmSettings = getSafeSetting("workshopGmConfig", { failMode: "strikes", fixedStrikes: 3 });
       const disciplines = this._getAvailableCraftDisciplines();
       const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
+      const baseMetrics = this._computeItemCraftMetrics(this.selectedBaseItem);
 
       const basePrice = isRefining ? (this.selectedBaseItem.targetPrice || 50) : (this.selectedBaseItem.system?.price || 10);
       const targetGp = isRefining ? (this.selectedBaseItem.targetPrice || 50) : basePrice + (this.isMasterwork ? 300 : 0);
       const divisor = currentDisc.isGoldMode ? 150 : 35;
       const requiredRolls = Math.max(2, Math.ceil(targetGp / divisor));
-      const dc = isRefining ? this.selectedBaseItem.dc : 150 + this.acceleratedDcBonus;
+      const dc = isRefining ? this.selectedBaseItem.dc : baseMetrics.dc + this.acceleratedDcBonus;
       const prefixLabel = isRefining ? "" : this.isMasterwork ? "Masterwork " : "";
 
       const rawBaseData = isRefining ? { ...this.selectedBaseItem } : (typeof this.selectedBaseItem.toObject === "function" ? this.selectedBaseItem.toObject() : foundry.utils.deepClone(this.selectedBaseItem));
@@ -1097,7 +1201,7 @@ export class PlayerWorkshopApp extends Application {
       const customProps = getSafeSetting("customProperties", {});
       const availableProps = isArmorEnchant ? { ...ARMOR_ENCHANTMENTS, ...customProps } : { ...WEAPON_ENCHANTMENTS, ...customProps };
       
-      let totalEqBonus = this.magicEnhLevel;
+      let totalEqBonus = Number(this.magicEnhLevel);
       for (const p of this.selectedMagicProperties) totalEqBonus += (availableProps[p]?.cost || 0);
 
       const magicPrereqs = this._checkMagicCraftPrerequisites();
@@ -1174,14 +1278,9 @@ export class PlayerWorkshopApp extends Application {
     });
 
     /* -------------------------------------------- */
-    /* Work 1-Hour Shift (Flaw & Boon Engine)       */
+    /* Single-Hour & 4-Hour Shift Evaluators        */
     /* -------------------------------------------- */
-    html.find('.work-shift-btn').click(async (e) => {
-      const idx = $(e.currentTarget).data('idx');
-      const projects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
-      const proj = projects[idx];
-      if (!proj) return;
-
+    const executeShiftRoll = async (proj) => {
       const disciplines = this._getAvailableCraftDisciplines();
       const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
       const buffInfo = this._getActorBuffModifiers();
@@ -1190,9 +1289,13 @@ export class PlayerWorkshopApp extends Application {
       const totalMod = currentDisc.mod + buffInfo.totalCheckMod;
       const roll = await new Roll("1d200 + @mod", { mod: totalMod }).evaluate({ async: true });
       
+      const flavorText = proj.isMagic 
+        ? `✨ <strong>${this.actor.name}</strong> channels arcane weave for 1 hour on <em>${proj.name}</em> (DC ${proj.dc})`
+        : `⚒️ <strong>${this.actor.name}</strong> works 1 hour on <em>${proj.name}</em> (DC ${proj.dc})`;
+
       await roll.toMessage({
         speaker: ChatMessage.getSpeaker({ actor: this.actor }),
-        flavor: `⚒️ <strong>${this.actor.name}</strong> works 1 hour on <em>${proj.name}</em> (DC ${proj.dc})`
+        flavor: flavorText
       });
 
       const dieResult = roll.terms[0]?.results?.[0]?.result ?? (roll.total - totalMod);
@@ -1200,11 +1303,9 @@ export class PlayerWorkshopApp extends Application {
       const mos = totalRoll - proj.dc;
       const failLimit = proj.failMode === "zero" ? 999 : (proj.maxAllowedStrikes || Math.max(2, Math.floor(proj.requiredRolls / 3)));
 
-      // Detect Natural Flaws (1-10) and Boons (191-200)
       const isNatFlaw = gmConfig.flawBoonEnabled && (dieResult <= 10);
       const isNatBoon = gmConfig.flawBoonEnabled && (dieResult >= 191);
 
-      // Hourly Progress Computation
       let shiftProgress = 0;
       if (proj.isMagic) {
         const spellcraftRank = this.actor.system?.skills?.spl?.rank || 0;
@@ -1213,19 +1314,19 @@ export class PlayerWorkshopApp extends Application {
         shiftProgress = baseRate * Math.max(0.2, totalRoll / proj.dc) * rushMult * buffInfo.totalSpeedMult;
       } else {
         const rank = currentDisc.rank || 0;
-        const velocity = rank >= 100 ? 4.0 : rank >= 60 ? 2.5 : rank >= 30 ? 1.5 : 1.0;
-        shiftProgress = ((totalRoll * proj.dc) / 8000) * velocity * buffInfo.totalSpeedMult;
+        const velocity = rank >= 100 ? 5.0 : rank >= 60 ? 3.0 : rank >= 30 ? 2.0 : 1.0;
+        shiftProgress = ((totalRoll * proj.dc) / 3000) * velocity * buffInfo.totalSpeedMult;
       }
 
       const totalShiftsSoFar = proj.shiftsLogged.length;
-      let phaseLabel = "Smelting & Ingot Prep";
-      let targetFacet = "Hardness & HP";
+      let phaseLabel = proj.isMagic ? "Attunement & Scribing" : "Smelting & Ingot Prep";
+      let targetFacet = proj.isMagic ? "Aetheric Matrix" : "Hardness & HP";
       if (totalShiftsSoFar >= Math.floor(proj.requiredRolls * 2 / 3)) {
-        phaseLabel = "Honing & Edge Finishing";
-        targetFacet = "Precision & Threat";
+        phaseLabel = proj.isMagic ? "Resonance & Sealing" : "Honing & Edge Finishing";
+        targetFacet = proj.isMagic ? "Harmonic Focus" : "Precision & Threat";
       } else if (totalShiftsSoFar >= Math.floor(proj.requiredRolls / 3)) {
-        phaseLabel = "Forging & Geometry";
-        targetFacet = "Physical AC & Weight";
+        phaseLabel = proj.isMagic ? "Weave Binding" : "Forging & Geometry";
+        targetFacet = proj.isMagic ? "Runic Matrix" : "Physical AC & Weight";
       }
 
       if (mos >= 0 || isNatBoon) {
@@ -1235,43 +1336,33 @@ export class PlayerWorkshopApp extends Application {
           isNatBoon, isNatFlaw,
           modifierText: isNatBoon ? `+${shiftProgress.toFixed(1)} GP (🌟 Eureka Boon +1 Tier!)` : `+${shiftProgress.toFixed(1)} GP`
         });
-        ui.notifications.info(`Shift Successful! Added +${shiftProgress.toFixed(1)} GP progress.`);
       } else {
         proj.failedChecks += 1;
-        proj.currentGp = Math.max(0, proj.currentGp - (shiftProgress * 0.5));
+        proj.currentGp = Math.max(0, proj.currentGp - (shiftProgress * 0.15));
         proj.shiftsLogged.push({ 
           roll: totalRoll, dieResult, mos, success: false, phaseLabel, targetFacet,
           isNatBoon, isNatFlaw,
-          modifierText: isNatFlaw ? `Failed Strike (-${(shiftProgress * 0.5).toFixed(1)} GP, 💀 Flaw Imparted)` : `Failed Strike (-${(shiftProgress * 0.5).toFixed(1)} GP)`
+          modifierText: isNatFlaw ? `Failed Strike (-${(shiftProgress * 0.15).toFixed(1)} GP, 💀 Flaw Imparted)` : `Failed Strike (-${(shiftProgress * 0.15).toFixed(1)} GP)`
         });
-        ui.notifications.warn(`Shift Failed (Strike ${proj.failedChecks}/${failLimit}). Progress lost.`);
       }
 
       const isRuined = proj.failMode === "zero" 
         ? (proj.shiftsLogged.length > 1 && proj.currentGp <= 0) 
         : (proj.failedChecks >= failLimit || (proj.shiftsLogged.length > 1 && proj.currentGp <= 0));
 
-      if (isRuined) {
-        ui.notifications.error(`Project Ruined! Work on ${proj.name} collapsed.`);
-        
-        if (proj.isMagic && proj.isUpgrade && this.actor.items.has(proj.baseItemId)) {
-          const existingDoc = this.actor.items.get(proj.baseItemId);
-          const currentEnh = existingDoc.system?.enh || 10;
-          const newEnh = Math.max(0, currentEnh - 10);
-          await existingDoc.update({ "system.enh": newEnh, "system.armor.enh": newEnh });
-          ui.notifications.error(`Catastrophic Disruption: ${existingDoc.name}'s magic was damaged! Enhancement reduced to +${newEnh}.`);
-        } else if (proj.consumedIngredients) {
-          for (const ing of proj.consumedIngredients) {
-            const salvageQty = Math.max(1, Math.floor(ing.qty * 0.5));
-            await this.actor.createEmbeddedDocuments("Item", [{
-              name: `Scrap ${ing.label}`,
-              type: "loot",
-              img: "icons/commodities/metal/scrap-iron.webp",
-              system: { quantity: salvageQty, price: 5, weight: { value: 1 } }
-            }]);
-          }
-        }
+      return { isRuined, totalMod, currentDisc, gmConfig, shiftProgress };
+    };
 
+    html.find('.work-shift-btn').click(async (e) => {
+      const idx = $(e.currentTarget).data('idx');
+      const projects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
+      const proj = projects[idx];
+      if (!proj) return;
+
+      const res = await executeShiftRoll(proj);
+
+      if (res.isRuined) {
+        ui.notifications.error(`Project Ruined! Work on ${proj.name} collapsed.`);
         projects.splice(idx, 1);
         await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
         this.render();
@@ -1282,13 +1373,13 @@ export class PlayerWorkshopApp extends Application {
         const needed = proj.requiredRolls - proj.shiftsLogged.length;
         ui.notifications.info(`GP Goal achieved early! Rolling remaining ${needed} modifier checks.`);
         for (let i = 0; i < needed; i++) {
-          const modRoll = await new Roll("1d200 + @mod", { mod: totalMod }).evaluate({ async: true });
-          const dRes = modRoll.terms[0]?.results?.[0]?.result ?? (modRoll.total - totalMod);
+          const modRoll = await new Roll("1d200 + @mod", { mod: res.totalMod }).evaluate({ async: true });
+          const dRes = modRoll.terms[0]?.results?.[0]?.result ?? (modRoll.total - res.totalMod);
           proj.shiftsLogged.push({ 
             roll: modRoll.total, dieResult: dRes, mos: modRoll.total - proj.dc, success: true, 
             phaseLabel: "Rapid Tuning", targetFacet: "Precision & Balance",
-            isNatBoon: gmConfig.flawBoonEnabled && (dRes >= 191),
-            isNatFlaw: gmConfig.flawBoonEnabled && (dRes <= 10),
+            isNatBoon: res.gmConfig.flawBoonEnabled && (dRes >= 191),
+            isNatFlaw: res.gmConfig.flawBoonEnabled && (dRes <= 10),
             modifierText: `Rolled: ${modRoll.total}` 
           });
         }
@@ -1298,8 +1389,45 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
+    html.find('.work-4hour-btn').click(async (e) => {
+      const idx = $(e.currentTarget).data('idx');
+      const projects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
+      const proj = projects[idx];
+      if (!proj) return;
+
+      for (let i = 0; i < 4; i++) {
+        if (proj.currentGp >= proj.targetGp) break;
+        const res = await executeShiftRoll(proj);
+        if (res.isRuined) {
+          ui.notifications.error(`Project Ruined! Work on ${proj.name} collapsed.`);
+          projects.splice(idx, 1);
+          await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
+          this.render();
+          return;
+        }
+      }
+
+      if (proj.currentGp >= proj.targetGp && proj.shiftsLogged.length < proj.requiredRolls) {
+        const disciplines = this._getAvailableCraftDisciplines();
+        const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
+        const buffInfo = this._getActorBuffModifiers();
+        const totalMod = currentDisc.mod + buffInfo.totalCheckMod;
+        const needed = proj.requiredRolls - proj.shiftsLogged.length;
+        for (let i = 0; i < needed; i++) {
+          const modRoll = await new Roll("1d200 + @mod", { mod: totalMod }).evaluate({ async: true });
+          proj.shiftsLogged.push({ 
+            roll: modRoll.total, mos: modRoll.total - proj.dc, success: true, 
+            phaseLabel: "Rapid Tuning", targetFacet: "Precision & Balance", modifierText: `Rolled: ${modRoll.total}` 
+          });
+        }
+      }
+
+      await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
+      this.render();
+    });
+
     /* -------------------------------------------- */
-    /* Claim Finished Item (Tier 5 Paragon & Flaws) */
+    /* Claim Finished Item                          */
     /* -------------------------------------------- */
     html.find('.claim-project-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
@@ -1372,9 +1500,6 @@ export class PlayerWorkshopApp extends Application {
       const tierSign = precEval.tier > 0 ? `+${precEval.tier}` : `${precEval.tier}`;
       tagsList.push(`Craft Quality: Tier ${tierSign}`);
       identifiedTraits.push(`<strong>Craftsmanship (${prefix}):</strong> Handcrafted to ${prefix.toLowerCase()} specifications.`);
-
-      if (precEval.boonCount > 0) tagsList.push("Boon: Flawless Edge");
-      if (precEval.flawCount > 0) tagsList.push("Flaw: Imbalanced Polish");
 
       itemData.flags = itemData.flags || {};
       itemData.flags[MODULE_ID] = { is10xScaled: true, disable10xSheet: true, disable10xCard: true };
@@ -1451,13 +1576,15 @@ export class PlayerWorkshopApp extends Application {
       let enhSuffix = "";
 
       if (proj.isMagic) {
-        const enhLevel = proj.magicEnhLevel || 1;
-        itemData.system.enh = enhLevel * 10;
-        if (itemData.system.armor) itemData.system.armor.enh = itemData.system.enh;
+        const enhLevel = Number(proj.magicEnhLevel || 0);
+        if (enhLevel > 0) {
+          itemData.system.enh = enhLevel * 10;
+          if (itemData.system.armor) itemData.system.armor.enh = itemData.system.enh;
 
-        const titles = { 1: "of Flickering Might", 2: "of Resolute Force", 3: "of Striking Power", 4: "of Exalted Dominion", 5: "of Transcendent Power" };
-        enhSuffix = ` ${titles[enhLevel] || ""}`;
-        identifiedTraits.push(`<strong>Enhancement Bonus (+${itemData.system.enh}):</strong> Provides +${itemData.system.enh} to attack/damage/AC.`);
+          const titles = { 1: "of Flickering Might", 2: "of Resolute Force", 3: "of Striking Power", 4: "of Exalted Dominion", 5: "of Transcendent Power" };
+          enhSuffix = ` ${titles[enhLevel] || ""}`;
+          identifiedTraits.push(`<strong>Enhancement Bonus (+${itemData.system.enh}):</strong> Provides +${itemData.system.enh} to attack/damage/AC.`);
+        }
 
         const customProps = getSafeSetting("customProperties", {});
         const propPool = isArmor ? { ...ARMOR_ENCHANTMENTS, ...customProps } : { ...WEAPON_ENCHANTMENTS, ...customProps };
@@ -1545,10 +1672,6 @@ export class PlayerWorkshopApp extends Application {
       });
     });
   }
-
-  /* -------------------------------------------- */
-  /* Expanded GM Workshop Settings Dialog         */
-  /* -------------------------------------------- */
 
   _openGmWorkshopSettingsDialog() {
     const gmSettings = getSafeSetting("workshopGmConfig", { 
