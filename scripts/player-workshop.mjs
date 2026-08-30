@@ -1837,5 +1837,4 @@ export class PlayerWorkshopApp extends Application {
     }).render(true);
   }
 }
-  }
-}
+
