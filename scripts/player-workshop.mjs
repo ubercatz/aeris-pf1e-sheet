@@ -1,6 +1,6 @@
 /**
  * @file player-workshop.mjs
- * Player-Facing Procedural Crafting Workbench with Expanded Inventory Grid, Detailed Roll Logs with Exact Tiers, and Showcase Completion Chat Cards
+ * Player-Facing Procedural Crafting Workbench with Tangible Project Items, Clean Synthesis Pipeline, and Magic Tier Gating
  */
 
 import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS, CRAFT_TIER_PREFIXES } from "./enchantment-registry.mjs";
@@ -191,13 +191,15 @@ export class PlayerWorkshopApp extends Application {
     const hasRank50 = effectiveRank >= 50;
     const hasArcaneEtcher = this.actor.items.some(i => /(arcane etcher|runecarver's chisel|enchanting stylus|arcane scribe)/i.test(i.name));
     const canReEnchant = effectiveRank >= 100;
-    const maxAllowedTier = this._getMaxAllowedEnhancement(effectiveRank);
+    const maxAllowedBaseEnh = this._getMaxAllowedEnhancement(effectiveRank);
+    const maxAllowedTotalTier = maxAllowedBaseEnh > 0 ? maxAllowedBaseEnh * 2 : 0;
 
     return {
       canCraftMagic: (hasFeat || hasRank50) && hasArcaneEtcher,
       hasArcaneEtcher,
       canReEnchant,
-      maxAllowedTier,
+      maxAllowedBaseEnh,
+      maxAllowedTotalTier,
       effectiveRank,
       reason: !hasArcaneEtcher 
         ? "⚠️ Missing Required Tool: Arcane Etcher (Must be in inventory)" 
@@ -232,7 +234,7 @@ export class PlayerWorkshopApp extends Application {
     const inventory = this.actor.items.contents;
     const pattern = /(ingot|bar|timber|wood|leather|hide|scale|scrap|mechanism|reagent|extract|dust|residue|gem|ruby|sapphire|topaz|emerald|diamond|opal|feather|oil|shard|core|etcher|stone|quartz)/i;
     
-    return inventory.filter(i => pattern.test(i.name) && (i.system?.quantity ?? 1) > 0).map(i => ({
+    return inventory.filter(i => pattern.test(i.name) && (i.system?.quantity ?? 1) > 0 && !i.flags?.[MODULE_ID]?.isCraftingProjectItem).map(i => ({
       name: i.name,
       img: i.img || "icons/svg/item-bag.svg",
       quantity: i.system?.quantity ?? 1,
@@ -299,10 +301,10 @@ export class PlayerWorkshopApp extends Application {
   _calculateRequiredIngredients(baseItem, chosenMaterialKey, isMasterwork = true) {
     if (baseItem.isRefiningRecipe) {
       const inventory = this.actor.items.contents;
-      const matchingItems = inventory.filter(invItem => baseItem.rawPattern.test(invItem.name) && (invItem.system?.quantity ?? 1) > 0);
+      const matchingItems = inventory.filter(invItem => baseItem.rawPattern.test(invItem.name) && (invItem.system?.quantity ?? 1) > 0 && !invItem.flags?.[MODULE_ID]?.isCraftingProjectItem);
       const totalAvailable = matchingItems.reduce((acc, it) => acc + (it.system?.quantity ?? 1), 0);
       return {
-        list: [{ label: baseItem.rawLabel, qty: baseItem.rawQty, available: totalAvailable, satisfied: totalAvailable >= baseItem.rawQty, matchingItemIds: matchingItems.map(m => m.id) }],
+        list: [{ label: baseItem.rawLabel, qty: baseItem.rawQty, unitWeight: baseItem.weight || 2.0, available: totalAvailable, satisfied: totalAvailable >= baseItem.rawQty, matchingItemIds: matchingItems.map(m => m.id) }],
         allSatisfied: totalAvailable >= baseItem.rawQty
       };
     }
@@ -338,59 +340,59 @@ export class PlayerWorkshopApp extends Application {
       const isWoodWeapon = /\b(club|greatclub|quarterstaff|staff|bo staff|nunchaku)\b/i.test(name);
       
       if (isWoodWeapon) {
-        ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: (subType === "2h" ? 3 : 2) + exoticExtra });
+        ingredients.push({ label: getWoodName(), pattern: getWoodPat(), unitWeight: 3.0, qty: (subType === "2h" ? 3 : 2) + exoticExtra });
       } else {
         if (subType === "light" || /\b(dagger|knife|kukri|kama)\b/i.test(name)) {
-          ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 1 + exoticExtra });
-          ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 1 });
+          ingredients.push({ label: getMetalName(), pattern: getMetalPat(), unitWeight: 2.0, qty: 1 + exoticExtra });
+          ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), unitWeight: 1.5, qty: 1 });
         } else if (subType === "1h" || !subType.includes("2h")) {
-          ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 2 + exoticExtra });
-          ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 1 });
+          ingredients.push({ label: getMetalName(), pattern: getMetalPat(), unitWeight: 2.0, qty: 2 + exoticExtra });
+          ingredients.push({ label: getWoodName(), pattern: getWoodPat(), unitWeight: 3.0, qty: 1 });
         } else {
-          ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 4 + exoticExtra });
-          ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 2 });
+          ingredients.push({ label: getMetalName(), pattern: getMetalPat(), unitWeight: 2.0, qty: 4 + exoticExtra });
+          ingredients.push({ label: getWoodName(), pattern: getWoodPat(), unitWeight: 3.0, qty: 2 });
         }
       }
     } else if (type === "weapon" && /\b(bow|crossbow)\b/i.test(name)) {
       if (/\bcrossbow\b/i.test(name)) {
-        ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 3 + exoticExtra });
-        ingredients.push({ label: "Mechanical Components", pattern: /(mechanism|fittings|lock|gear|scrap|spring|metal)/i, qty: 1 });
+        ingredients.push({ label: getWoodName(), pattern: getWoodPat(), unitWeight: 3.0, qty: 3 + exoticExtra });
+        ingredients.push({ label: "Mechanical Components", pattern: /(mechanism|fittings|lock|gear|scrap|spring|metal)/i, unitWeight: 1.0, qty: 1 });
       } else {
-        ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 2 + exoticExtra });
-        ingredients.push({ label: "Mechanical Components / String", pattern: /(string|cord|sinew|wire|mechanism)/i, qty: 1 });
+        ingredients.push({ label: getWoodName(), pattern: getWoodPat(), unitWeight: 3.0, qty: 2 + exoticExtra });
+        ingredients.push({ label: "Mechanical Components / String", pattern: /(string|cord|sinew|wire|mechanism)/i, unitWeight: 0.5, qty: 1 });
       }
     } else if (type === "weapon" && /\b(pistol|musket|rifle|blunderbuss)\b/i.test(name)) {
-      ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 3 + exoticExtra });
-      ingredients.push({ label: "Mechanical Components", pattern: /(mechanism|fittings|lock|gear|scrap|spring)/i, qty: 1 });
-      ingredients.push({ label: getWoodName(), pattern: getWoodPat(), qty: 1 });
+      ingredients.push({ label: getMetalName(), pattern: getMetalPat(), unitWeight: 2.0, qty: 3 + exoticExtra });
+      ingredients.push({ label: "Mechanical Components", pattern: /(mechanism|fittings|lock|gear|scrap|spring)/i, unitWeight: 1.0, qty: 1 });
+      ingredients.push({ label: getWoodName(), pattern: getWoodPat(), unitWeight: 3.0, qty: 1 });
     } else if (type === "armor" || type === "shield" || baseItem.system?.armor !== undefined) {
       if (subType === "light" || /\b(leather|padded|hide|quilted)\b/i.test(name)) {
-        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 3 });
+        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), unitWeight: 1.5, qty: 3 });
       } else if (subType === "medium") {
-        ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 4 });
-        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 2 });
+        ingredients.push({ label: getMetalName(), pattern: getMetalPat(), unitWeight: 2.0, qty: 4 });
+        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), unitWeight: 1.5, qty: 2 });
       } else if (subType === "heavy") {
-        ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 6 });
-        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 3 });
+        ingredients.push({ label: getMetalName(), pattern: getMetalPat(), unitWeight: 2.0, qty: 6 });
+        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), unitWeight: 1.5, qty: 3 });
       } else {
-        ingredients.push({ label: getMetalName(), pattern: getMetalPat(), qty: 2 });
-        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), qty: 1 });
+        ingredients.push({ label: getMetalName(), pattern: getMetalPat(), unitWeight: 2.0, qty: 2 });
+        ingredients.push({ label: getLeatherName(), pattern: getLeatherPat(), unitWeight: 1.5, qty: 1 });
       }
     } else if (type === "ammo") {
-      ingredients.push({ label: "Crafting Timber / Metal", pattern: /(wood|timber|steel|iron|lead|metal)/i, qty: 1 });
-      ingredients.push({ label: "Mechanical Components / Fletchings", pattern: /(feather|fletching|powder|casing|mechanism|scrap)/i, qty: 1 });
+      ingredients.push({ label: "Crafting Timber / Metal", pattern: /(wood|timber|steel|iron|lead|metal)/i, unitWeight: 1.0, qty: 1 });
+      ingredients.push({ label: "Mechanical Components / Fletchings", pattern: /(feather|fletching|powder|casing|mechanism|scrap)/i, unitWeight: 0.5, qty: 1 });
     } else {
       if (/\b(poison|toxin|venom)\b/i.test(name)) {
-        ingredients.push({ label: "Toxic Extracts", pattern: /(venom|toxin|poison|gland|extract)/i, qty: 2 });
+        ingredients.push({ label: "Toxic Extracts", pattern: /(venom|toxin|poison|gland|extract)/i, unitWeight: 0.5, qty: 2 });
       } else {
-        ingredients.push({ label: "Alchemical Reagents", pattern: /(reagent|extract|salt|sulfur|phosphorus|solvent|herb)/i, qty: 2 });
+        ingredients.push({ label: "Alchemical Reagents", pattern: /(reagent|extract|salt|sulfur|phosphorus|solvent|herb)/i, unitWeight: 0.5, qty: 2 });
       }
     }
 
     const inventory = this.actor.items.contents;
     const resolvedIngredients = ingredients.map(req => {
       const matchingItems = inventory.filter(invItem => 
-        req.pattern.test(invItem.name) && (invItem.system?.quantity ?? 1) > 0
+        req.pattern.test(invItem.name) && (invItem.system?.quantity ?? 1) > 0 && !invItem.flags?.[MODULE_ID]?.isCraftingProjectItem
       );
       const totalAvailable = matchingItems.reduce((acc, it) => acc + (it.system?.quantity ?? 1), 0);
       return {
@@ -416,6 +418,7 @@ export class PlayerWorkshopApp extends Application {
     reagents.push({
       label: `${residueNeeded}x Arcane Residue (4 per net tier)`,
       pattern: /(arcane residue|enchanting dust|arcane dust)/i,
+      unitWeight: 0.1,
       qty: residueNeeded
     });
 
@@ -428,6 +431,7 @@ export class PlayerWorkshopApp extends Application {
         reagents.push({
           label: `1x ${prop.catalystName}`,
           pattern: prop.catalystPattern || new RegExp(prop.catalystName, "i"),
+          unitWeight: 0.2,
           qty: 1
         });
       }
@@ -435,7 +439,7 @@ export class PlayerWorkshopApp extends Application {
 
     const resolved = reagents.map(req => {
       const matchingItems = inventory.filter(invItem => 
-        req.pattern.test(invItem.name) && (invItem.system?.quantity ?? 1) > 0
+        req.pattern.test(invItem.name) && (invItem.system?.quantity ?? 1) > 0 && !invItem.flags?.[MODULE_ID]?.isCraftingProjectItem
       );
       const totalAvailable = matchingItems.reduce((acc, it) => acc + (it.system?.quantity ?? 1), 0);
       return {
@@ -594,7 +598,7 @@ export class PlayerWorkshopApp extends Application {
     const enchantableInventoryItems = playerInventory.filter(i => {
       const isMasterwork = i.system?.masterwork === true;
       const isEligibleType = ["weapon", "armor", "shield", "equipment"].includes(i.type);
-      return isMasterwork && isEligibleType;
+      return isMasterwork && isEligibleType && !i.flags?.[MODULE_ID]?.isCraftingProjectItem;
     });
 
     const customProps = getSafeSetting("customProperties", {});
@@ -713,6 +717,7 @@ export class PlayerWorkshopApp extends Application {
             </span>
           </div>
 
+          <!-- DETAILED ROLL LOG (EXPANDED BY DEFAULT) -->
           <details open style="background:#f8f9fa; border:1px solid #ced6e0; border-radius:4px; padding:6px; margin-bottom:6px;">
             <summary style="font-size:0.78em; font-weight:bold; cursor:pointer; color:#2f3542; outline:none; user-select:none;">
               📜 Detailed Shift Roll History & Facet Breakdown (${proj.shiftsLogged.length} shifts recorded)
@@ -771,7 +776,10 @@ export class PlayerWorkshopApp extends Application {
     const oldCost = Math.pow(oldTier, 2) * baseMultCost;
     const totalGoldCost = Math.max(baseMultCost, (Math.pow(data.totalEquivalentBonus, 2) * baseMultCost) - oldCost);
 
-    const isEnhAllowed = data.totalEquivalentBonus <= data.magicPrereqs.maxAllowedTier;
+    // Gated by Base Enh Cap vs selected base enh, and Total Tier vs Rank Capacity
+    const isBaseEnhAllowed = Number(data.magicEnhLevel) <= data.magicPrereqs.maxAllowedBaseEnh;
+    const isTotalTierAllowed = data.totalEquivalentBonus <= data.magicPrereqs.maxAllowedTotalTier;
+    const isEnhAllowed = isBaseEnhAllowed && isTotalTierAllowed;
 
     const suppliesGridHtml = data.suppliesGrid.length > 0 ? data.suppliesGrid.map(s => `
       <div style="display:flex; align-items:center; gap:6px; background:#fff; border:1px solid #ced6e0; border-radius:4px; padding:4px 6px; font-size:0.78em; box-shadow:0 1px 2px rgba(0,0,0,0.03);">
@@ -938,14 +946,14 @@ export class PlayerWorkshopApp extends Application {
                     </div>
 
                     <div style="margin-bottom:4px;">
-                      <label style="font-size:0.75em; font-weight:bold;">Enhancement Bonus (Cap: Tier +${data.magicPrereqs.maxAllowedTier})</label>
+                      <label style="font-size:0.75em; font-weight:bold;">Enhancement Bonus (Cap: +${data.magicPrereqs.maxAllowedBaseEnh} Base Enh | Tier +${data.magicPrereqs.maxAllowedTotalTier} Total)</label>
                       <select id="magic-enh-select" style="width:100%; padding:2px; font-size:0.8em;">
                         <option value="0" ${data.magicEnhLevel===0?"selected":""}>+0 (Properties Only)</option>
-                        <option value="1" ${data.magicEnhLevel===1?"selected":""} ${data.magicPrereqs.maxAllowedTier < 1 ? 'disabled' : ''}>+1 (+10 Scaled)</option>
-                        <option value="2" ${data.magicEnhLevel===2?"selected":""} ${data.magicPrereqs.maxAllowedTier < 2 ? 'disabled' : ''}>+2 (+20 Scaled)</option>
-                        <option value="3" ${data.magicEnhLevel===3?"selected":""} ${data.magicPrereqs.maxAllowedTier < 3 ? 'disabled' : ''}>+3 (+30 Scaled)</option>
-                        <option value="4" ${data.magicEnhLevel===4?"selected":""} ${data.magicPrereqs.maxAllowedTier < 4 ? 'disabled' : ''}>+4 (+40 Scaled)</option>
-                        <option value="5" ${data.magicEnhLevel===5?"selected":""} ${data.magicPrereqs.maxAllowedTier < 5 ? 'disabled' : ''}>+5 (+50 Scaled)</option>
+                        <option value="1" ${data.magicEnhLevel===1?"selected":""} ${data.magicPrereqs.maxAllowedBaseEnh < 1 ? 'disabled' : ''}>+1 (+10 Scaled)</option>
+                        <option value="2" ${data.magicEnhLevel===2?"selected":""} ${data.magicPrereqs.maxAllowedBaseEnh < 2 ? 'disabled' : ''}>+2 (+20 Scaled)</option>
+                        <option value="3" ${data.magicEnhLevel===3?"selected":""} ${data.magicPrereqs.maxAllowedBaseEnh < 3 ? 'disabled' : ''}>+3 (+30 Scaled)</option>
+                        <option value="4" ${data.magicEnhLevel===4?"selected":""} ${data.magicPrereqs.maxAllowedBaseEnh < 4 ? 'disabled' : ''}>+4 (+40 Scaled)</option>
+                        <option value="5" ${data.magicEnhLevel===5?"selected":""} ${data.magicPrereqs.maxAllowedBaseEnh < 5 ? 'disabled' : ''}>+5 (+50 Scaled)</option>
                       </select>
                     </div>
 
@@ -978,7 +986,7 @@ export class PlayerWorkshopApp extends Application {
                     <div style="font-size:0.75em; color:#666; line-height:1.25;">
                       <div>• <strong>Compounding Enchanting DC:</strong> ${data.compoundingMagicDc}</div>
                       <div>• <strong>Upgrade Craft Cost:</strong> ${totalGoldCost} GP (Based on +${data.totalEquivalentBonus} tier)</div>
-                      ${!isEnhAllowed ? `<div style="color:#c0392b; font-weight:bold;">⚠️ Exceeds rank cap (+${data.magicPrereqs.maxAllowedTier} allowed at ${data.magicPrereqs.effectiveRank} ranks).</div>` : ''}
+                      ${!isEnhAllowed ? `<div style="color:#c0392b; font-weight:bold;">⚠️ Exceeds rank cap (+${data.magicPrereqs.maxAllowedBaseEnh} Enh / +${data.magicPrereqs.maxAllowedTotalTier} Tier allowed at ${data.magicPrereqs.effectiveRank} ranks).</div>` : ''}
                     </div>
                   </div>
 
@@ -998,6 +1006,37 @@ export class PlayerWorkshopApp extends Application {
       </div>
     `;
     return $(html);
+  }
+
+  /* -------------------------------------------- */
+  /* Helper: Clean Base Name Pipeline             */
+  /* -------------------------------------------- */
+
+  _cleanBaseItemName(rawName) {
+    let clean = (rawName || "").trim();
+
+    // Strip previous craft quality prefixes
+    const prefixValues = Object.values(CRAFT_TIER_PREFIXES);
+    const prefixRegex = new RegExp(`^(${prefixValues.join("|")})\\s+`, "i");
+    while (prefixRegex.test(clean)) {
+      clean = clean.replace(prefixRegex, "").trim();
+    }
+
+    // Strip previous special material prefixes
+    const matNames = Object.values(SPECIAL_MATERIALS).map(m => m.name).filter(n => n !== "Base");
+    const matRegex = new RegExp(`^(${matNames.join("|")})\\s+`, "i");
+    while (matRegex.test(clean)) {
+      clean = clean.replace(matRegex, "").trim();
+    }
+
+    // Strip magic titles/suffixes
+    const enhSuffixPattern = /\s+(of Flickering Might|of Resolute Force|of Striking Power|of Exalted Dominion|of Transcendent Power)$/i;
+    clean = clean.replace(enhSuffixPattern, "").trim();
+
+    // Strip brackets / tags
+    clean = clean.replace(/(\[NM\]|\(Refining\)|\(In Progress\)|Work in Progress:\s*|\+\d+\s*Enchantment:\s*)/gi, "").trim();
+
+    return clean || rawName;
   }
 
   activateListeners(html) {
@@ -1109,8 +1148,13 @@ export class PlayerWorkshopApp extends Application {
         return ui.notifications.error("You do not have all required ingredients in inventory!");
       }
 
+      let totalWeightAccumulator = isRefining ? (this.selectedBaseItem.weight || 2.0) : (this.selectedBaseItem.system?.weight?.value || 2.0);
+
+      // Deduct materials from inventory
       for (const ing of ingredientsInfo.list) {
         let needed = ing.qty;
+        totalWeightAccumulator += (ing.unitWeight || 1.0) * ing.qty;
+
         for (const itemId of ing.matchingItemIds) {
           if (needed <= 0) break;
           const invItem = this.actor.items.get(itemId);
@@ -1152,9 +1196,32 @@ export class PlayerWorkshopApp extends Application {
         await this.actor.setFlag(MODULE_ID, "limitBreakTracker", { date: todayStr, uses });
       }
 
+      const projectId = foundry.utils.randomID();
+      const projectName = `${prefixLabel}${this.selectedBaseItem.name}`;
+
+      // Create Tangible In-Progress Project Item in Inventory
+      const [projectItemDoc] = await this.actor.createEmbeddedDocuments("Item", [{
+        name: `Work in Progress: ${projectName}`,
+        type: "loot",
+        img: isRefining ? "icons/commodities/metal/ingot-iron.webp" : "icons/commodities/materials/rune-slate-blue.webp",
+        system: {
+          quantity: 1,
+          price: 0,
+          weight: { value: Math.max(0.5, Math.round(totalWeightAccumulator * 100) / 100) },
+          description: { value: `<p>An active workbench project for <strong>${projectName}</strong> currently undergoing artisan fabrication.</p>` }
+        },
+        flags: {
+          [MODULE_ID]: {
+            isCraftingProjectItem: true,
+            projectId: projectId
+          }
+        }
+      }]);
+
       const newProject = {
-        id: foundry.utils.randomID(),
-        name: `${prefixLabel}${this.selectedBaseItem.name}`,
+        id: projectId,
+        projectItemId: projectItemDoc.id,
+        name: projectName,
         baseItemId: this.selectedBaseItem.id || this.selectedBaseItem._id,
         baseItemData: rawBaseData,
         material: this.selectedMaterial,
@@ -1177,7 +1244,7 @@ export class PlayerWorkshopApp extends Application {
       projects.push(newProject);
       await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
 
-      ui.notifications.info(`Deducted materials and initialized project for ${newProject.name}!`);
+      ui.notifications.info(`Deducted materials and placed project item (${projectItemDoc.system.weight.value} lbs) in inventory!`);
       this.activeTab = "active";
       this.applyLimitBreak = false;
       this.render();
@@ -1197,8 +1264,8 @@ export class PlayerWorkshopApp extends Application {
       for (const p of this.selectedMagicProperties) totalEqBonus += (availableProps[p]?.cost || 0);
 
       const magicPrereqs = this._checkMagicCraftPrerequisites();
-      if (totalEqBonus > magicPrereqs.maxAllowedTier) {
-        return ui.notifications.error(`Cannot enchant Tier +${totalEqBonus}! Your ranks cap you at Tier +${magicPrereqs.maxAllowedTier}.`);
+      if (Number(this.magicEnhLevel) > magicPrereqs.maxAllowedBaseEnh || totalEqBonus > magicPrereqs.maxAllowedTotalTier) {
+        return ui.notifications.error(`Cannot enchant Tier +${totalEqBonus}! Your ranks cap you at +${magicPrereqs.maxAllowedBaseEnh} Base Enh / Tier +${magicPrereqs.maxAllowedTotalTier} Total.`);
       }
 
       const reagentsInfo = this._calculateMagicReagents(totalEqBonus, this.selectedMagicProperties, this.selectedMagicItem);
@@ -1206,8 +1273,13 @@ export class PlayerWorkshopApp extends Application {
         return ui.notifications.error("You do not have all required catalysts/residue in inventory!");
       }
 
+      let totalWeightAccumulator = Number(this.selectedMagicItem.system?.weight?.value || 2.0);
+
+      // Deduct catalysts and residue
       for (const ing of reagentsInfo.list) {
         let needed = ing.qty;
+        totalWeightAccumulator += (ing.unitWeight || 0.1) * ing.qty;
+
         for (const itemId of ing.matchingItemIds) {
           if (needed <= 0) break;
           const invItem = this.actor.items.get(itemId);
@@ -1224,9 +1296,15 @@ export class PlayerWorkshopApp extends Application {
         }
       }
 
+      const baseItemBackup = this.selectedMagicItem.toObject();
+      const baseItemDocId = this.selectedMagicItem.id;
+      
+      // Remove base item from inventory while project is in progress
+      await this.selectedMagicItem.delete();
+
       const gmSettings = getSafeSetting("workshopGmConfig", { failMode: "strikes", fixedStrikes: 3 });
       const baseMultCost = isArmorEnchant ? 500 : 1000;
-      const oldTier = Math.max(0, Math.floor((this.selectedMagicItem.system?.enh || 0) / 10));
+      const oldTier = Math.max(0, Math.floor((baseItemBackup.system?.enh || 0) / 10));
       const oldCost = Math.pow(oldTier, 2) * baseMultCost;
       const targetGp = Math.max(baseMultCost, (Math.pow(totalEqBonus, 2) * baseMultCost) - oldCost);
       const requiredRolls = Math.max(3, Math.ceil(targetGp / 250));
@@ -1236,19 +1314,42 @@ export class PlayerWorkshopApp extends Application {
         ? Math.max(2, Math.floor(requiredRolls / 3)) 
         : (gmSettings.fixedStrikes || 3);
 
+      const projectId = foundry.utils.randomID();
+      const projectName = `+${Number(this.magicEnhLevel) * 10} Enchantment: ${baseItemBackup.name}`;
+
+      // Create In-Progress Project Item in Inventory
+      const [projectItemDoc] = await this.actor.createEmbeddedDocuments("Item", [{
+        name: `Work in Progress: ${projectName}`,
+        type: "loot",
+        img: "icons/commodities/materials/rune-slate-blue.webp",
+        system: {
+          quantity: 1,
+          price: 0,
+          weight: { value: Math.max(0.5, Math.round(totalWeightAccumulator * 100) / 100) },
+          description: { value: `<p>An active arcane enchanting project for <strong>${projectName}</strong> currently bound in the runic matrix.</p>` }
+        },
+        flags: {
+          [MODULE_ID]: {
+            isCraftingProjectItem: true,
+            projectId: projectId
+          }
+        }
+      }]);
+
       const newProject = {
-        id: foundry.utils.randomID(),
-        name: `+${this.magicEnhLevel * 10} Enchantment: ${this.selectedMagicItem.name}`,
-        baseItemId: this.selectedMagicItem.id,
-        baseItemData: this.selectedMagicItem.toObject(),
-        isUpgrade: (this.selectedMagicItem.system?.enh || 0) > 0,
+        id: projectId,
+        projectItemId: projectItemDoc.id,
+        name: projectName,
+        baseItemId: baseItemDocId,
+        baseItemData: baseItemBackup,
+        isUpgrade: (baseItemBackup.system?.enh || 0) > 0,
         material: "base",
         isMasterwork: true,
         isMagic: true,
         isRushed: this.isRushedMagic,
         failMode: gmSettings.failMode || "strikes",
         maxAllowedStrikes: maxStrikes,
-        magicEnhLevel: this.magicEnhLevel,
+        magicEnhLevel: Number(this.magicEnhLevel),
         selectedMagicProperties: Array.from(this.selectedMagicProperties),
         magicShortCompoundNames: this.magicShortCompoundNames,
         targetGp,
@@ -1264,7 +1365,8 @@ export class PlayerWorkshopApp extends Application {
       projects.push(newProject);
       await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
 
-      ui.notifications.info(`Catalysts & Residue consumed. Initialized project for ${newProject.name}!`);
+      ui.notifications.info(`Base item placed into enchanting matrix (${projectItemDoc.system.weight.value} lbs total project weight)!`);
+      this.selectedMagicItem = null;
       this.activeTab = "active";
       this.render();
     });
@@ -1361,6 +1463,23 @@ export class PlayerWorkshopApp extends Application {
 
       if (res.isRuined) {
         ui.notifications.error(`Project Ruined! Work on ${proj.name} collapsed.`);
+        
+        // Remove tangible project item from inventory
+        const pItem = this.actor.items.find(i => i.id === proj.projectItemId || i.flags?.[MODULE_ID]?.projectId === proj.id);
+        if (pItem) await pItem.delete();
+
+        // Restore original item if magic upgrade
+        if (proj.isMagic && proj.baseItemData) {
+          const restoredData = foundry.utils.deepClone(proj.baseItemData);
+          if (proj.isUpgrade) {
+            const curEnh = restoredData.system?.enh || 10;
+            const damagedEnh = Math.max(0, curEnh - 10);
+            restoredData.system.enh = damagedEnh;
+            if (restoredData.system.armor) restoredData.system.armor.enh = damagedEnh;
+          }
+          await this.actor.createEmbeddedDocuments("Item", [restoredData]);
+        }
+
         projects.splice(idx, 1);
         await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
         this.render();
@@ -1399,6 +1518,14 @@ export class PlayerWorkshopApp extends Application {
         const res = await executeShiftRoll(proj);
         if (res.isRuined) {
           ui.notifications.error(`Project Ruined! Work on ${proj.name} collapsed.`);
+          
+          const pItem = this.actor.items.find(it => it.id === proj.projectItemId || it.flags?.[MODULE_ID]?.projectId === proj.id);
+          if (pItem) await pItem.delete();
+
+          if (proj.isMagic && proj.baseItemData) {
+            await this.actor.createEmbeddedDocuments("Item", [proj.baseItemData]);
+          }
+
           projects.splice(idx, 1);
           await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
           this.render();
@@ -1428,13 +1555,19 @@ export class PlayerWorkshopApp extends Application {
     });
 
     /* -------------------------------------------- */
-    /* Claim Finished Item & Post Summary Card      */
+    /* Claim Finished Item & Post Showcase Card     */
     /* -------------------------------------------- */
     html.find('.claim-project-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
       const projects = this.actor.getFlag(MODULE_ID, "craftingProjects") || [];
       const proj = projects[idx];
       if (!proj) return;
+
+      // Delete the in-progress placeholder item from inventory
+      const projectItemDoc = this.actor.items.find(i => i.id === proj.projectItemId || i.flags?.[MODULE_ID]?.projectId === proj.id);
+      if (projectItemDoc) {
+        await projectItemDoc.delete();
+      }
 
       if (proj.isRefining) {
         const refinedItem = {
@@ -1489,7 +1622,7 @@ export class PlayerWorkshopApp extends Application {
         proj.shiftsLogged.push({ roll: autoRoll.total, mos: autoRoll.total - proj.dc, success: true, phaseLabel: "Instant Tuning", targetFacet: "Facet Allocation", shiftTier: 1, shiftPctMod: 6.25, modifierText: `Auto: ${autoRoll.total}` });
       }
 
-      const tagsList = [proj.isMagic ? "Magic Infused" : "Crafted"];
+      const tagsList = [];
       const identifiedTraits = [];
 
       const totalShifts = proj.shiftsLogged.length;
@@ -1523,8 +1656,14 @@ export class PlayerWorkshopApp extends Application {
 
       const prefix = CRAFT_TIER_PREFIXES[`${precEval.tier}`] || "Serviceable";
       const tierSign = precEval.tier > 0 ? `+${precEval.tier}` : `${precEval.tier}`;
-      tagsList.push(`Craft Quality: Tier ${tierSign}`);
-      identifiedTraits.push(`<strong>Craftsmanship (${prefix}):</strong> Handcrafted to ${prefix.toLowerCase()} specifications.`);
+      
+      if (!proj.isMagic) {
+        tagsList.push("Crafted");
+        tagsList.push(`Craft Quality: Tier ${tierSign}`);
+        identifiedTraits.push(`<strong>Craftsmanship (${prefix}):</strong> Handcrafted to ${prefix.toLowerCase()} specifications.`);
+      } else {
+        tagsList.push("Magic Infused");
+      }
 
       if (precEval.boonCount > 0) tagsList.push("Boon: Flawless Edge");
       if (precEval.flawCount > 0) tagsList.push("Flaw: Imbalanced Polish");
@@ -1611,6 +1750,7 @@ export class PlayerWorkshopApp extends Application {
 
           const titles = { 1: "of Flickering Might", 2: "of Resolute Force", 3: "of Striking Power", 4: "of Exalted Dominion", 5: "of Transcendent Power" };
           enhSuffix = ` ${titles[enhLevel] || ""}`;
+          tagsList.push(`Magic Enhancement: +${itemData.system.enh}`);
           identifiedTraits.push(`<strong>Enhancement Bonus (+${itemData.system.enh}):</strong> Provides +${itemData.system.enh} to attack/damage/AC.`);
         }
 
@@ -1621,6 +1761,8 @@ export class PlayerWorkshopApp extends Application {
           const prop = propPool[pKey];
           if (!prop) continue;
 
+          tagsList.push(`Property: ${prop.baseName} (+${prop.cost})`);
+
           if (prop.isDice && isWeapon && itemData.system?.actions) {
             const numDice = prop.numDice || 1;
             const faces = 60;
@@ -1628,27 +1770,33 @@ export class PlayerWorkshopApp extends Application {
             itemData.system.actions[0].damage.parts.push({ formula: `${numDice}d${faces}`, type: { values: [prop.type], custom: "" } });
             identifiedTraits.push(`<strong>${prop.baseName} Infusion:</strong> Deals +${numDice}d${faces} ${prop.type} damage.`);
           } else {
-            tagsList.push(`Property: ${prop.title || prop.baseName}`);
             propPrefixes.push(prop.title || prop.baseName);
             if (prop.note) identifiedTraits.push(`<strong>${prop.baseName}:</strong> ${prop.note}`);
           }
         }
       }
 
+      // CLEAN BASE NAME AND COMPOSE UNIFIED NAME
+      const cleanBaseName = this._cleanBaseItemName(proj.baseItemData.name);
       const matTitle = mat.name !== "Base" && mat.name !== "Steel" ? `${mat.name} ` : "";
       const pPre = propPrefixes.length ? `${propPrefixes.join(" ")} ` : "";
-      itemData.name = `${prefix} ${matTitle}${pPre}${proj.baseItemData.name}${enhSuffix}`.trim();
-      
-      itemData.system.tags = Array.isArray(itemData.system.tags) ? itemData.system.tags : [];
-      itemData.system.tags.push(...tagsList);
 
-      const tagHtml = tagsList.map(t => `<span style="background:#2f3542;color:#fff;padding:2px 6px;border-radius:3px;font-size:0.75em;margin:2px;display:inline-block;">${t}</span>`).join(" ");
+      itemData.name = `${prefix} ${matTitle}${pPre}${cleanBaseName}${enhSuffix}`.trim();
+      
+      // DEDUPLICATE TAGS
+      const finalTags = Array.from(new Set(tagsList));
+      itemData.system.tags = finalTags;
+
+      const tagHtml = finalTags.map(t => `<span style="background:#2f3542;color:#fff;padding:2px 6px;border-radius:3px;font-size:0.75em;margin:2px;display:inline-block;">${t}</span>`).join(" ");
       const traitListHtml = identifiedTraits.map(tr => `<li>${tr}</li>`).join("");
-      const originalDesc = itemData.system.description?.value || "";
+
+      // CLEAN EXISTING DESCRIPTION TO PREVENT DUPLICATION
+      let cleanDesc = itemData.system.description?.value || "";
+      cleanDesc = cleanDesc.replace(/<hr\s*\/?>\s*<h3>(?:Artisan Handcrafted Characteristics|Identified Properties & Enchantments|Artisan Characteristics)[\s\S]*$/i, "").trim();
 
       itemData.system.description = itemData.system.description || {};
       itemData.system.description.value = `
-        ${originalDesc}
+        ${cleanDesc}
         <hr/>
         <h3>Artisan Handcrafted Characteristics</h3>
         <ul style="padding-left:18px;margin:6px 0;font-size:0.9em;line-height:1.4;">
@@ -1657,11 +1805,7 @@ export class PlayerWorkshopApp extends Application {
         <p><strong>Crafting Tags:</strong><br/>${tagHtml}</p>
       `.trim();
 
-      if (proj.isMagic && proj.isUpgrade && this.actor.items.has(proj.baseItemId)) {
-        await this.actor.updateEmbeddedDocuments("Item", [{ _id: proj.baseItemId, ...itemData }]);
-      } else {
-        await this.actor.createEmbeddedDocuments("Item", [itemData]);
-      }
+      await this.actor.createEmbeddedDocuments("Item", [itemData]);
 
       projects.splice(idx, 1);
       await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
@@ -1724,8 +1868,17 @@ export class PlayerWorkshopApp extends Application {
 
       Dialog.confirm({
         title: "Abandon Crafting Project",
-        content: `<p>Are you sure you want to abandon <strong>${proj.name}</strong>? You will salvage 50% of the raw physical materials as scrap.</p>`,
+        content: `<p>Are you sure you want to abandon <strong>${proj.name}</strong>? The project item will be removed and you will salvage 50% of the raw physical materials as scrap.</p>`,
         yes: async () => {
+          // Remove project item from inventory
+          const pItem = this.actor.items.find(i => i.id === proj.projectItemId || i.flags?.[MODULE_ID]?.projectId === proj.id);
+          if (pItem) await pItem.delete();
+
+          // Restore base item if magic upgrade
+          if (proj.isMagic && proj.baseItemData) {
+            await this.actor.createEmbeddedDocuments("Item", [proj.baseItemData]);
+          }
+
           if (proj.consumedIngredients) {
             for (const ing of proj.consumedIngredients) {
               const salvageQty = Math.max(1, Math.floor(ing.qty * 0.5));
@@ -1837,4 +1990,3 @@ export class PlayerWorkshopApp extends Application {
     }).render(true);
   }
 }
-
