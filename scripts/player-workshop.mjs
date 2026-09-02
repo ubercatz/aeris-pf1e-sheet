@@ -463,106 +463,12 @@ export class PlayerWorkshopApp extends Application {
     return { list: resolved, allSatisfied, residueNeeded };
   }
 
-  async _loadCompendiumItemsForDiscipline(disciplineType) {
-    const savedPacksMap = getSafeSetting("craftCompendiums", {});
-    let packKeys = savedPacksMap[disciplineType];
-
-    const allItemPacks = game.packs.filter(p => p.documentName === "Item");
-
-    let targetPacks = [];
-    if (Array.isArray(packKeys) && packKeys.length > 0) {
-      targetPacks = allItemPacks.filter(p => 
-        packKeys.some(k => k.toLowerCase() === p.collection.toLowerCase() || k.toLowerCase() === p.metadata.id?.toLowerCase())
-      );
-    }
-
-    if (targetPacks.length === 0) {
-      if (["weapon", "bow", "firearm", "siege"].includes(disciplineType)) {
-        targetPacks = allItemPacks.filter(p => p.collection.includes("weapon") || p.metadata.label.toLowerCase().includes("weapon"));
-      } else if (disciplineType === "armor") {
-        targetPacks = allItemPacks.filter(p => p.collection.includes("armor") || p.metadata.label.toLowerCase().includes("armor"));
-      } else {
-        targetPacks = allItemPacks;
-      }
-    }
-
-    const items = [];
-    for (const pack of targetPacks) {
-      const index = await pack.getIndex({
-        fields: ["system.subType", "system.weaponSubtype", "system.equipmentType", "system.armor", "system.slot", "system.price", "system.weaponGroups", "system.baseTypes"]
-      });
-
-      for (const entry of index) {
-        if (this._filterItemByDiscipline(entry, disciplineType)) {
-          entry._packCollection = pack.collection;
-          entry.computedDc = this._computeItemCraftMetrics(entry).dc;
-          items.push(entry);
-        }
-      }
-    }
-    return items;
-  }
-
-  _filterItemByDiscipline(item, disciplineType) {
-    const type = item.type;
-    const subType = (item.system?.subType || item.system?.weaponSubtype || "").toLowerCase();
-    const eqType = (item.system?.equipmentType || "").toLowerCase();
-    const wpnGroup = item.system?.weaponGroups || [];
-    const name = item.name.toLowerCase();
-
-    if (disciplineType === "weapon") {
-      if (type !== "weapon" || subType === "ammo") return false;
-      if (wpnGroup.includes("bows") || wpnGroup.includes("crossbows") || wpnGroup.includes("firearms")) return false;
-      if (/\b(bow|crossbow|pistol|musket|rifle|blunderbuss)\b/i.test(name)) return false;
-      return true;
-    }
-
-    if (disciplineType === "bow") {
-      if (type === "weapon" && (wpnGroup.includes("bows") || wpnGroup.includes("crossbows") || /\b(bow|crossbow|arbalest)\b/i.test(name))) return true;
-      if (type === "ammo" && /\b(arrow|arrows|bolt|bolts)\b/i.test(name)) return true;
-      return false;
-    }
-
-    if (disciplineType === "armor") {
-      if (type === "armor" || type === "shield" || ["armor", "shield"].includes(eqType) || ["armor", "shield"].includes(subType)) return true;
-      return false;
-    }
-
-    if (disciplineType === "firearm") {
-      if (type === "weapon" && (wpnGroup.includes("firearms") || /\b(pistol|musket|rifle|culverin|blunderbuss)\b/i.test(name))) return true;
-      if (type === "ammo" && /\b(bullet|bullets|cartridge|cartridges|powder)\b/i.test(name)) return true;
-      return false;
-    }
-
-    if (disciplineType === "alchemy") {
-      if (subType === "potion" || eqType === "alchemical" || subType === "alchemical" || /\b(alchemist|acid|fire|tanglefoot|smokestick|sunrod|flask)\b/i.test(name)) return true;
-      return false;
-    }
-
-    if (disciplineType === "poison") {
-      if (subType === "poison" || /\b(poison|toxin|venom|bane|belladonna)\b/i.test(name)) return true;
-      return false;
-    }
-
-    if (disciplineType === "siege") {
-      if (wpnGroup.includes("siege") || /\b(ballista|catapult|trebuchet|ram|cannon)\b/i.test(name)) return true;
-      return false;
-    }
-
-    return true;
-  }
-
-  /* -------------------------------------------- */
-  /* Repair Bench Calculation Helper              */
-  /* -------------------------------------------- */
-
   _getRepairRequirements(item) {
     if (!item) return { dc: 150, ingredients: [], allSatisfied: true };
 
     const metrics = this._computeItemCraftMetrics(item);
     let repairDc = metrics.dc;
 
-    // If enchanted, repair DC is the highest of mundane or magic compounding DC
     const enh = item.system?.enh || 0;
     const tier = Math.max(0, Math.floor(enh / 10));
     if (tier > 0) {
@@ -578,7 +484,6 @@ export class PlayerWorkshopApp extends Application {
       return { dc: repairDc, ingredients: [], allSatisfied: true };
     }
 
-    // Material requirements: half normal creation costs
     const baseIngredients = this._calculateRequiredIngredients(item, "base", false);
     const halvedIngredients = baseIngredients.list.map(ing => ({
       ...ing,
@@ -589,7 +494,7 @@ export class PlayerWorkshopApp extends Application {
     if (tier > 0) {
       const halfResidue = Math.max(1, tier * 2);
       const inventory = this.actor.items.contents;
-      const matchingResidue = inventory.filter(i => /(arcane residue|enchanting dust|arcane dust)/i.test(i.name));
+      const matchingResidue = inventory.filter(i => /(arcane residue|enchanting dust|arcane dust)/i.test(i.name) && !i.flags?.[MODULE_ID]?.isCraftingProjectItem);
       const totalResidue = matchingResidue.reduce((a, b) => a + (b.system?.quantity ?? 1), 0);
       halvedIngredients.push({
         label: `${halfResidue}x Arcane Residue (Half Enchantment Binder)`,
@@ -668,13 +573,15 @@ export class PlayerWorkshopApp extends Application {
 
     const playerInventory = this.actor.items.contents;
 
-    // ENCHANTABLE FILTER: Block broken items and items at 0 HP
+    // ENCHANTABLE FILTER: Strictly block broken items and items at or below 25% HP
     const enchantableInventoryItems = playerInventory.filter(i => {
       const isMasterwork = i.system?.masterwork === true;
       const isEligibleType = ["weapon", "armor", "shield", "equipment"].includes(i.type);
       const isBroken = i.system?.broken === true;
-      const isZeroHp = i.system?.hp?.value !== undefined && i.system.hp.value <= 0;
-      return isMasterwork && isEligibleType && !isBroken && !isZeroHp && !i.flags?.[MODULE_ID]?.isCraftingProjectItem;
+      const curHp = i.system?.hp?.value ?? i.system?.hp?.max ?? 10;
+      const maxHp = i.system?.hp?.max ?? curHp;
+      const isLowHp = curHp <= 0 || curHp < Math.ceil(maxHp * 0.25);
+      return isMasterwork && isEligibleType && !isBroken && !isLowHp && !i.flags?.[MODULE_ID]?.isCraftingProjectItem;
     });
 
     // REPAIR BENCH ITEMS: Gear that is broken or below max HP
@@ -741,13 +648,11 @@ export class PlayerWorkshopApp extends Application {
       suppliesGrid,
       baseItemMetrics,
 
-      // Shifts Enabled
       enable1Hour,
       enable4Hour,
       enable8Hour,
       enableWeekly,
 
-      // Repair state
       repairableInventoryItems,
       selectedRepairItem: this.selectedRepairItem,
       waiveRepairMaterials: this.waiveRepairMaterials,
@@ -770,6 +675,28 @@ export class PlayerWorkshopApp extends Application {
       magicReagentsInfo,
       magicShortCompoundNames: this.magicShortCompoundNames
     };
+  }
+
+  _cleanBaseItemName(rawName) {
+    let clean = (rawName || "").trim();
+
+    const prefixValues = Object.values(CRAFT_TIER_PREFIXES);
+    const prefixRegex = new RegExp(`^(${prefixValues.join("|")})\\s+`, "i");
+    while (prefixRegex.test(clean)) {
+      clean = clean.replace(prefixRegex, "").trim();
+    }
+
+    const matNames = Object.values(SPECIAL_MATERIALS).map(m => m.name).filter(n => n !== "Base");
+    const matRegex = new RegExp(`^(${matNames.join("|")})\\s+`, "i");
+    while (matRegex.test(clean)) {
+      clean = clean.replace(matRegex, "").trim();
+    }
+
+    const enhSuffixPattern = /\s+(of Flickering Might|of Resolute Force|of Striking Power|of Exalted Dominion|of Transcendent Power)$/i;
+    clean = clean.replace(enhSuffixPattern, "").trim();
+    clean = clean.replace(/(\[NM\]|\(Refining\)|\(In Progress\)|Work in Progress:\s*|\+\d+\s*Enchantment:\s*)/gi, "").trim();
+
+    return clean || rawName;
   }
 
   async _renderInner(data) {
@@ -809,7 +736,6 @@ export class PlayerWorkshopApp extends Application {
         `;
       }).join("");
 
-      // Real-Time Integrity Bar for Magic Projects
       let hpBarHtml = "";
       if (proj.isMagic && proj.baseItemData?.system?.hp) {
         const curHp = proj.baseItemData.system.hp.value ?? proj.baseItemData.system.hp.max ?? 10;
@@ -817,9 +743,9 @@ export class PlayerWorkshopApp extends Application {
         const hpPct = Math.min(100, Math.max(0, Math.round((curHp / maxHp) * 100)));
         hpBarHtml = `
           <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px; font-size:0.75em;">
-            <strong style="color:${curHp <= 0 ? '#c0392b' : curHp <= maxHp * 0.5 ? '#d35400' : '#27ae60'};">Item Integrity:</strong>
+            <strong style="color:${curHp <= 0 ? '#c0392b' : curHp <= maxHp * 0.25 ? '#d35400' : '#27ae60'};">Item Integrity:</strong>
             <div style="flex:1; background:#e0e0e0; height:10px; border-radius:3px; overflow:hidden; position:relative;">
-              <div style="background:${curHp <= 0 ? '#c0392b' : curHp <= maxHp * 0.5 ? '#e67e22' : '#2ecc71'}; width:${hpPct}%; height:100%;"></div>
+              <div style="background:${curHp <= 0 ? '#c0392b' : curHp <= maxHp * 0.25 ? '#e67e22' : '#2ecc71'}; width:${hpPct}%; height:100%;"></div>
             </div>
             <span><strong>${curHp} / ${maxHp} HP</strong></span>
           </div>
@@ -892,7 +818,6 @@ export class PlayerWorkshopApp extends Application {
       </div>
     `).join("");
 
-    // REPAIR TAB ROWS
     const repairRows = data.repairableInventoryItems.map(i => {
       const curHp = i.system?.hp?.value ?? i.system?.hp?.max ?? 10;
       const maxHp = i.system?.hp?.max ?? curHp;
@@ -943,7 +868,7 @@ export class PlayerWorkshopApp extends Application {
     const html = `
       <div style="display:flex; flex-direction:column; height:100%; gap:8px; padding:8px; font-family:var(--font-primary);">
         
-        <!-- HEADER NAVIGATION TABS (4 TABS) -->
+        <!-- HEADER NAVIGATION TABS -->
         <nav style="display:flex; gap:6px; border-bottom:2px solid var(--color-border-light-2); padding-bottom:6px;">
           <button type="button" class="workshop-tab-btn ${data.activeTab === "bench" ? "active" : ""}" data-tab="bench" style="flex:1; padding:6px; font-weight:bold; cursor:pointer; background:${data.activeTab === "bench" ? "#2f3542" : "#dfe4ea"}; color:${data.activeTab === "bench" ? "#fff" : "#2f3542"}; border:1px solid #747d8c; border-radius:4px;">
             📐 Recipe Bench
@@ -1192,8 +1117,9 @@ export class PlayerWorkshopApp extends Application {
 
                   <div style="background:#fffaf0; border:1px solid #feebc8; border-radius:4px; padding:5px 8px; font-size:0.75em; color:#7b341e; line-height:1.35;">
                     <div>• <strong>Repair DC:</strong> ${data.repairRequirements.dc} (Highest DC of Base or Enchantment)</div>
-                    <div>• <strong>Restoration Rate:</strong> Restores $\\lfloor \\text{Roll} / 10 \\rfloor$ HP per shift on success.</div>
-                    <div>• <strong>Failure Rule:</strong> Wasted time only; no damage dealt on failed repair shifts.</div>
+                    <div>• <strong>Restoration Rate:</strong> Restores ⌊Roll / 10⌋ HP per shift on success.</div>
+                    <div>• <strong>Integrity Milestone:</strong> Reaching 25% Max HP removes the Broken condition.</div>
+                    <div>• <strong>Failure Rule:</strong> Wasted time only; no structural damage on failed repair shifts.</div>
                   </div>
                 </div>
 
@@ -1212,28 +1138,6 @@ export class PlayerWorkshopApp extends Application {
       </div>
     `;
     return $(html);
-  }
-
-  _cleanBaseItemName(rawName) {
-    let clean = (rawName || "").trim();
-
-    const prefixValues = Object.values(CRAFT_TIER_PREFIXES);
-    const prefixRegex = new RegExp(`^(${prefixValues.join("|")})\\s+`, "i");
-    while (prefixRegex.test(clean)) {
-      clean = clean.replace(prefixRegex, "").trim();
-    }
-
-    const matNames = Object.values(SPECIAL_MATERIALS).map(m => m.name).filter(n => n !== "Base");
-    const matRegex = new RegExp(`^(${matNames.join("|")})\\s+`, "i");
-    while (matRegex.test(clean)) {
-      clean = clean.replace(matRegex, "").trim();
-    }
-
-    const enhSuffixPattern = /\s+(of Flickering Might|of Resolute Force|of Striking Power|of Exalted Dominion|of Transcendent Power)$/i;
-    clean = clean.replace(enhSuffixPattern, "").trim();
-    clean = clean.replace(/(\[NM\]|\(Refining\)|\(In Progress\)|Work in Progress:\s*|\+\d+\s*Enchantment:\s*)/gi, "").trim();
-
-    return clean || rawName;
   }
 
   activateListeners(html) {
@@ -1308,7 +1212,15 @@ export class PlayerWorkshopApp extends Application {
 
     html.find('.magic-select-row').click(e => {
       const id = $(e.currentTarget).data('id');
-      this.selectedMagicItem = this.actor.items.get(id);
+      const targetItem = this.actor.items.get(id);
+      
+      const curHp = targetItem.system?.hp?.value ?? targetItem.system?.hp?.max ?? 10;
+      const maxHp = targetItem.system?.hp?.max ?? curHp;
+      if (targetItem.system?.broken || curHp <= 0 || curHp < Math.ceil(maxHp * 0.25)) {
+        return ui.notifications.error("This item is broken or severely damaged! You must repair it on the Repair tab before enchanting.");
+      }
+
+      this.selectedMagicItem = targetItem;
       this.selectedMagicProperties.clear();
       this.render();
     });
@@ -1356,7 +1268,6 @@ export class PlayerWorkshopApp extends Application {
         return ui.notifications.error("Missing required materials to perform repair!");
       }
 
-      // Consume half-stock materials if not waived
       if (!this.waiveRepairMaterials) {
         for (const ing of rep.ingredients) {
           let needed = ing.qty;
@@ -1395,14 +1306,21 @@ export class PlayerWorkshopApp extends Application {
         const curHp = this.selectedRepairItem.system?.hp?.value ?? 0;
         const maxHp = this.selectedRepairItem.system?.hp?.max ?? (curHp + 10);
         const newHp = Math.min(maxHp, curHp + hpRestored);
-        const isStillBroken = newHp <= Math.floor(maxHp / 2);
+        
+        // Remove broken condition if restored to >= 25% Max HP
+        const wasBroken = this.selectedRepairItem.system?.broken === true;
+        const isStillBroken = newHp < Math.ceil(maxHp * 0.25);
 
         await this.selectedRepairItem.update({
           "system.hp.value": newHp,
           "system.broken": isStillBroken
         });
 
-        ui.notifications.info(`Repair Successful! Restored +${hpRestored} HP (${newHp}/${maxHp} HP).`);
+        if (wasBroken && !isStillBroken) {
+          ui.notifications.info(`Integrity restored past 25% (${newHp}/${maxHp} HP)! The Broken condition has been removed.`);
+        } else {
+          ui.notifications.info(`Repair Successful! Restored +${hpRestored} HP (${newHp}/${maxHp} HP).`);
+        }
       } else {
         ui.notifications.warn(`Repair Shift Failed (Roll ${totalRoll} vs DC ${rep.dc}). Time expended with no structural restoration.`);
       }
@@ -1529,6 +1447,12 @@ export class PlayerWorkshopApp extends Application {
     html.find('#start-magic-project-btn').click(async () => {
       if (!this.selectedMagicItem) return;
 
+      const curHp = this.selectedMagicItem.system?.hp?.value ?? this.selectedMagicItem.system?.hp?.max ?? 10;
+      const maxHp = this.selectedMagicItem.system?.hp?.max ?? curHp;
+      if (this.selectedMagicItem.system?.broken || curHp <= 0 || curHp < Math.ceil(maxHp * 0.25)) {
+        return ui.notifications.error("Cannot enchant a broken or severely damaged item! Repair it first.");
+      }
+
       const isArmorEnchant = this.selectedMagicItem.type === "armor" || this.selectedMagicItem.system?.armor !== undefined;
       const customProps = getSafeSetting("customProperties", {});
       const availableProps = isArmorEnchant ? { ...ARMOR_ENCHANTMENTS, ...customProps } : { ...WEAPON_ENCHANTMENTS, ...customProps };
@@ -1571,6 +1495,9 @@ export class PlayerWorkshopApp extends Application {
       const baseItemBackup = this.selectedMagicItem.toObject();
       const baseItemDocId = this.selectedMagicItem.id;
       
+      // Ensure HP is preserved precisely
+      baseItemBackup.system.hp = { value: curHp, max: maxHp, base: maxHp };
+
       await this.selectedMagicItem.delete();
 
       const gmSettings = getSafeSetting("workshopGmConfig", { failMode: "strikes", fixedStrikes: 3 });
@@ -1692,7 +1619,6 @@ export class PlayerWorkshopApp extends Application {
         shiftProgress = ((totalRoll * proj.dc) / 3000) * velocity * buffInfo.totalSpeedMult;
       }
 
-      // Configurable Degrees of Success and Failure
       const sStep = gmConfig.successStepMos || 50;
       const fStep = gmConfig.failureStepMof || 40;
       let shiftTier = 0;
@@ -1735,41 +1661,42 @@ export class PlayerWorkshopApp extends Application {
         // SANELY SCALED BACKLASH DAMAGE
         if (proj.isMagic && proj.baseItemData?.system?.hp) {
           const absMos = Math.abs(mos);
-          let degreeMult = 1.0;
           let degreeLabel = "Minor Stress";
+          let baseDmg = 2 + Math.floor(Math.random() * 2); // 2-3 HP
 
           if (isNatFlaw || absMos > 100) {
-            degreeMult = 2.5;
             degreeLabel = "Catastrophic Backlash";
+            baseDmg = 12 + Math.floor(Math.random() * 6); // 12-17 HP
           } else if (absMos > 50) {
-            degreeMult = 1.75;
             degreeLabel = "Severe Rupture";
+            baseDmg = 7 + Math.floor(Math.random() * 4); // 7-10 HP
           } else if (absMos > 25) {
-            degreeMult = 1.25;
             degreeLabel = "Moderate Fracture";
+            baseDmg = 4 + Math.floor(Math.random() * 3); // 4-6 HP
           }
 
           const baseSeverity = gmConfig.backlashSeverityMult ?? 1.0;
-          const rawBacklash = Math.max(1, Math.round(((absMos / 40) * 8) * degreeMult * baseSeverity));
+          const rawBacklash = Math.max(1, Math.round(baseDmg * baseSeverity));
           
           let absorbed = 0;
+          const itemHardness = (typeof proj.baseItemData.system.hardness === "object" ? proj.baseItemData.system.hardness.value : proj.baseItemData.system.hardness) || 10;
           if (gmConfig.hardnessSoakEnabled !== false) {
-            const itemHardness = (typeof proj.baseItemData.system.hardness === "object" ? proj.baseItemData.system.hardness.value : proj.baseItemData.system.hardness) || 10;
             absorbed = Math.min(rawBacklash - 1, Math.floor(itemHardness / 10));
           }
 
-          const netDmg = Math.max(1, rawBacklash - absorbed);
+          const netDmg = Math.max(1, rawBacklash - Math.max(0, absorbed));
 
           let curHp = proj.baseItemData.system.hp.value ?? proj.baseItemData.system.hp.max ?? 10;
+          const maxHp = proj.baseItemData.system.hp.max ?? curHp;
           curHp = Math.max(0, curHp - netDmg);
           proj.baseItemData.system.hp.value = curHp;
 
-          if (curHp <= 0) {
+          if (curHp <= 0 || curHp < Math.ceil(maxHp * 0.25)) {
             proj.baseItemData.system.broken = true;
           }
 
-          backlashLogText = `💀 ${degreeLabel}! -${netDmg} HP (${curHp}/${proj.baseItemData.system.hp.max || curHp}) | Strike (-${(shiftProgress * 0.15).toFixed(1)} GP)`;
-          ui.notifications.warn(`Arcane Backlash (${degreeLabel})! ${proj.baseItemData.name} took ${netDmg} damage (${curHp} HP left).`);
+          backlashLogText = `💀 ${degreeLabel}! -${netDmg} HP (${curHp}/${maxHp}) | Strike (-${(shiftProgress * 0.15).toFixed(1)} GP)`;
+          ui.notifications.warn(`Arcane Backlash (${degreeLabel})! ${proj.baseItemData.name} took ${netDmg} damage (${curHp}/${maxHp} HP remaining).`);
         }
 
         proj.shiftsLogged.push({ 
@@ -1812,12 +1739,22 @@ export class PlayerWorkshopApp extends Application {
 
           if (proj.isMagic && proj.baseItemData) {
             const restoredData = foundry.utils.deepClone(proj.baseItemData);
-            if (res.isBroken || (restoredData.system.hp?.value ?? 1) <= 0) {
-              restoredData.system.hp = restoredData.system.hp || {};
-              restoredData.system.hp.value = 0;
-              restoredData.system.broken = true;
+            const targetHp = (res.isBroken || (restoredData.system.hp?.value ?? 1) <= 0) ? 0 : (restoredData.system.hp?.value ?? 10);
+            const targetMaxHp = restoredData.system.hp?.max ?? 10;
+            const isBrokenCondition = targetHp <= 0 || targetHp < Math.ceil(targetMaxHp * 0.25);
+
+            restoredData.system.hp = { value: targetHp, max: targetMaxHp, base: targetMaxHp };
+            restoredData.system.broken = isBrokenCondition;
+
+            // TWO-STEP ITEM RESTORATION TO PRESERVE 0 HP
+            const [restoredDoc] = await this.actor.createEmbeddedDocuments("Item", [restoredData]);
+            if (restoredDoc) {
+              await restoredDoc.update({
+                "system.hp.value": targetHp,
+                "system.hp.max": targetMaxHp,
+                "system.broken": isBrokenCondition
+              });
             }
-            await this.actor.createEmbeddedDocuments("Item", [restoredData]);
           }
 
           projects.splice(idx, 1);
@@ -1852,7 +1789,6 @@ export class PlayerWorkshopApp extends Application {
 
       await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
 
-      // PROMPT FOR REMAINING TIME IF COMPLETED EARLY
       if (earlyFinished && hoursWorked < totalHours) {
         const remainingHours = totalHours - hoursWorked;
         const daysLeft = Math.floor(remainingHours / 8);
@@ -1864,11 +1800,11 @@ export class PlayerWorkshopApp extends Application {
           title: "🎉 Project Finished Early!",
           content: `
             <div style="font-size:0.9em; padding:6px; line-height:1.4;">
-              <p><strong>${proj.name}</strong> was finished on <strong>Day ${finishedDay}, Hour ${finishedHour}</strong>!</p>
+              <p><strong>${proj.name}</strong> was completed on <strong>Day ${finishedDay}, Hour ${finishedHour}</strong>!</p>
               <p style="background:#e8f4fd; border:1px solid #b6e0fe; padding:6px; border-radius:4px; color:#1a365d;">
                 ⏱️ You have <strong>${daysLeft > 0 ? `${daysLeft} workdays and ` : ''}${hoursLeft} hours</strong> of downtime remaining from your shift.
               </p>
-              <p>Would you like to claim this finished item right now and return to the workbench to start a new project with your remaining time?</p>
+              <p>Would you like to claim this finished item right now and return to the workbench to start another project with your remaining time?</p>
             </div>
           `,
           buttons: {
@@ -1892,9 +1828,6 @@ export class PlayerWorkshopApp extends Application {
       }
     });
 
-    /* -------------------------------------------- */
-    /* Claim Finished Item & Post Showcase Card     */
-    /* -------------------------------------------- */
     html.find('.claim-project-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
       await this._claimProjectItem(idx);
@@ -1915,12 +1848,21 @@ export class PlayerWorkshopApp extends Application {
 
           if (proj.isMagic && proj.baseItemData) {
             const restoredData = foundry.utils.deepClone(proj.baseItemData);
-            if ((restoredData.system.hp?.value ?? 1) <= 0) {
-              restoredData.system.hp = restoredData.system.hp || {};
-              restoredData.system.hp.value = 0;
-              restoredData.system.broken = true;
+            const targetHp = restoredData.system.hp?.value ?? restoredData.system.hp?.max ?? 10;
+            const targetMaxHp = restoredData.system.hp?.max ?? targetHp;
+            const isBrokenCondition = targetHp <= 0 || targetHp < Math.ceil(targetMaxHp * 0.25);
+
+            restoredData.system.hp = { value: targetHp, max: targetMaxHp, base: targetMaxHp };
+            restoredData.system.broken = isBrokenCondition;
+
+            const [restoredDoc] = await this.actor.createEmbeddedDocuments("Item", [restoredData]);
+            if (restoredDoc) {
+              await restoredDoc.update({
+                "system.hp.value": targetHp,
+                "system.hp.max": targetMaxHp,
+                "system.broken": isBrokenCondition
+              });
             }
-            await this.actor.createEmbeddedDocuments("Item", [restoredData]);
           }
 
           if (proj.consumedIngredients) {
@@ -2110,7 +2052,7 @@ export class PlayerWorkshopApp extends Application {
         identifiedTraits.push(`<strong>Precision:</strong> Crit range ${itemData.system.actions[0]?.critRange}–200, multiplier ×${itemData.system.actions[0]?.critMult}.`);
       }
     } else {
-      // PRESERVE MUNDANE CHARACTERISTICS AND CURRENT HP
+      // PRESERVE MUNDANE CHARACTERISTICS AND DAMAGE STATUS
       tagsList.push("Magic Infused");
       
       if (Array.isArray(proj.baseItemData.system?.tags)) {
@@ -2124,7 +2066,6 @@ export class PlayerWorkshopApp extends Application {
         prefix = nameParts[0];
       }
 
-      // Sync preserved HP (carrying any backlash damage taken during project)
       const currentHp = proj.baseItemData.system?.hp?.value ?? itemData.system?.hp?.value ?? itemData.system?.hp?.max ?? 10;
       const maxHp = proj.baseItemData.system?.hp?.max ?? itemData.system?.hp?.max ?? currentHp;
       itemData.system.hp = {
@@ -2132,7 +2073,7 @@ export class PlayerWorkshopApp extends Application {
         max: maxHp,
         base: maxHp
       };
-      itemData.system.broken = currentHp <= Math.floor(maxHp / 2);
+      itemData.system.broken = currentHp <= 0 || currentHp < Math.ceil(maxHp * 0.25);
     }
 
     itemData.flags = itemData.flags || {};
@@ -2140,20 +2081,24 @@ export class PlayerWorkshopApp extends Application {
     itemData.system.masterwork = true;
     itemData.system.identified = true;
 
-    // Magic Infusion
+    // Magic Infusion with Enhancement Variance
     let propPrefixes = [];
     let enhSuffix = "";
 
     if (proj.isMagic) {
       const enhLevel = Number(proj.magicEnhLevel || 0);
       if (enhLevel > 0) {
-        itemData.system.enh = enhLevel * 10;
-        if (itemData.system.armor) itemData.system.armor.enh = itemData.system.enh;
+        // Evaluate magic resonance variance
+        const magicEval = evaluatePhase(phase3);
+        const variedEnh = Math.max(1, Math.round((enhLevel * 10) * magicEval.mult));
+
+        itemData.system.enh = variedEnh;
+        if (itemData.system.armor) itemData.system.armor.enh = variedEnh;
 
         const titles = { 1: "of Flickering Might", 2: "of Resolute Force", 3: "of Striking Power", 4: "of Exalted Dominion", 5: "of Transcendent Power" };
         enhSuffix = ` ${titles[enhLevel] || ""}`;
-        tagsList.push(`Magic Enhancement: +${itemData.system.enh}`);
-        identifiedTraits.push(`<strong>Enhancement Bonus (+${itemData.system.enh}):</strong> Provides +${itemData.system.enh} to attack/damage/AC.`);
+        tagsList.push(`Magic Enhancement: +${variedEnh}`);
+        identifiedTraits.push(`<strong>Enhancement Bonus (+${variedEnh}):</strong> Infused with +${variedEnh} attack/damage/AC resonance.`);
       }
 
       const customProps = getSafeSetting("customProperties", {});
@@ -2204,12 +2149,23 @@ export class PlayerWorkshopApp extends Application {
       <p><strong>Crafting Tags:</strong><br/>${tagHtml}</p>
     `.trim();
 
-    await this.actor.createEmbeddedDocuments("Item", [itemData]);
+    // TWO-STEP ITEM CREATION & HP SYNCHRONIZATION
+    const [createdDoc] = await this.actor.createEmbeddedDocuments("Item", [itemData]);
+    if (createdDoc) {
+      const finalHp = itemData.system.hp?.value ?? itemData.system.hp?.max ?? 10;
+      const finalMaxHp = itemData.system.hp?.max ?? finalHp;
+      const isBroken = finalHp <= 0 || finalHp < Math.ceil(finalMaxHp * 0.25);
+
+      await createdDoc.update({
+        "system.hp.value": finalHp,
+        "system.hp.max": finalMaxHp,
+        "system.broken": isBroken
+      });
+    }
 
     projects.splice(idx, 1);
     await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
 
-    // Completion Showcase Chat Card
     const completionCardHtml = `
       <div class="aeris-craft-completion-card" style="border: 1px solid #747d8c; border-radius: 6px; overflow: hidden; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.15); font-family: var(--font-primary);">
         <div style="background: linear-gradient(135deg, #2f3542, #1e272e); color: #fff; padding: 8px 10px; display: flex; align-items: center; gap: 8px;">
