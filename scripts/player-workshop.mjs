@@ -1,6 +1,6 @@
 /**
  * @file player-workshop.mjs
- * Player-Facing Procedural Crafting Workbench with 5-Roll Minimum, Arcane Backlash, Preserved Mundane Stats, and Configurable DCs
+ * Player-Facing Procedural Crafting Workbench with Item HP Integrity Tracking, Configurable Backlash Degrees, and Broken State Handling
  */
 
 import { SPECIAL_MATERIALS, WEAPON_ENCHANTMENTS, ARMOR_ENCHANTMENTS, COMPOUND_FUSIONS, CRAFT_TIER_PREFIXES } from "./enchantment-registry.mjs";
@@ -630,7 +630,6 @@ export class PlayerWorkshopApp extends Application {
       magicReagentsInfo = this._calculateMagicReagents(totalEquivalentBonus, this.selectedMagicProperties, this.selectedMagicItem);
     }
 
-    // Dynamic Delta DC Indicator for Properties
     const getPropertyMarginalDc = (propCost) => {
       const curT = totalEquivalentBonus;
       const nextT = curT + propCost;
@@ -684,6 +683,28 @@ export class PlayerWorkshopApp extends Application {
     };
   }
 
+  _cleanBaseItemName(rawName) {
+    let clean = (rawName || "").trim();
+
+    const prefixValues = Object.values(CRAFT_TIER_PREFIXES);
+    const prefixRegex = new RegExp(`^(${prefixValues.join("|")})\\s+`, "i");
+    while (prefixRegex.test(clean)) {
+      clean = clean.replace(prefixRegex, "").trim();
+    }
+
+    const matNames = Object.values(SPECIAL_MATERIALS).map(m => m.name).filter(n => n !== "Base");
+    const matRegex = new RegExp(`^(${matNames.join("|")})\\s+`, "i");
+    while (matRegex.test(clean)) {
+      clean = clean.replace(matRegex, "").trim();
+    }
+
+    const enhSuffixPattern = /\s+(of Flickering Might|of Resolute Force|of Striking Power|of Exalted Dominion|of Transcendent Power)$/i;
+    clean = clean.replace(enhSuffixPattern, "").trim();
+    clean = clean.replace(/(\[NM\]|\(Refining\)|\(In Progress\)|Work in Progress:\s*|\+\d+\s*Enchantment:\s*)/gi, "").trim();
+
+    return clean || rawName;
+  }
+
   async _renderInner(data) {
     const discOpts = data.disciplines.map(d => 
       `<option value="${d.key}" ${d.key === data.selectedDiscipline ? "selected" : ""}>${d.label} (+${d.mod + data.buffInfo.totalCheckMod} | ${d.rank} Ranks${d.isGoldMode ? ' ⚡ Gold' : ''}${d.hasMagicAccess ? ' ✨ Magic' : ''})</option>`
@@ -721,6 +742,23 @@ export class PlayerWorkshopApp extends Application {
         `;
       }).join("");
 
+      // Visual Item HP Integrity Bar for Magic Projects
+      let hpBarHtml = "";
+      if (proj.isMagic && proj.baseItemData?.system?.hp) {
+        const curHp = proj.baseItemData.system.hp.value ?? proj.baseItemData.system.hp.max ?? 10;
+        const maxHp = proj.baseItemData.system.hp.max ?? curHp;
+        const hpPct = Math.min(100, Math.max(0, Math.round((curHp / maxHp) * 100)));
+        hpBarHtml = `
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px; font-size:0.75em;">
+            <strong style="color:${curHp <= 0 ? '#c0392b' : curHp <= maxHp * 0.5 ? '#d35400' : '#27ae60'};">Item Integrity:</strong>
+            <div style="flex:1; background:#e0e0e0; height:10px; border-radius:3px; overflow:hidden; position:relative;">
+              <div style="background:${curHp <= 0 ? '#c0392b' : curHp <= maxHp * 0.5 ? '#e67e22' : '#2ecc71'}; width:${hpPct}%; height:100%;"></div>
+            </div>
+            <span><strong>${curHp} / ${maxHp} HP</strong></span>
+          </div>
+        `;
+      }
+
       return `
         <div style="background:#fff; border:1px solid #ced6e0; border-radius:6px; padding:10px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -741,6 +779,8 @@ export class PlayerWorkshopApp extends Application {
               ${proj.currentGp.toFixed(1)} / ${proj.targetGp} GP (${pct}%) — Shift ${proj.shiftsLogged.length}/${proj.requiredRolls} (Min 5 Rolls)
             </span>
           </div>
+
+          ${hpBarHtml}
 
           <!-- DETAILED ROLL LOG -->
           <details open style="background:#f8f9fa; border:1px solid #ced6e0; border-radius:4px; padding:6px; margin-bottom:6px;">
@@ -1041,28 +1081,6 @@ export class PlayerWorkshopApp extends Application {
     return $(html);
   }
 
-  _cleanBaseItemName(rawName) {
-    let clean = (rawName || "").trim();
-
-    const prefixValues = Object.values(CRAFT_TIER_PREFIXES);
-    const prefixRegex = new RegExp(`^(${prefixValues.join("|")})\\s+`, "i");
-    while (prefixRegex.test(clean)) {
-      clean = clean.replace(prefixRegex, "").trim();
-    }
-
-    const matNames = Object.values(SPECIAL_MATERIALS).map(m => m.name).filter(n => n !== "Base");
-    const matRegex = new RegExp(`^(${matNames.join("|")})\\s+`, "i");
-    while (matRegex.test(clean)) {
-      clean = clean.replace(matRegex, "").trim();
-    }
-
-    const enhSuffixPattern = /\s+(of Flickering Might|of Resolute Force|of Striking Power|of Exalted Dominion|of Transcendent Power)$/i;
-    clean = clean.replace(enhSuffixPattern, "").trim();
-    clean = clean.replace(/(\[NM\]|\(Refining\)|\(In Progress\)|Work in Progress:\s*|\+\d+\s*Enchantment:\s*)/gi, "").trim();
-
-    return clean || rawName;
-  }
-
   activateListeners(html) {
     super.activateListeners(html);
 
@@ -1203,7 +1221,6 @@ export class PlayerWorkshopApp extends Application {
       const targetGp = isRefining ? (this.selectedBaseItem.targetPrice || 50) : basePrice + (this.isMasterwork ? 300 : 0);
       const divisor = currentDisc.isGoldMode ? 150 : 35;
       
-      // GUARANTEE MINIMUM 5 ROLLS FOR 5 FACETS
       const requiredRolls = Math.max(5, Math.ceil(targetGp / divisor));
       const dc = isRefining ? this.selectedBaseItem.dc : baseMetrics.dc + this.acceleratedDcBonus;
       const prefixLabel = isRefining ? "" : this.isMasterwork ? "Masterwork " : "";
@@ -1335,7 +1352,6 @@ export class PlayerWorkshopApp extends Application {
       const oldCost = Math.pow(oldTier, 2) * baseMultCost;
       const targetGp = Math.max(baseMultCost, (Math.pow(totalEqBonus, 2) * baseMultCost) - oldCost);
       
-      // GUARANTEE MINIMUM 5 ENCHANTING ROLLS
       const requiredRolls = Math.max(5, Math.ceil(targetGp / 250));
       const compoundingDc = magicBaseDc + (magicLinear * totalEqBonus) + (magicQuad * Math.pow(totalEqBonus, 2)) + (this.isRushedMagic ? rushedPenalty : 0);
 
@@ -1406,7 +1422,10 @@ export class PlayerWorkshopApp extends Application {
       const disciplines = this._getAvailableCraftDisciplines();
       const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
       const buffInfo = this._getActorBuffModifiers();
-      const gmConfig = getSafeSetting("workshopGmConfig", { flawBoonEnabled: true, flawBoonMagnitude: 1 });
+      const gmConfig = getSafeSetting("workshopGmConfig", { 
+        flawBoonEnabled: true, flawBoonMagnitude: 1, 
+        backlashSeverityMult: 1.0, hardnessSoakEnabled: true 
+      });
 
       const totalMod = currentDisc.mod + buffInfo.totalCheckMod;
       const roll = await new Roll("1d200 + @mod", { mod: totalMod }).evaluate({ async: true });
@@ -1470,19 +1489,44 @@ export class PlayerWorkshopApp extends Application {
 
         let backlashLogText = `Failed Strike (-${(shiftProgress * 0.15).toFixed(1)} GP)`;
 
-        // ARCANE BACKLASH DAMAGE TO ITEM'S CURRENT HP
+        // ARCANE BACKLASH DAMAGE TO ITEM'S CURRENT HP WITH DEGREES OF FAILURE
         if (proj.isMagic && proj.baseItemData?.system?.hp) {
-          const itemHardness = (typeof proj.baseItemData.system.hardness === "object" ? proj.baseItemData.system.hardness.value : proj.baseItemData.system.hardness) || 10;
-          const rawBacklash = Math.max(2, Math.round((Math.abs(mos) / 20) * 10));
-          const absorbed = Math.min(rawBacklash - 1, Math.round(itemHardness / 20));
+          const absMos = Math.abs(mos);
+          let degreeMult = 1.0;
+          let degreeLabel = "Minor Stress";
+
+          if (isNatFlaw || absMos > 100) {
+            degreeMult = 4.0;
+            degreeLabel = "Catastrophic Backlash";
+          } else if (absMos > 50) {
+            degreeMult = 2.75;
+            degreeLabel = "Severe Rupture";
+          } else if (absMos > 25) {
+            degreeMult = 1.75;
+            degreeLabel = "Moderate Fracture";
+          }
+
+          const baseSeverity = gmConfig.backlashSeverityMult ?? 1.0;
+          const rawBacklash = Math.max(2, Math.round(((absMos / 15) * 10) * degreeMult * baseSeverity));
+          
+          let absorbed = 0;
+          if (gmConfig.hardnessSoakEnabled !== false) {
+            const itemHardness = (typeof proj.baseItemData.system.hardness === "object" ? proj.baseItemData.system.hardness.value : proj.baseItemData.system.hardness) || 10;
+            absorbed = Math.min(rawBacklash - 1, Math.floor(itemHardness / 10));
+          }
+
           const netDmg = Math.max(1, rawBacklash - absorbed);
 
           let curHp = proj.baseItemData.system.hp.value ?? proj.baseItemData.system.hp.max ?? 10;
           curHp = Math.max(0, curHp - netDmg);
           proj.baseItemData.system.hp.value = curHp;
 
-          backlashLogText = `💀 Backlash! -${netDmg} Item HP (${curHp}/${proj.baseItemData.system.hp.max || curHp}) | Failed Strike (-${(shiftProgress * 0.15).toFixed(1)} GP)`;
-          ui.notifications.warn(`Arcane Backlash! ${proj.baseItemData.name} sustained ${netDmg} HP damage (${curHp} HP remaining).`);
+          if (curHp <= 0) {
+            proj.baseItemData.system.broken = true;
+          }
+
+          backlashLogText = `💀 ${degreeLabel}! -${netDmg} HP (${curHp}/${proj.baseItemData.system.hp.max || curHp}) | Strike (-${(shiftProgress * 0.15).toFixed(1)} GP)`;
+          ui.notifications.warn(`Arcane Backlash (${degreeLabel})! ${proj.baseItemData.name} took ${netDmg} damage (${curHp} HP left).`);
         }
 
         proj.shiftsLogged.push({ 
@@ -1516,11 +1560,15 @@ export class PlayerWorkshopApp extends Application {
 
         if (proj.isMagic && proj.baseItemData) {
           const restoredData = foundry.utils.deepClone(proj.baseItemData);
-          if (proj.isUpgrade) {
+          if (res.isBroken || (restoredData.system.hp?.value ?? 1) <= 0) {
+            restoredData.system.hp = restoredData.system.hp || {};
+            restoredData.system.hp.value = 0;
+            restoredData.system.broken = true;
+            ui.notifications.error(`Catastrophic Collapse: ${restoredData.name} was broken during enchanting!`);
+          } else if (proj.isUpgrade) {
             const curEnh = restoredData.system?.enh || 10;
-            const damagedEnh = Math.max(0, curEnh - 10);
-            restoredData.system.enh = damagedEnh;
-            if (restoredData.system.armor) restoredData.system.armor.enh = damagedEnh;
+            restoredData.system.enh = Math.max(0, curEnh - 10);
+            if (restoredData.system.armor) restoredData.system.armor.enh = restoredData.system.enh;
           }
           await this.actor.createEmbeddedDocuments("Item", [restoredData]);
         }
@@ -1531,7 +1579,6 @@ export class PlayerWorkshopApp extends Application {
         return;
       }
 
-      // ENSURE MINIMUM 5 ROLLS ARE LOGGED ON EARLY COMPLETION
       if (proj.currentGp >= proj.targetGp && proj.shiftsLogged.length < Math.max(5, proj.requiredRolls)) {
         const needed = Math.max(5, proj.requiredRolls) - proj.shiftsLogged.length;
         ui.notifications.info(`GP Goal achieved early! Rolling remaining ${needed} modifier checks.`);
@@ -1569,7 +1616,13 @@ export class PlayerWorkshopApp extends Application {
           if (pItem) await pItem.delete();
 
           if (proj.isMagic && proj.baseItemData) {
-            await this.actor.createEmbeddedDocuments("Item", [proj.baseItemData]);
+            const restoredData = foundry.utils.deepClone(proj.baseItemData);
+            if (res.isBroken || (restoredData.system.hp?.value ?? 1) <= 0) {
+              restoredData.system.hp = restoredData.system.hp || {};
+              restoredData.system.hp.value = 0;
+              restoredData.system.broken = true;
+            }
+            await this.actor.createEmbeddedDocuments("Item", [restoredData]);
           }
 
           projects.splice(idx, 1);
@@ -1579,7 +1632,6 @@ export class PlayerWorkshopApp extends Application {
         }
       }
 
-      // ENSURE MINIMUM 5 ROLLS ARE LOGGED ON EARLY COMPLETION
       if (proj.currentGp >= proj.targetGp && proj.shiftsLogged.length < Math.max(5, proj.requiredRolls)) {
         const disciplines = this._getAvailableCraftDisciplines();
         const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
@@ -1663,7 +1715,6 @@ export class PlayerWorkshopApp extends Application {
       const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
       const buffInfo = this._getActorBuffModifiers();
 
-      // GUARANTEE MINIMUM 5 FACET ROLLS ARE COMPLETED
       while (proj.shiftsLogged.length < 5) {
         const autoRoll = await new Roll("1d200 + @mod", { mod: currentDisc.mod + buffInfo.totalCheckMod }).evaluate({ async: true });
         proj.shiftsLogged.push({ roll: autoRoll.total, mos: autoRoll.total - proj.dc, success: true, phaseLabel: "Instant Tuning", targetFacet: "Facet Allocation", shiftTier: 1, shiftPctMod: 6.25, modifierText: `Auto: ${autoRoll.total}` });
@@ -1697,12 +1748,10 @@ export class PlayerWorkshopApp extends Application {
         return { mult, tier, boonCount, flawCount };
       };
 
-      // ─── CRUCIAL: PRESERVE MUNDANE STATS WHEN ENCHANTING EXISTING ITEMS ───
       let prefix = "Serviceable";
       let tierSign = "+1";
 
       if (!proj.isMagic) {
-        // Evaluate fresh physical rolls for mundane crafting
         const hardEval = evaluatePhase(phase1);
         const physEval = evaluatePhase(phase2);
         const precEval = evaluatePhase(phase3);
@@ -1717,7 +1766,6 @@ export class PlayerWorkshopApp extends Application {
         if (precEval.boonCount > 0) tagsList.push("Boon: Flawless Edge");
         if (precEval.flawCount > 0) tagsList.push("Flaw: Imbalanced Polish");
 
-        // Hardness & HP
         let rawHardness = (typeof itemData.system.hardness === "object" ? itemData.system.hardness.value : itemData.system.hardness) || 10;
         let rawBaseHp = (itemData.system.hp?.base ?? itemData.system.hp?.max ?? 0);
 
@@ -1735,7 +1783,6 @@ export class PlayerWorkshopApp extends Application {
         tagsList.push(`Hardness: Tier ${hardEval.tier >= 0 ? `+${hardEval.tier || 1}` : hardEval.tier}`);
         tagsList.push(`Hit Points: Tier ${hardEval.tier >= 0 ? `+${hardEval.tier || 1}` : hardEval.tier}`);
 
-        // Weight
         const weightFactor = Math.max(0.1, 2.0 - physEval.mult);
         const rawWeight = itemData.system?.weight?.value ?? 0;
         if (itemData.system?.weight) {
@@ -1743,7 +1790,6 @@ export class PlayerWorkshopApp extends Application {
         }
         tagsList.push(`Weight: Tier ${physEval.tier >= 0 ? `+${physEval.tier || 1}` : physEval.tier}`);
 
-        // Armor Profile
         if (isArmor && itemData.system?.armor) {
           itemData.system.armor.value = Math.round((itemData.system.armor.value || 0) * 10 * physEval.mult);
           let adjAcp = Math.round((itemData.system.armor.acp || 0) * 10 * (2.0 - physEval.mult));
@@ -1755,7 +1801,6 @@ export class PlayerWorkshopApp extends Application {
           identifiedTraits.push(`<strong>Armor Profile:</strong> AC +${itemData.system.armor.value}, ACP ${itemData.system.armor.acp}.`);
         }
 
-        // Weapon Precision
         if (isWeapon && itemData.system?.actions) {
           itemData.system.actions.forEach(act => {
             act.ability = act.ability || {};
@@ -1781,15 +1826,12 @@ export class PlayerWorkshopApp extends Application {
         // ENCHANTING PRESERVES EXISTING MUNDANE PHYSICAL TRAITS AND TAGS!
         tagsList.push("Magic Infused");
         
-        // Retain existing mundane tags
         if (Array.isArray(proj.baseItemData.system?.tags)) {
           proj.baseItemData.system.tags.forEach(t => {
             if (!t.includes("Magic")) tagsList.push(t);
           });
         }
 
-        // Extract existing craftsmanship prefix if present
-        const cleanBase = this._cleanBaseItemName(proj.baseItemData.name);
         const nameParts = proj.baseItemData.name.split(" ");
         if (Object.values(CRAFT_TIER_PREFIXES).includes(nameParts[0])) {
           prefix = nameParts[0];
@@ -1839,7 +1881,6 @@ export class PlayerWorkshopApp extends Application {
         }
       }
 
-      // Clean Base Name & Synthesize Final Name
       const cleanBaseName = this._cleanBaseItemName(proj.baseItemData.name);
       const matTitle = mat.name !== "Base" && mat.name !== "Steel" ? `${mat.name} ` : "";
       const pPre = propPrefixes.length ? `${propPrefixes.join(" ")} ` : "";
@@ -1871,7 +1912,6 @@ export class PlayerWorkshopApp extends Application {
       projects.splice(idx, 1);
       await this.actor.setFlag(MODULE_ID, "craftingProjects", projects);
 
-      // Post Showcase Summary Chat Card
       const completionCardHtml = `
         <div class="aeris-craft-completion-card" style="border: 1px solid #747d8c; border-radius: 6px; overflow: hidden; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.15); font-family: var(--font-primary);">
           <div style="background: linear-gradient(135deg, #2f3542, #1e272e); color: #fff; padding: 8px 10px; display: flex; align-items: center; gap: 8px;">
@@ -1935,7 +1975,13 @@ export class PlayerWorkshopApp extends Application {
           if (pItem) await pItem.delete();
 
           if (proj.isMagic && proj.baseItemData) {
-            await this.actor.createEmbeddedDocuments("Item", [proj.baseItemData]);
+            const restoredData = foundry.utils.deepClone(proj.baseItemData);
+            if ((restoredData.system.hp?.value ?? 1) <= 0) {
+              restoredData.system.hp = restoredData.system.hp || {};
+              restoredData.system.hp.value = 0;
+              restoredData.system.broken = true;
+            }
+            await this.actor.createEmbeddedDocuments("Item", [restoredData]);
           }
 
           if (proj.consumedIngredients) {
@@ -1965,6 +2011,7 @@ export class PlayerWorkshopApp extends Application {
       flawBoonEnabled: true, limitBreakMinRank: 100, limitBreakMaxDaily: 1,
       simpleMundaneDc: 120, martialMundaneDc: 150, exoticMundaneDc: 180,
       magicBaseDc: 220, magicLinear: 15, magicQuad: 5, magicRushedDc: 50,
+      backlashSeverityMult: 1.0, hardnessSoakEnabled: true,
       rankEnhancementCaps: { 50: 1, 80: 2, 110: 3, 140: 4, 170: 5, 200: 10 }
     });
     const savedPacksMap = getSafeSetting("craftCompendiums", {});
@@ -1997,6 +2044,14 @@ export class PlayerWorkshopApp extends Application {
             <div><label>Linear (×T):</label><input type="number" id="gm-dc-maglin" value="${gmSettings.magicLinear ?? 15}"></div>
             <div><label>Quad (×T²):</label><input type="number" id="gm-dc-magquad" value="${gmSettings.magicQuad ?? 5}"></div>
             <div><label>Rush (+DC):</label><input type="number" id="gm-dc-magrush" value="${gmSettings.magicRushedDc ?? 50}"></div>
+          </div>
+
+          <div style="font-weight:bold; border-bottom:1px solid #ccc; margin:8px 0 6px 0;">Arcane Backlash & Damage Settings</div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-bottom:6px;">
+            <div><label>Backlash Severity Mult:</label><input type="number" step="0.1" id="gm-backlash-mult" value="${gmSettings.backlashSeverityMult ?? 1.0}"></div>
+            <label style="display:flex; align-items:center; gap:4px; margin-top:14px;">
+              <input type="checkbox" id="gm-hardness-soak" ${gmSettings.hardnessSoakEnabled !== false ? "checked" : ""}> Hardness Absorbs Backlash
+            </label>
           </div>
 
           <div style="font-weight:bold; border-bottom:1px solid #ccc; margin:8px 0 6px 0;">Failure & Strike Tolerances</div>
@@ -2051,6 +2106,9 @@ export class PlayerWorkshopApp extends Application {
             const magicQuad = parseInt(dHtml.find('#gm-dc-magquad').val(), 10) || 5;
             const magicRushedDc = parseInt(dHtml.find('#gm-dc-magrush').val(), 10) || 50;
 
+            const backlashSeverityMult = parseFloat(dHtml.find('#gm-backlash-mult').val()) || 1.0;
+            const hardnessSoakEnabled = dHtml.find('#gm-hardness-soak').is(':checked');
+
             await setSafeSetting("workshopGmConfig", {
               ...gmSettings,
               failMode,
@@ -2064,7 +2122,9 @@ export class PlayerWorkshopApp extends Application {
               magicBaseDc,
               magicLinear,
               magicQuad,
-              magicRushedDc
+              magicRushedDc,
+              backlashSeverityMult,
+              hardnessSoakEnabled
             });
 
             const selected = [];

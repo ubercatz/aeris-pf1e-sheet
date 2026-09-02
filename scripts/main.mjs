@@ -16,20 +16,27 @@ Hooks.once("init", () => {
   if (game.system?.id !== "pf1") return;
 
   registerHandlebarsHelpers();
-// World Settings for Workshop GM Failure Rules, Caps, and Limit-Break
-  game.settings.register(MODULE_ID, "workshopGmConfig", {
+game.settings.register(MODULE_ID, "workshopGmConfig", {
     name: "Workshop GM Configuration",
     scope: "world",
     config: false,
     type: Object,
     default: {
       failMode: "strikes",
-      strikeThresholdType: "fixed", // "fixed" | "dynamic"
+      strikeThresholdType: "fixed",
       fixedStrikes: 3,
       flawBoonEnabled: true,
-      flawBoonMagnitude: 1,
       limitBreakMinRank: 100,
       limitBreakMaxDaily: 1,
+      simpleMundaneDc: 120,
+      martialMundaneDc: 150,
+      exoticMundaneDc: 180,
+      magicBaseDc: 220,
+      magicLinear: 15,
+      magicQuad: 5,
+      magicRushedDc: 50,
+      backlashSeverityMult: 1.0, // Multiplier on all enchanting backlash damage
+      hardnessSoakEnabled: true, // Allow hardness to absorb backlash
       rankEnhancementCaps: {
         50: 1,   // Rank 50 = Max +1 (+10)
         80: 2,   // Rank 80 = Max +2 (+20)
