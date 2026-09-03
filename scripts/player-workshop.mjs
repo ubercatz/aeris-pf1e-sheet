@@ -53,7 +53,7 @@ export class PlayerWorkshopApp extends Application {
   constructor(actor, options = {}) {
     super(options);
     this.actor = actor;
-    this.activeTab = "bench"; // "bench" | "magic" | "repair" | "active"
+    this.activeTab = "bench";
     this.selectedDiscipline = options.discipline || "";
     this.compendiumItems = [];
     this.selectedBaseItem = null;
@@ -63,7 +63,6 @@ export class PlayerWorkshopApp extends Application {
     this.searchTerm = "";
     this.recipeSortBy = "name_asc";
 
-    // Magic state
     this.selectedMagicItem = null;
     this.magicEnhLevel = 1;
     this.selectedMagicProperties = new Set();
@@ -71,7 +70,6 @@ export class PlayerWorkshopApp extends Application {
     this.isRushedMagic = false;
     this.applyLimitBreak = false;
 
-    // Repair state
     this.selectedRepairItem = null;
     this.waiveRepairMaterials = false;
   }
@@ -463,6 +461,95 @@ export class PlayerWorkshopApp extends Application {
     return { list: resolved, allSatisfied, residueNeeded };
   }
 
+  async _loadCompendiumItemsForDiscipline(disciplineType) {
+    const savedPacksMap = getSafeSetting("craftCompendiums", {});
+    let packKeys = savedPacksMap[disciplineType];
+
+    const allItemPacks = game.packs.filter(p => p.documentName === "Item");
+
+    let targetPacks = [];
+    if (Array.isArray(packKeys) && packKeys.length > 0) {
+      targetPacks = allItemPacks.filter(p => 
+        packKeys.some(k => k.toLowerCase() === p.collection.toLowerCase() || k.toLowerCase() === p.metadata.id?.toLowerCase())
+      );
+    }
+
+    if (targetPacks.length === 0) {
+      if (["weapon", "bow", "firearm", "siege"].includes(disciplineType)) {
+        targetPacks = allItemPacks.filter(p => p.collection.includes("weapon") || p.metadata.label.toLowerCase().includes("weapon"));
+      } else if (disciplineType === "armor") {
+        targetPacks = allItemPacks.filter(p => p.collection.includes("armor") || p.metadata.label.toLowerCase().includes("armor"));
+      } else {
+        targetPacks = allItemPacks;
+      }
+    }
+
+    const items = [];
+    for (const pack of targetPacks) {
+      const index = await pack.getIndex({
+        fields: ["system.subType", "system.weaponSubtype", "system.equipmentType", "system.armor", "system.slot", "system.price", "system.weaponGroups", "system.baseTypes"]
+      });
+
+      for (const entry of index) {
+        if (this._filterItemByDiscipline(entry, disciplineType)) {
+          entry._packCollection = pack.collection;
+          entry.computedDc = this._computeItemCraftMetrics(entry).dc;
+          items.push(entry);
+        }
+      }
+    }
+    return items;
+  }
+
+  _filterItemByDiscipline(item, disciplineType) {
+    const type = item.type;
+    const subType = (item.system?.subType || item.system?.weaponSubtype || "").toLowerCase();
+    const eqType = (item.system?.equipmentType || "").toLowerCase();
+    const wpnGroup = item.system?.weaponGroups || [];
+    const name = item.name.toLowerCase();
+
+    if (disciplineType === "weapon") {
+      if (type !== "weapon" || subType === "ammo") return false;
+      if (wpnGroup.includes("bows") || wpnGroup.includes("crossbows") || wpnGroup.includes("firearms")) return false;
+      if (/\b(bow|crossbow|pistol|musket|rifle|blunderbuss)\b/i.test(name)) return false;
+      return true;
+    }
+
+    if (disciplineType === "bow") {
+      if (type === "weapon" && (wpnGroup.includes("bows") || wpnGroup.includes("crossbows") || /\b(bow|crossbow|arbalest)\b/i.test(name))) return true;
+      if (type === "ammo" && /\b(arrow|arrows|bolt|bolts)\b/i.test(name)) return true;
+      return false;
+    }
+
+    if (disciplineType === "armor") {
+      if (type === "armor" || type === "shield" || ["armor", "shield"].includes(eqType) || ["armor", "shield"].includes(subType)) return true;
+      return false;
+    }
+
+    if (disciplineType === "firearm") {
+      if (type === "weapon" && (wpnGroup.includes("firearms") || /\b(pistol|musket|rifle|culverin|blunderbuss)\b/i.test(name))) return true;
+      if (type === "ammo" && /\b(bullet|bullets|cartridge|cartridges|powder)\b/i.test(name)) return true;
+      return false;
+    }
+
+    if (disciplineType === "alchemy") {
+      if (subType === "potion" || eqType === "alchemical" || subType === "alchemical" || /\b(alchemist|acid|fire|tanglefoot|smokestick|sunrod|flask)\b/i.test(name)) return true;
+      return false;
+    }
+
+    if (disciplineType === "poison") {
+      if (subType === "poison" || /\b(poison|toxin|venom|bane|belladonna)\b/i.test(name)) return true;
+      return false;
+    }
+
+    if (disciplineType === "siege") {
+      if (wpnGroup.includes("siege") || /\b(ballista|catapult|trebuchet|ram|cannon)\b/i.test(name)) return true;
+      return false;
+    }
+
+    return true;
+  }
+
   _getRepairRequirements(item) {
     if (!item) return { dc: 150, ingredients: [], allSatisfied: true };
 
@@ -573,7 +660,6 @@ export class PlayerWorkshopApp extends Application {
 
     const playerInventory = this.actor.items.contents;
 
-    // ENCHANTABLE FILTER: Strictly block broken items and items at or below 25% HP
     const enchantableInventoryItems = playerInventory.filter(i => {
       const isMasterwork = i.system?.masterwork === true;
       const isEligibleType = ["weapon", "armor", "shield", "equipment"].includes(i.type);
@@ -584,7 +670,6 @@ export class PlayerWorkshopApp extends Application {
       return isMasterwork && isEligibleType && !isBroken && !isLowHp && !i.flags?.[MODULE_ID]?.isCraftingProjectItem;
     });
 
-    // REPAIR BENCH ITEMS: Gear that is broken or below max HP
     const repairableInventoryItems = playerInventory.filter(i => {
       const isEligibleType = ["weapon", "armor", "shield", "equipment"].includes(i.type);
       if (!isEligibleType || i.flags?.[MODULE_ID]?.isCraftingProjectItem) return false;
@@ -1245,7 +1330,6 @@ export class PlayerWorkshopApp extends Application {
       this.magicShortCompoundNames = e.target.checked;
     });
 
-    // Repair tab listeners
     html.find('.repair-select-row').click(e => {
       const id = $(e.currentTarget).data('id');
       this.selectedRepairItem = this.actor.items.get(id);
@@ -1257,9 +1341,6 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
-    /* -------------------------------------------- */
-    /* Repair Shift Execution                       */
-    /* -------------------------------------------- */
     html.find('#execute-repair-shift-btn').click(async () => {
       if (!this.selectedRepairItem) return;
 
@@ -1307,7 +1388,6 @@ export class PlayerWorkshopApp extends Application {
         const maxHp = this.selectedRepairItem.system?.hp?.max ?? (curHp + 10);
         const newHp = Math.min(maxHp, curHp + hpRestored);
         
-        // Remove broken condition if restored to >= 25% Max HP
         const wasBroken = this.selectedRepairItem.system?.broken === true;
         const isStillBroken = newHp < Math.ceil(maxHp * 0.25);
 
@@ -1328,9 +1408,6 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
-    /* -------------------------------------------- */
-    /* Start Mundane / Refining Project             */
-    /* -------------------------------------------- */
     html.find('#start-project-btn').click(async () => {
       if (!this.selectedBaseItem) return;
 
@@ -1441,9 +1518,6 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
-    /* -------------------------------------------- */
-    /* Start Magic Enchanting Project               */
-    /* -------------------------------------------- */
     html.find('#start-magic-project-btn').click(async () => {
       if (!this.selectedMagicItem) return;
 
@@ -1495,7 +1569,6 @@ export class PlayerWorkshopApp extends Application {
       const baseItemBackup = this.selectedMagicItem.toObject();
       const baseItemDocId = this.selectedMagicItem.id;
       
-      // Ensure HP is preserved precisely
       baseItemBackup.system.hp = { value: curHp, max: maxHp, base: maxHp };
 
       await this.selectedMagicItem.delete();
@@ -1574,9 +1647,6 @@ export class PlayerWorkshopApp extends Application {
       this.render();
     });
 
-    /* -------------------------------------------- */
-    /* Shift Roll Core Executor (With Backlash)     */
-    /* -------------------------------------------- */
     const executeShiftRoll = async (proj) => {
       const disciplines = this._getAvailableCraftDisciplines();
       const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
@@ -1658,21 +1728,20 @@ export class PlayerWorkshopApp extends Application {
 
         let backlashLogText = `Failed Strike (-${(shiftProgress * 0.15).toFixed(1)} GP)`;
 
-        // SANELY SCALED BACKLASH DAMAGE
         if (proj.isMagic && proj.baseItemData?.system?.hp) {
           const absMos = Math.abs(mos);
           let degreeLabel = "Minor Stress";
-          let baseDmg = 2 + Math.floor(Math.random() * 2); // 2-3 HP
+          let baseDmg = 2 + Math.floor(Math.random() * 2);
 
           if (isNatFlaw || absMos > 100) {
             degreeLabel = "Catastrophic Backlash";
-            baseDmg = 12 + Math.floor(Math.random() * 6); // 12-17 HP
+            baseDmg = 12 + Math.floor(Math.random() * 6);
           } else if (absMos > 50) {
             degreeLabel = "Severe Rupture";
-            baseDmg = 7 + Math.floor(Math.random() * 4); // 7-10 HP
+            baseDmg = 7 + Math.floor(Math.random() * 4);
           } else if (absMos > 25) {
             degreeLabel = "Moderate Fracture";
-            baseDmg = 4 + Math.floor(Math.random() * 3); // 4-6 HP
+            baseDmg = 4 + Math.floor(Math.random() * 3);
           }
 
           const baseSeverity = gmConfig.backlashSeverityMult ?? 1.0;
@@ -1714,9 +1783,6 @@ export class PlayerWorkshopApp extends Application {
       return { isRuined, isBroken, totalMod, currentDisc, gmConfig, shiftProgress };
     };
 
-    /* -------------------------------------------- */
-    /* Batch Shift Handler (1h, 4h, 8h, 56h Weekly) */
-    /* -------------------------------------------- */
     html.find('.work-batch-shift-btn').click(async (e) => {
       const idx = $(e.currentTarget).data('idx');
       const totalHours = parseInt($(e.currentTarget).data('hours'), 10) || 1;
@@ -1746,7 +1812,6 @@ export class PlayerWorkshopApp extends Application {
             restoredData.system.hp = { value: targetHp, max: targetMaxHp, base: targetMaxHp };
             restoredData.system.broken = isBrokenCondition;
 
-            // TWO-STEP ITEM RESTORATION TO PRESERVE 0 HP
             const [restoredDoc] = await this.actor.createEmbeddedDocuments("Item", [restoredData]);
             if (restoredDoc) {
               await restoredDoc.update({
@@ -1769,7 +1834,6 @@ export class PlayerWorkshopApp extends Application {
         }
       }
 
-      // ENSURE ALL 5 MINIMUM ROLLS ARE RESOLVED
       if (proj.currentGp >= proj.targetGp && proj.shiftsLogged.length < Math.max(5, proj.requiredRolls)) {
         const disciplines = this._getAvailableCraftDisciplines();
         const currentDisc = disciplines.find(d => d.key === this.selectedDiscipline) || disciplines[0];
@@ -2052,7 +2116,6 @@ export class PlayerWorkshopApp extends Application {
         identifiedTraits.push(`<strong>Precision:</strong> Crit range ${itemData.system.actions[0]?.critRange}–200, multiplier ×${itemData.system.actions[0]?.critMult}.`);
       }
     } else {
-      // PRESERVE MUNDANE CHARACTERISTICS AND DAMAGE STATUS
       tagsList.push("Magic Infused");
       
       if (Array.isArray(proj.baseItemData.system?.tags)) {
@@ -2081,14 +2144,12 @@ export class PlayerWorkshopApp extends Application {
     itemData.system.masterwork = true;
     itemData.system.identified = true;
 
-    // Magic Infusion with Enhancement Variance
     let propPrefixes = [];
     let enhSuffix = "";
 
     if (proj.isMagic) {
       const enhLevel = Number(proj.magicEnhLevel || 0);
       if (enhLevel > 0) {
-        // Evaluate magic resonance variance
         const magicEval = evaluatePhase(phase3);
         const variedEnh = Math.max(1, Math.round((enhLevel * 10) * magicEval.mult));
 
@@ -2149,7 +2210,6 @@ export class PlayerWorkshopApp extends Application {
       <p><strong>Crafting Tags:</strong><br/>${tagHtml}</p>
     `.trim();
 
-    // TWO-STEP ITEM CREATION & HP SYNCHRONIZATION
     const [createdDoc] = await this.actor.createEmbeddedDocuments("Item", [itemData]);
     if (createdDoc) {
       const finalHp = itemData.system.hp?.value ?? itemData.system.hp?.max ?? 10;
