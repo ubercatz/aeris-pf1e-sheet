@@ -1,6 +1,6 @@
 /**
  * @file scripts/monster-knowledge.mjs
- * Automated PF1e Monster Identification & Misinformation Engine
+ * Automated PF1e Monster Identification, Misinformation Engine & Aeris HUD
  * Module: pf1-altsheet-reworked
  */
 
@@ -144,6 +144,8 @@ const NON_SUBTYPE_TAGS = new Set([
 
 export class MonsterKnowledgeEngine {
 
+  static lastAuditPayload = null;
+
   static registerSettings() {
     game.settings.register(MODULE_ID, "idEnforceBlind", {
       name: "Enforce Blind Knowledge Rolls",
@@ -170,6 +172,14 @@ export class MonsterKnowledgeEngine {
       config: true,
       type: Number,
       default: 5
+    });
+
+    game.settings.register(MODULE_ID, "hudPosition", {
+      name: "Aeris HUD Position",
+      scope: "client",
+      config: false,
+      type: Object,
+      default: { left: null, top: null }
     });
   }
 
@@ -240,7 +250,7 @@ export class MonsterKnowledgeEngine {
       }];
     } else {
       outcome = "misinformation";
-      const falseCount = 1 + Math.floor((Math.abs(margin) - step) / marginDivisor);
+      const falseCount = Math.max(1, 1 + Math.floor((Math.abs(margin) - step) / marginDivisor));
       const autoMisinfo = game.settings.get(MODULE_ID, "idAutomateMisinfo");
 
       if (autoMisinfo) {
@@ -283,31 +293,24 @@ export class MonsterKnowledgeEngine {
 
   static extractSize(actor) {
     const raw = actor.system.traits?.size;
-    if (!raw) return "";
-    let val = "";
-    if (typeof raw === "string") {
-      val = raw;
-    } else if (typeof raw === "object") {
-      val = raw.value || raw.label || raw.total || "";
+    if (raw === undefined || raw === null) return "";
+    let val = raw;
+    if (typeof raw === "object") {
+      val = raw.value ?? raw.total ?? raw.label ?? "";
     }
     val = String(val).toLowerCase().trim();
 
+    // Supports string keys, standard names, and PF1e numeric size indexes (3 = Small)
     const sizeMap = {
-      fine: "Fine",
-      dim: "Diminutive",
-      diminutive: "Diminutive",
-      tiny: "Tiny",
-      sm: "Small",
-      small: "Small",
-      med: "Medium",
-      medium: "Medium",
-      lg: "Large",
-      large: "Large",
-      huge: "Huge",
-      grg: "Gargantuan",
-      gargantuan: "Gargantuan",
-      col: "Colossal",
-      colossal: "Colossal"
+      "0": "Fine", "fine": "Fine",
+      "1": "Diminutive", "dim": "Diminutive", "diminutive": "Diminutive",
+      "2": "Tiny", "tiny": "Tiny",
+      "3": "Small", "sm": "Small", "small": "Small",
+      "4": "Medium", "med": "Medium", "medium": "Medium",
+      "5": "Large", "lg": "Large", "large": "Large",
+      "6": "Huge", "huge": "Huge",
+      "7": "Gargantuan", "grg": "Gargantuan", "gargantuan": "Gargantuan",
+      "8": "Colossal", "col": "Colossal", "colossal": "Colossal"
     };
 
     return sizeMap[val] || (val ? val.charAt(0).toUpperCase() + val.slice(1) : "");
@@ -497,8 +500,9 @@ export class MonsterKnowledgeEngine {
     if (count <= 1) return [lockedFirstAtom];
 
     const candidatePool = [];
+    const is10x = Boolean(game.settings.get(MODULE_ID, "enable10xGranularity"));
 
-    // Candidate: Applied Templates
+    // Candidate 1: Templates
     if (templates.length > 0) {
       templates.forEach((t, idx) => {
         const lowerName = t.name.toLowerCase();
@@ -520,7 +524,70 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate: Senses & Locomotion
+    // Candidate 2: Vague Armor Assessment (Tiered + Approximate Range)
+    const ac = actor.system.attributes?.ac;
+    if (ac) {
+      const normal = ac.normal?.total ?? 10;
+      const touch = ac.touch?.total ?? 10;
+      const flat = ac.flatFooted?.total ?? 10;
+
+      const spread = is10x ? 8 : 1;
+      const step = is10x ? 5 : 1;
+      const lowAc = Math.floor((normal - spread) / step) * step;
+      const highAc = Math.ceil((normal + spread) / step) * step;
+
+      let tier = "Moderate";
+      const normalizedAc = is10x ? normal / 10 : normal;
+      if (normalizedAc < 12) tier = "Lightly Protected";
+      else if (normalizedAc <= 15) tier = "Moderate";
+      else if (normalizedAc <= 19) tier = "Heavily Armored";
+      else if (normalizedAc <= 24) tier = "Fortified Shielding";
+      else tier = "Impenetrable Bastion";
+
+      let tacticalNote = "";
+      if (touch <= (normal - (is10x ? 25 : 3))) {
+        tacticalNote = " Relies heavily on physical shielding or thick hide; touch attacks easily bypass its armor.";
+      } else if (touch >= (normal - (is10x ? 5 : 1))) {
+        tacticalNote = " Exceptionally nimble; touch attacks struggle to find an opening.";
+      }
+
+      candidatePool.push({
+        id: "def_ac_profile",
+        category: "defense",
+        traitType: "ARMOR_PROFILE",
+        factualState: "TRUE_FACT",
+        formattedClaim: `Armor Assessment: <strong>${tier}</strong> (estimated AC bracket <strong>${lowAc}–${highAc}</strong>).${tacticalNote}`,
+        auditData: `AC: ${normal} (Touch: ${touch}, Flat-Footed: ${flat})`
+      });
+    }
+
+    // Candidate 3: Vague Vitality Assessment (Decoupled HP Range)
+    const hpObj = actor.system.attributes?.hp;
+    const maxHp = Number(hpObj?.max ?? hpObj?.value);
+    if (!isNaN(maxHp) && maxHp > 0) {
+      const hpStep = is10x ? 5 : 1;
+      const lowHp = Math.max(1, Math.floor((maxHp * 0.85) / hpStep) * hpStep);
+      const highHp = Math.ceil((maxHp * 1.15) / hpStep) * hpStep;
+
+      let vitTier = "Average Durability";
+      const normalizedHp = is10x ? maxHp / 10 : maxHp;
+      if (normalizedHp < 15) vitTier = "Fragile / Low Endurance";
+      else if (normalizedHp <= 40) vitTier = "Moderate Durability";
+      else if (normalizedHp <= 85) vitTier = "Sturdy / Resilient";
+      else if (normalizedHp <= 160) vitTier = "Massive Reserves";
+      else vitTier = "Colossal Vitality";
+
+      candidatePool.push({
+        id: "def_vitality_profile",
+        category: "defense",
+        traitType: "VITALITY_PROFILE",
+        factualState: "TRUE_FACT",
+        formattedClaim: `Vitality Assessment: <strong>${vitTier}</strong> (estimated durability between <strong>${lowHp}–${highHp} HP</strong>).`,
+        auditData: `Exact Max HP: ${maxHp}`
+      });
+    }
+
+    // Candidate 4: Senses & Speeds
     const senseStr = this.extractSenses(actor);
     const speedStr = this.extractSpeeds(actor);
     const infoParts = [];
@@ -537,7 +604,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate: Tactical Saving Throw Deficiency
+    // Candidate 5: Tactical Saving Throw Deficiency
     const saves = actor.system.attributes?.savingThrows || {};
     const f = saves.fort?.total ?? 0;
     const r = saves.ref?.total ?? 0;
@@ -555,24 +622,7 @@ export class MonsterKnowledgeEngine {
       auditData: `Saves: Fort +${f}, Ref +${r}, Will +${w}`
     });
 
-    // Candidate: Armor Class & Durability
-    const ac = actor.system.attributes?.ac;
-    const hp = actor.system.attributes?.hp?.max ?? actor.system.attributes?.hp?.value;
-    if (ac) {
-      const normal = ac.normal?.total ?? 10;
-      const touch = ac.touch?.total ?? 10;
-      const flat = ac.flatFooted?.total ?? 10;
-      candidatePool.push({
-        id: "def_ac_profile",
-        category: "defense",
-        traitType: "ARMOR_PROFILE",
-        factualState: "TRUE_FACT",
-        formattedClaim: `Defensive Profile: Relies on AC <strong>${normal}</strong> (Touch: <strong>${touch}</strong>, Flat-Footed: <strong>${flat}</strong>) with an estimated ${hp} HP.`,
-        auditData: `AC: ${normal} (T: ${touch}, FF: ${flat}), HP: ${hp}`
-      });
-    }
-
-    // Candidate: Damage Reduction
+    // Candidate 6: Damage Reduction
     const drList = actor.system.traits?.dr?.value || [];
     if (drList.length > 0) {
       candidatePool.push({
@@ -580,34 +630,40 @@ export class MonsterKnowledgeEngine {
         category: "defense",
         traitType: "DR",
         factualState: "TRUE_FACT",
-        formattedClaim: `Possesses Damage Reduction bypassed only by <strong>${drList.map(d => d.operator).filter(Boolean).join(" or ") || "specific armaments"}</strong>.`,
+        formattedClaim: `Possesses Damage Reduction penetrated only by <strong>${drList.map(d => d.operator).filter(Boolean).join(" or ") || "specific armaments"}</strong>.`,
         auditData: `DR: ${drList.map(d => `${d.amount}/${d.operator || "—"}`).join(", ")}`
       });
     }
 
-    // Candidate: Energy Resistances & Immunities
+    // Candidate 7: Energy Resistances & Immunities
     const eres = actor.system.traits?.eres?.value || [];
     if (eres.length > 0) {
-      candidatePool.push({
-        id: "def_eres",
-        category: "defense",
-        traitType: "ENERGY_RESIST",
-        factualState: "TRUE_FACT",
-        formattedClaim: `Naturally resistant to <strong>${eres.map(r => r.name || r).join(", ")}</strong> damage.`,
-        auditData: `Resistances: ${eres.join(", ")}`
-      });
+      const resLabels = eres.map(r => typeof r === "object" ? (r.name || r.operator || r.type) : r).filter(Boolean);
+      if (resLabels.length > 0) {
+        candidatePool.push({
+          id: "def_eres",
+          category: "defense",
+          traitType: "ENERGY_RESIST",
+          factualState: "TRUE_FACT",
+          formattedClaim: `Naturally resistant to <strong>${resLabels.join(", ")}</strong> damage.`,
+          auditData: `Resistances: ${resLabels.join(", ")}`
+        });
+      }
     }
 
     const di = actor.system.traits?.di?.value || [];
     if (di.length > 0) {
-      candidatePool.push({
-        id: "def_di",
-        category: "defense",
-        traitType: "ENERGY_IMMUNITY",
-        factualState: "TRUE_FACT",
-        formattedClaim: `Completely immune to <strong>${di.join(", ")}</strong> effects.`,
-        auditData: `Immunities: ${di.join(", ")}`
-      });
+      const immLabels = di.map(d => typeof d === "object" ? (d.name || d.operator || d.type) : d).filter(Boolean);
+      if (immLabels.length > 0) {
+        candidatePool.push({
+          id: "def_di",
+          category: "defense",
+          traitType: "ENERGY_IMMUNITY",
+          factualState: "TRUE_FACT",
+          formattedClaim: `Completely immune to <strong>${immLabels.join(", ")}</strong> effects.`,
+          auditData: `Immunities: ${immLabels.join(", ")}`
+        });
+      }
     }
 
     if (drList.length === 0 && eres.length === 0 && di.length === 0) {
@@ -616,25 +672,28 @@ export class MonsterKnowledgeEngine {
         category: "defense",
         traitType: "DEFENSIVE_ABSENCE",
         factualState: "TRUE_FACT",
-        formattedClaim: "Possesses no supernatural Damage Reduction, Spell Resistance, or elemental immunities; fully vulnerable to mundane armaments.",
+        formattedClaim: "Possesses no supernatural Damage Reduction or elemental immunities; fully vulnerable to standard weapon strikes.",
         auditData: "Target possesses no DR, ER, or DI."
       });
     }
 
-    // Candidate: Vulnerabilities
+    // Candidate 8: Vulnerabilities
     const dv = actor.system.traits?.dv?.value || [];
     if (dv.length > 0) {
-      candidatePool.push({
-        id: "weak_vuln",
-        category: "weakness",
-        traitType: "ENERGY_VULN",
-        factualState: "TRUE_FACT",
-        formattedClaim: `Suffers crippling vulnerability (+50% damage) to <strong>${dv.join(", ")}</strong> damage.`,
-        auditData: `Vulnerabilities: ${dv.join(", ")}`
-      });
+      const vulnLabels = dv.map(d => typeof d === "object" ? (d.name || d.operator || d.type) : d).filter(Boolean);
+      if (vulnLabels.length > 0) {
+        candidatePool.push({
+          id: "weak_vuln",
+          category: "weakness",
+          traitType: "ENERGY_VULN",
+          factualState: "TRUE_FACT",
+          formattedClaim: `Suffers crippling vulnerability (+50% damage) to <strong>${vulnLabels.join(", ")}</strong> damage.`,
+          auditData: `Vulnerabilities: ${vulnLabels.join(", ")}`
+        });
+      }
     }
 
-    // Candidate: Weapon Arsenal
+    // Candidate 9: Weapon Arsenal
     const weapons = actor.items.filter(i => i.type === "weapon" && i.system?.equipped);
     if (weapons.length > 0) {
       candidatePool.push({
@@ -647,7 +706,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate: Notable Feats
+    // Candidate 10: Notable Feats
     const feats = actor.items.filter(i => i.type === "feat" && (i.system?.subType || "") !== "template");
     if (feats.length > 0) {
       const featSample = feats.slice(0, 3).map(f => f.name).join(", ");
@@ -661,7 +720,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate: Top Trained Skills
+    // Candidate 11: Top Trained Skills
     const trainedSkills = Object.entries(actor.system.skills || {})
       .filter(([k, s]) => (s.ranks ?? 0) > 0 || Math.abs(s.mod ?? 0) > 0)
       .sort((a, b) => (b[1].mod ?? 0) - (a[1].mod ?? 0))
@@ -683,7 +742,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate: Ecology & Lore
+    // Candidate 12: Ecology & Lore
     const matchedLoreKey = taxonomy.subtypes.map(s => s.toLowerCase()).find(s => LORE_REPOSITORY[s]) || (LORE_REPOSITORY[taxonomy.type] ? taxonomy.type : null);
     if (matchedLoreKey && LORE_REPOSITORY[matchedLoreKey]) {
       candidatePool.push({
@@ -696,7 +755,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Shuffle Candidates
+    // Shuffle Candidates (Fisher-Yates)
     for (let i = candidatePool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [candidatePool[i], candidatePool[j]] = [candidatePool[j], candidatePool[i]];
@@ -717,6 +776,14 @@ export class MonsterKnowledgeEngine {
 
   static generateMisinformationAtoms(actor, count, taxonomy, templates) {
     const candidatePool = [];
+    const is10x = Boolean(game.settings.get(MODULE_ID, "enable10xGranularity"));
+
+    const cleanElement = (entry) => {
+      if (!entry) return "";
+      if (typeof entry === "string") return entry.toLowerCase().trim();
+      if (typeof entry === "object") return String(entry.operator || entry.name || entry.type || entry.value || "").toLowerCase().trim();
+      return "";
+    };
 
     // 1. Template Falsehoods
     if (templates.length > 0) {
@@ -727,14 +794,6 @@ export class MonsterKnowledgeEngine {
         factualState: "MISINFORMATION",
         formattedClaim: "Displays severe malnourishment and stunted growth; treat as a sickly juvenile with reduced physical defenses.",
         auditData: `Told PC: Sickly juvenile. True Templates: [${templates.map(t => t.name).join(", ")}]`
-      });
-      candidatePool.push({
-        id: "mis_template_swap",
-        category: "template",
-        traitType: "TEMPLATE",
-        factualState: "MISINFORMATION",
-        formattedClaim: "Bearing the unholy markings of a Gravebound Undead (Zombie); its rotting bulk absorbs all but clean slashing cuts.",
-        auditData: `Told PC: Zombie template. True Templates: [${templates.map(t => t.name).join(", ")}]`
       });
     }
 
@@ -748,10 +807,34 @@ export class MonsterKnowledgeEngine {
       auditData: `${phantom.audit} (Creature has no such template)`
     });
 
-    // 2. False Elemental Resistances & Immunities
-    const trueDi = (actor.system.traits?.di?.value || []).map(v => String(v).toLowerCase());
-    const trueDv = (actor.system.traits?.dv?.value || []).map(v => String(v).toLowerCase());
-    const trueRes = (actor.system.traits?.eres?.value || []).map(v => (v.name || v).toLowerCase());
+    // 2. False Vague Armor Class Assessment
+    candidatePool.push({
+      id: "mis_ac_fragile",
+      category: "defense",
+      traitType: "ARMOR_PROFILE",
+      factualState: "MISINFORMATION",
+      formattedClaim: is10x 
+        ? "Armor Assessment: <strong>Lightly Protected</strong> (estimated AC bracket <strong>85–105</strong>); weapons will easily find clean purchase."
+        : "Armor Assessment: <strong>Lightly Protected</strong> (estimated AC bracket <strong>9–11</strong>); weapons will easily find clean purchase.",
+      auditData: `Told PC: Frail AC bracket. True AC: ${actor.system.attributes?.ac?.normal?.total ?? "Unknown"}`
+    });
+
+    // 3. False Vague Vitality Assessment
+    candidatePool.push({
+      id: "mis_hp_massive",
+      category: "defense",
+      traitType: "VITALITY_PROFILE",
+      factualState: "MISINFORMATION",
+      formattedClaim: is10x 
+        ? "Vitality Assessment: <strong>Massive Reserves</strong> (estimated durability between <strong>140–180 HP</strong>); prepare for prolonged attrition."
+        : "Vitality Assessment: <strong>Massive Reserves</strong> (estimated durability between <strong>35–50 HP</strong>); prepare for prolonged attrition.",
+      auditData: `Told PC: Massive HP reserve. True HP: ${actor.system.attributes?.hp?.max ?? "Unknown"}`
+    });
+
+    // 4. False Elements (Safe string conversion)
+    const trueDi = (actor.system.traits?.di?.value || []).map(cleanElement).filter(Boolean);
+    const trueDv = (actor.system.traits?.dv?.value || []).map(cleanElement).filter(Boolean);
+    const trueRes = (actor.system.traits?.eres?.value || []).map(cleanElement).filter(Boolean);
     const neutralElements = ELEMENT_POOL.filter(e => !trueDi.includes(e) && !trueDv.includes(e) && !trueRes.includes(e));
 
     const elementA = neutralElements[0] || "fire";
@@ -775,9 +858,9 @@ export class MonsterKnowledgeEngine {
       auditData: `Told PC: Resists ${elementB}. True Resistances: [${trueRes.join(", ")}]`
     });
 
-    // 3. False DR Penetration
+    // 5. False DR Bypass
     const trueDr = actor.system.traits?.dr?.value || [];
-    const trueBypasses = trueDr.map(d => (d.operator || "").toLowerCase());
+    const trueBypasses = trueDr.map(d => String(d.operator || "").toLowerCase());
     const falseBypasses = DR_BYPASS_POOL.filter(m => !trueBypasses.includes(m));
     const falseMaterial = falseBypasses[Math.floor(Math.random() * falseBypasses.length)] || "cold iron";
 
@@ -790,7 +873,7 @@ export class MonsterKnowledgeEngine {
       auditData: `Told PC: DR bypassed by ${falseMaterial}. True DR: ${trueDr.map(d => `${d.amount}/${d.operator}`).join(", ") || "None"}`
     });
 
-    // 4. Inverted Save Vulnerability
+    // 6. Inverted Save Vulnerability
     const saves = actor.system.attributes?.savingThrows || {};
     const savePairs = [
       { name: "Fortitude", val: saves.fort?.total ?? 0 },
@@ -799,35 +882,29 @@ export class MonsterKnowledgeEngine {
     ].sort((a, b) => b.val - a.val);
 
     const falseWeakness = savePairs[0].name;
+    const lowestSaveName = savePairs[2]?.name || "Will";
+    const lowestSaveVal = savePairs[2]?.val ?? 0;
+
     candidatePool.push({
       id: "mis_save_defect",
       category: "weakness",
       traitType: "SAVE_WEAKNESS",
       factualState: "MISINFORMATION",
-      formattedClaim: `Tactical deficiency noted: Its <strong>${falseWeakness.toUpperCase()}</strong> save is by far its most exploitable defense.`,
-      auditData: `Told PC to target ${falseWeakness} (+${savePairs[0].val}). Lowest save is actually ${savePairs[2].name} (+${savePairs[2].val})`
+      formattedClaim: `Tactical deficiency noted: Its <strong>${falseWeakness.toUpperCase()}</strong> save is by far its weakest defense.`,
+      auditData: `Told PC to target ${falseWeakness} (+${savePairs[0].val}). Lowest save is actually ${lowestSaveName} (+${lowestSaveVal})`
     });
 
-    // 5. False Tactical Flaws
+    // 7. Tactical Misdirection
     candidatePool.push({
       id: "mis_tactical_flank",
       category: "tactics",
       traitType: "TACTICAL_FLAW",
       factualState: "MISINFORMATION",
-      formattedClaim: "Displays tunnel vision and sluggish spatial awareness; it is completely unable to defend against flanking maneuvers.",
-      auditData: "Told PC: Creature cannot handle flanking. (False claim)"
+      formattedClaim: "Displays sluggish spatial awareness; it is completely unable to defend against flanking maneuvers.",
+      auditData: "Told PC: Cannot handle flanking. (False claim)"
     });
 
-    candidatePool.push({
-      id: "mis_tactical_trip",
-      category: "tactics",
-      traitType: "TACTICAL_FLAW",
-      factualState: "MISINFORMATION",
-      formattedClaim: "Its stance is poorly anchored; area trip maneuvers or bull rushes will easily knock it off balance.",
-      auditData: "Told PC: Prone to trip / knockdowns. (False claim)"
-    });
-
-    // 6. Archetype Abilities
+    // 8. Archetype Feature Hallucination
     const typeKey = ARCHETYPE_MISINFO_POOL[taxonomy.type] ? taxonomy.type : "default";
     const archetypeList = ARCHETYPE_MISINFO_POOL[typeKey] || ARCHETYPE_MISINFO_POOL.default;
     archetypeList.forEach((text, i) => {
@@ -841,7 +918,7 @@ export class MonsterKnowledgeEngine {
       });
     });
 
-    // 7. Folk Superstitions
+    // 9. Folk Superstitions
     const folkMyths = [
       "Averse to crossing running water under its own power.",
       "Compulsively halts to inspect intricate geometric patterns or count spilled grains.",
@@ -859,7 +936,7 @@ export class MonsterKnowledgeEngine {
       });
     });
 
-    // Shuffle the candidate pool (Fisher-Yates)
+    // Shuffle Candidates
     for (let i = candidatePool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [candidatePool[i], candidatePool[j]] = [candidatePool[j], candidatePool[i]];
@@ -869,7 +946,7 @@ export class MonsterKnowledgeEngine {
   }
 
   /* -------------------------------------------- */
-  /* Delivery: Player Card + Authoritative GM Pop  */
+  /* Delivery & Audit Popups                       */
   /* -------------------------------------------- */
 
   static async dispatchResults({ sourceActor, targetToken, outcome, margin, targetDc, taxonomy, atoms }) {
@@ -885,7 +962,7 @@ export class MonsterKnowledgeEngine {
 
     const headerTitle = outcome === "success" ? targetToken.name : "Unidentified Creature";
 
-    // 1. Post Chat Card to Player & GM
+    // 1. Post Chat Card
     const playerCardHtml = `
       <div class="pf1 chat-card monster-id-card aeris-knowledge-card">
         <header class="card-header flexrow" style="display:flex; align-items:center; gap:8px; border-bottom:1px solid #747d8c; padding-bottom:4px; margin-bottom:6px;">
@@ -913,9 +990,9 @@ export class MonsterKnowledgeEngine {
       atoms
     };
 
-    const gmRecipients = ChatMessage.getWhisperRecipients("GM").map(u => u.id);
+    MonsterKnowledgeEngine.lastAuditPayload = gmPayload;
 
-    // Embed audit payload into the chat message flags
+    const gmRecipients = ChatMessage.getWhisperRecipients("GM").map(u => u.id);
     await ChatMessage.create({
       speaker: ChatMessage.getSpeaker({ actor: sourceActor }),
       content: playerCardHtml,
@@ -927,7 +1004,6 @@ export class MonsterKnowledgeEngine {
       }
     });
 
-    // If GM ran this check directly, open dialog immediately
     if (game.user.isGM) {
       new MonsterKnowledgeAuditDialog(gmPayload).render(true);
     }
@@ -935,7 +1011,7 @@ export class MonsterKnowledgeEngine {
 }
 
 /* -------------------------------------------- */
-/* GM Interactive Audit Application             */
+/* Interactive GM Audit Application             */
 /* -------------------------------------------- */
 
 export class MonsterKnowledgeAuditDialog extends Application {
@@ -989,7 +1065,7 @@ export class MonsterKnowledgeAuditDialog extends Application {
         </header>
 
         <div style="max-height: 380px; overflow-y:auto; margin-bottom:10px; padding-right:4px;">
-          <strong style="font-size:0.85em; text-transform:uppercase; color:#333;">Identified Traits & Audit Log</strong>
+          <strong style="font-size:0.85em; text-transform:uppercase; color:#333;">Recalled Traits Verification</strong>
           ${rows || '<div style="color:#777; font-style:italic; padding:6px 0;">No knowledge recalled.</div>'}
         </div>
 
@@ -1049,15 +1125,200 @@ export class MonsterKnowledgeAuditDialog extends Application {
   }
 }
 
-// Hook initialization & Document-backed GM Popup
+/* -------------------------------------------- */
+/* Draggable Aeris Floating HUD Component       */
+/* -------------------------------------------- */
+
+export class AerisFloatingHud {
+  static init() {
+    if ($("#aeris-floating-hud").length) return;
+
+    const isGM = game.user.isGM;
+    const pos = game.settings.get(MODULE_ID, "hudPosition") || { left: null, top: null };
+    const positionStyle = (pos.left !== null && pos.top !== null)
+      ? `left: ${pos.left}px; top: ${pos.top}px;`
+      : `bottom: 72px; left: calc(50% - 150px);`;
+
+    const hudHtml = `
+      <div id="aeris-floating-hud" style="${positionStyle}">
+        <div class="aeris-hud-handle" title="Drag to reposition"><i class="fas fa-grip-vertical"></i></div>
+        <div class="aeris-hud-actions">
+          <button type="button" class="aeris-btn btn-id" title="Identify Target Token">
+            <i class="fas fa-eye"></i> <span>Identify</span>
+          </button>
+          <button type="button" class="aeris-btn btn-forge" title="Open Gear Forge">
+            <i class="fas fa-hammer"></i> <span>Forge</span>
+          </button>
+          <button type="button" class="aeris-btn btn-workshop" title="Open Player Workshop">
+            <i class="fas fa-tools"></i> <span>Workshop</span>
+          </button>
+          ${isGM ? `
+          <button type="button" class="aeris-btn btn-audit" title="Re-open Last Knowledge Audit">
+            <i class="fas fa-book-skull"></i>
+          </button>` : ""}
+        </div>
+      </div>
+    `;
+
+    $("body").append(hudHtml);
+    this.bindEvents($("#aeris-floating-hud"));
+  }
+
+  static bindEvents($hud) {
+    // 1. Action Triggers
+    $hud.find(".btn-id").click(async (e) => {
+      e.preventDefault();
+      const actor = canvas.tokens.controlled[0]?.actor || game.user.character;
+      if (!actor) {
+        ui.notifications.warn("Select or assign a character token before identifying.");
+        return;
+      }
+      await MonsterKnowledgeEngine.identifyTarget(actor);
+    });
+
+    $hud.find(".btn-forge").click((e) => {
+      e.preventDefault();
+      if (game.aeris?.openForge) {
+        game.aeris.openForge();
+      } else if (game.aeris?.GranularForgeApp) {
+        new game.aeris.GranularForgeApp().render(true);
+      }
+    });
+
+    $hud.find(".btn-workshop").click(async (e) => {
+      e.preventDefault();
+      const actor = canvas.tokens.controlled[0]?.actor || game.user.character;
+      const mod = game.modules.get(MODULE_ID);
+      if (mod?.api?.openPlayerWorkshop) {
+        await mod.api.openPlayerWorkshop(actor);
+      } else {
+        ui.notifications.warn("Player workshop API not available.");
+      }
+    });
+
+    $hud.find(".btn-audit").click((e) => {
+      e.preventDefault();
+      if (MonsterKnowledgeEngine.lastAuditPayload) {
+        new MonsterKnowledgeAuditDialog(MonsterKnowledgeEngine.lastAuditPayload).render(true);
+      } else {
+        ui.notifications.info("No knowledge checks audited yet.");
+      }
+    });
+
+    // 2. Draggable Corner Handle
+    const $handle = $hud.find(".aeris-hud-handle");
+    let isDragging = false;
+    let startX, startY, initLeft, initTop;
+
+    $handle.on("mousedown", (e) => {
+      e.preventDefault();
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = $hud[0].getBoundingClientRect();
+      initLeft = rect.left;
+      initTop = rect.top;
+
+      $(document).on("mousemove.aerishud", (ev) => {
+        if (!isDragging) return;
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        $hud.css({
+          left: `${initLeft + dx}px`,
+          top: `${initTop + dy}px`,
+          bottom: "auto"
+        });
+      });
+
+      $(document).on("mouseup.aerishud", () => {
+        if (!isDragging) return;
+        isDragging = false;
+        $(document).off(".aerishud");
+        const finalRect = $hud[0].getBoundingClientRect();
+        game.settings.set(MODULE_ID, "hudPosition", {
+          left: Math.round(finalRect.left),
+          top: Math.round(finalRect.top)
+        });
+      });
+    });
+  }
+}
+
+/* -------------------------------------------- */
+/* System Hooks & Injections                    */
+/* -------------------------------------------- */
+
 Hooks.once("init", () => {
   MonsterKnowledgeEngine.registerSettings();
+
+  const hudStyle = document.createElement("style");
+  hudStyle.innerHTML = `
+    #aeris-floating-hud {
+      position: fixed;
+      background: rgba(18, 20, 24, 0.94);
+      border: 1px solid #4a5568;
+      border-radius: 6px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.65);
+      z-index: 60;
+      display: flex;
+      align-items: center;
+      padding: 3px 6px;
+      gap: 5px;
+      user-select: none;
+      font-family: var(--font-primary, sans-serif);
+      backdrop-filter: blur(4px);
+    }
+    #aeris-floating-hud .aeris-hud-handle {
+      cursor: grab;
+      color: #718096;
+      padding: 4px 4px;
+      font-size: 0.95em;
+      display: flex;
+      align-items: center;
+      transition: color 0.15s ease;
+    }
+    #aeris-floating-hud .aeris-hud-handle:hover {
+      color: #cbd5e1;
+    }
+    #aeris-floating-hud .aeris-hud-handle:active {
+      cursor: grabbing;
+    }
+    #aeris-floating-hud .aeris-hud-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    #aeris-floating-hud .aeris-btn {
+      background: #232936;
+      color: #e2e8f0;
+      border: 1px solid #4a5568;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 0.85em;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      line-height: normal;
+      transition: all 0.15s ease;
+    }
+    #aeris-floating-hud .aeris-btn:hover {
+      background: #333d4f;
+      border-color: #cbd5e1;
+      color: #ffffff;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.25);
+    }
+  `;
+  document.head.appendChild(hudStyle);
 });
 
-// Listens for chat messages containing an audit payload and pops up the dialog for the GM
+Hooks.once("ready", () => {
+  AerisFloatingHud.init();
+});
+
 Hooks.on("createChatMessage", (message, options, userId) => {
   if (!game.user.isGM) return;
-  // If the GM authored the message, dispatchResults already opened it
   if (message.author?.id === game.user.id) return;
 
   const auditPayload = message.getFlag(MODULE_ID, "auditPayload");
