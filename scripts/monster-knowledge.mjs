@@ -1,6 +1,6 @@
 /**
  * @file scripts/monster-knowledge.mjs
- * Automated PF1e Monster Identification, Misinformation Engine & Aeris HUD
+ * Automated PF1e Monster Identification & Misinformation Engine
  * Module: pf1-altsheet-reworked
  */
 
@@ -143,17 +143,17 @@ const NON_SUBTYPE_TAGS = new Set([
 /* -------------------------------------------- */
 
 export class MonsterKnowledgeEngine {
-
   static lastAuditPayload = null;
 
   static registerSettings() {
+    // Blind rolls enabled by default
     game.settings.register(MODULE_ID, "idEnforceBlind", {
       name: "Enforce Blind Knowledge Rolls",
-      hint: "Forces all monster identification rolls to execute as Blind GM Rolls, keeping the roll margin hidden from players.",
+      hint: "Forces all monster identification rolls to execute as Blind GM Rolls, keeping the roll margin and raw total hidden from players.",
       scope: "world",
       config: true,
       type: Boolean,
-      default: false
+      default: true
     });
 
     game.settings.register(MODULE_ID, "idAutomateMisinfo", {
@@ -173,14 +173,6 @@ export class MonsterKnowledgeEngine {
       type: Number,
       default: 5
     });
-
-    game.settings.register(MODULE_ID, "hudPosition", {
-      name: "Aeris HUD Position",
-      scope: "client",
-      config: false,
-      type: Object,
-      default: { left: null, top: null }
-    });
   }
 
   static cleanHtml(html) {
@@ -190,15 +182,27 @@ export class MonsterKnowledgeEngine {
     return text.replace(/\s+/g, " ").trim();
   }
 
-  static async identifyTarget(sourceActor, targetToken = null) {
-    if (!sourceActor) {
-      ui.notifications.warn("No source character provided for monster identification.");
+  /**
+   * Primary Entry Point: Resolves character token and active target, then executes check
+   */
+  static async identifyTarget(sourceActor = null, targetToken = null) {
+    // 1. Resolve source actor: Passed actor -> Selected token -> Assigned User Character -> First Owned Character
+    let actor = sourceActor;
+    if (!actor) {
+      actor = canvas.tokens.controlled[0]?.actor 
+        || game.user.character 
+        || game.actors.find(a => a.isOwner && a.type === "character");
+    }
+
+    if (!actor) {
+      ui.notifications.warn("Please select or assign a character token before identifying.");
       return;
     }
 
+    // 2. Resolve target token
     const token = targetToken || game.user.targets.first();
     if (!token || !token.actor) {
-      ui.notifications.warn("Target an enemy token before attempting identification.");
+      ui.notifications.warn("Please target an enemy token before attempting identification.");
       return;
     }
 
@@ -216,7 +220,7 @@ export class MonsterKnowledgeEngine {
     const enforceBlind = game.settings.get(MODULE_ID, "idEnforceBlind");
     const rollOptions = enforceBlind ? { rollMode: CONST.DICE_ROLL_MODES.BLIND } : {};
 
-    const rawRoll = await sourceActor.rollSkill(skillKey, rollOptions);
+    const rawRoll = await actor.rollSkill(skillKey, rollOptions);
     if (!rawRoll) return;
 
     const rollObj = Array.isArray(rawRoll) ? rawRoll[0] : (rawRoll.rolls ? rawRoll.rolls[0] : rawRoll);
@@ -268,7 +272,7 @@ export class MonsterKnowledgeEngine {
     }
 
     Hooks.call("pf1MonsterIdentification", {
-      sourceActor,
+      sourceActor: actor,
       targetToken: token,
       outcome,
       margin,
@@ -277,7 +281,7 @@ export class MonsterKnowledgeEngine {
     });
 
     await this.dispatchResults({
-      sourceActor,
+      sourceActor: actor,
       targetToken: token,
       outcome,
       margin,
@@ -300,7 +304,6 @@ export class MonsterKnowledgeEngine {
     }
     val = String(val).toLowerCase().trim();
 
-    // Supports string keys, standard names, and PF1e numeric size indexes (3 = Small)
     const sizeMap = {
       "0": "Fine", "fine": "Fine",
       "1": "Diminutive", "dim": "Diminutive", "diminutive": "Diminutive",
@@ -524,7 +527,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate 2: Vague Armor Assessment (Tiered + Approximate Range)
+    // Candidate 2: Vague Armor Assessment
     const ac = actor.system.attributes?.ac;
     if (ac) {
       const normal = ac.normal?.total ?? 10;
@@ -561,7 +564,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate 3: Vague Vitality Assessment (Decoupled HP Range)
+    // Candidate 3: Vague Vitality Assessment
     const hpObj = actor.system.attributes?.hp;
     const maxHp = Number(hpObj?.max ?? hpObj?.value);
     if (!isNaN(maxHp) && maxHp > 0) {
@@ -831,7 +834,7 @@ export class MonsterKnowledgeEngine {
       auditData: `Told PC: Massive HP reserve. True HP: ${actor.system.attributes?.hp?.max ?? "Unknown"}`
     });
 
-    // 4. False Elements (Safe string conversion)
+    // 4. False Elements
     const trueDi = (actor.system.traits?.di?.value || []).map(cleanElement).filter(Boolean);
     const trueDv = (actor.system.traits?.dv?.value || []).map(cleanElement).filter(Boolean);
     const trueRes = (actor.system.traits?.eres?.value || []).map(cleanElement).filter(Boolean);
@@ -1125,196 +1128,11 @@ export class MonsterKnowledgeAuditDialog extends Application {
   }
 }
 
-/* -------------------------------------------- */
-/* Draggable Aeris Floating HUD Component       */
-/* -------------------------------------------- */
-
-export class AerisFloatingHud {
-  static init() {
-    if ($("#aeris-floating-hud").length) return;
-
-    const isGM = game.user.isGM;
-    const pos = game.settings.get(MODULE_ID, "hudPosition") || { left: null, top: null };
-    const positionStyle = (pos.left !== null && pos.top !== null)
-      ? `left: ${pos.left}px; top: ${pos.top}px;`
-      : `bottom: 72px; left: calc(50% - 150px);`;
-
-    const hudHtml = `
-      <div id="aeris-floating-hud" style="${positionStyle}">
-        <div class="aeris-hud-handle" title="Drag to reposition"><i class="fas fa-grip-vertical"></i></div>
-        <div class="aeris-hud-actions">
-          <button type="button" class="aeris-btn btn-id" title="Identify Target Token">
-            <i class="fas fa-eye"></i> <span>Identify</span>
-          </button>
-          <button type="button" class="aeris-btn btn-forge" title="Open Gear Forge">
-            <i class="fas fa-hammer"></i> <span>Forge</span>
-          </button>
-          <button type="button" class="aeris-btn btn-workshop" title="Open Player Workshop">
-            <i class="fas fa-tools"></i> <span>Workshop</span>
-          </button>
-          ${isGM ? `
-          <button type="button" class="aeris-btn btn-audit" title="Re-open Last Knowledge Audit">
-            <i class="fas fa-book-skull"></i>
-          </button>` : ""}
-        </div>
-      </div>
-    `;
-
-    $("body").append(hudHtml);
-    this.bindEvents($("#aeris-floating-hud"));
-  }
-
-  static bindEvents($hud) {
-    // 1. Action Triggers
-    $hud.find(".btn-id").click(async (e) => {
-      e.preventDefault();
-      const actor = canvas.tokens.controlled[0]?.actor || game.user.character;
-      if (!actor) {
-        ui.notifications.warn("Select or assign a character token before identifying.");
-        return;
-      }
-      await MonsterKnowledgeEngine.identifyTarget(actor);
-    });
-
-    $hud.find(".btn-forge").click((e) => {
-      e.preventDefault();
-      if (game.aeris?.openForge) {
-        game.aeris.openForge();
-      } else if (game.aeris?.GranularForgeApp) {
-        new game.aeris.GranularForgeApp().render(true);
-      }
-    });
-
-    $hud.find(".btn-workshop").click(async (e) => {
-      e.preventDefault();
-      const actor = canvas.tokens.controlled[0]?.actor || game.user.character;
-      const mod = game.modules.get(MODULE_ID);
-      if (mod?.api?.openPlayerWorkshop) {
-        await mod.api.openPlayerWorkshop(actor);
-      } else {
-        ui.notifications.warn("Player workshop API not available.");
-      }
-    });
-
-    $hud.find(".btn-audit").click((e) => {
-      e.preventDefault();
-      if (MonsterKnowledgeEngine.lastAuditPayload) {
-        new MonsterKnowledgeAuditDialog(MonsterKnowledgeEngine.lastAuditPayload).render(true);
-      } else {
-        ui.notifications.info("No knowledge checks audited yet.");
-      }
-    });
-
-    // 2. Draggable Corner Handle
-    const $handle = $hud.find(".aeris-hud-handle");
-    let isDragging = false;
-    let startX, startY, initLeft, initTop;
-
-    $handle.on("mousedown", (e) => {
-      e.preventDefault();
-      isDragging = true;
-      startX = e.clientX;
-      startY = e.clientY;
-      const rect = $hud[0].getBoundingClientRect();
-      initLeft = rect.left;
-      initTop = rect.top;
-
-      $(document).on("mousemove.aerishud", (ev) => {
-        if (!isDragging) return;
-        const dx = ev.clientX - startX;
-        const dy = ev.clientY - startY;
-        $hud.css({
-          left: `${initLeft + dx}px`,
-          top: `${initTop + dy}px`,
-          bottom: "auto"
-        });
-      });
-
-      $(document).on("mouseup.aerishud", () => {
-        if (!isDragging) return;
-        isDragging = false;
-        $(document).off(".aerishud");
-        const finalRect = $hud[0].getBoundingClientRect();
-        game.settings.set(MODULE_ID, "hudPosition", {
-          left: Math.round(finalRect.left),
-          top: Math.round(finalRect.top)
-        });
-      });
-    });
-  }
-}
-
-/* -------------------------------------------- */
-/* System Hooks & Injections                    */
-/* -------------------------------------------- */
+// Attach class reference for HUD caller
+MonsterKnowledgeEngine.MonsterKnowledgeAuditDialog = MonsterKnowledgeAuditDialog;
 
 Hooks.once("init", () => {
   MonsterKnowledgeEngine.registerSettings();
-
-  const hudStyle = document.createElement("style");
-  hudStyle.innerHTML = `
-    #aeris-floating-hud {
-      position: fixed;
-      background: rgba(18, 20, 24, 0.94);
-      border: 1px solid #4a5568;
-      border-radius: 6px;
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.65);
-      z-index: 60;
-      display: flex;
-      align-items: center;
-      padding: 3px 6px;
-      gap: 5px;
-      user-select: none;
-      font-family: var(--font-primary, sans-serif);
-      backdrop-filter: blur(4px);
-    }
-    #aeris-floating-hud .aeris-hud-handle {
-      cursor: grab;
-      color: #718096;
-      padding: 4px 4px;
-      font-size: 0.95em;
-      display: flex;
-      align-items: center;
-      transition: color 0.15s ease;
-    }
-    #aeris-floating-hud .aeris-hud-handle:hover {
-      color: #cbd5e1;
-    }
-    #aeris-floating-hud .aeris-hud-handle:active {
-      cursor: grabbing;
-    }
-    #aeris-floating-hud .aeris-hud-actions {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
-    #aeris-floating-hud .aeris-btn {
-      background: #232936;
-      color: #e2e8f0;
-      border: 1px solid #4a5568;
-      border-radius: 4px;
-      padding: 4px 8px;
-      font-size: 0.85em;
-      font-weight: 500;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      line-height: normal;
-      transition: all 0.15s ease;
-    }
-    #aeris-floating-hud .aeris-btn:hover {
-      background: #333d4f;
-      border-color: #cbd5e1;
-      color: #ffffff;
-      box-shadow: 0 0 6px rgba(255, 255, 255, 0.25);
-    }
-  `;
-  document.head.appendChild(hudStyle);
-});
-
-Hooks.once("ready", () => {
-  AerisFloatingHud.init();
 });
 
 Hooks.on("createChatMessage", (message, options, userId) => {

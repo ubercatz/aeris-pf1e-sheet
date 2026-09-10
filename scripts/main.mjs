@@ -3,6 +3,7 @@ import { AltCharacterSheetPF, AltNPCSheetPF } from "./sheet.mjs";
 import { apply10xConditionRegistry } from "./conditions.mjs";
 import { GranularForgeApp } from "./gear-forge.mjs";
 import { MonsterKnowledgeEngine } from "./monster-knowledge.mjs";
+import { AerisFloatingHud } from "./hud.mjs";
 const MODULE_ID = "pf1-altsheet-reworked";
 
 function _rerenderOpenAltSheets() {
@@ -260,6 +261,9 @@ Hooks.once("ready", () => {
   game.aeris.identifyMonster = (actor, token) => MonsterKnowledgeEngine.identifyTarget(actor, token);
   game.aeris.GranularForgeApp = GranularForgeApp;
   game.aeris.openForge = () => new GranularForgeApp().render(true);
+  // Initialize the Aeris HUD
+  AerisFloatingHud.init();
+  game.aeris.hud = AerisFloatingHud;
 
   // Expose to top-level window/global scope so macros can call it directly by name:
   globalThis.MonsterKnowledgeEngine = MonsterKnowledgeEngine;
