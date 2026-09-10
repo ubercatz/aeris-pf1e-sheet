@@ -1,6 +1,6 @@
 /**
  * @file scripts/hud.mjs
- * Modular Aeris Floating Action HUD
+ * Modular Aeris Floating Action HUD with Viewport Clamping & Role Permissions
  * Module: pf1-altsheet-reworked
  */
 
@@ -9,9 +9,6 @@ export const MODULE_ID = "pf1-altsheet-reworked";
 export class AerisFloatingHud {
   static buttons = new Map();
 
-  /**
-   * Register system settings for HUD coordinates and button permissions
-   */
   static registerSettings() {
     game.settings.register(MODULE_ID, "hudPosition", {
       name: "Aeris HUD Position",
@@ -85,17 +82,11 @@ export class AerisFloatingHud {
     });
   }
 
-  /**
-   * Registers an extensible action button to the HUD
-   */
   static registerButton(buttonConfig) {
     this.buttons.set(buttonConfig.id, buttonConfig);
     if ($("#aeris-floating-hud").length) this.render();
   }
 
-  /**
-   * Defines default module buttons
-   */
   static registerDefaultButtons() {
     this.registerButton({
       id: "identify",
@@ -103,8 +94,9 @@ export class AerisFloatingHud {
       icon: "fas fa-eye",
       tooltip: "Identify Target Creature",
       onClick: async () => {
-        if (game.aeris?.MonsterKnowledgeEngine) {
-          await game.aeris.MonsterKnowledgeEngine.identifyTarget();
+        const engine = game.aeris?.MonsterKnowledgeEngine || globalThis.MonsterKnowledgeEngine;
+        if (engine) {
+          await engine.identifyTarget();
         } else {
           ui.notifications.error("Monster Knowledge Engine is not loaded.");
         }
@@ -131,8 +123,8 @@ export class AerisFloatingHud {
       icon: "fas fa-tools",
       tooltip: "Open Player Workshop",
       onClick: async () => {
-        const actor = canvas.tokens.controlled[0]?.actor 
-          || game.user.character 
+        const actor = game.user.character 
+          || canvas.tokens.controlled.find(t => t.actor?.isOwner)?.actor 
           || game.actors.find(a => a.isOwner && a.type === "character");
 
         if (!actor) {
@@ -155,11 +147,11 @@ export class AerisFloatingHud {
       icon: "fas fa-book-skull",
       tooltip: "Re-open Last Knowledge Audit",
       onClick: () => {
-        const engine = game.aeris?.MonsterKnowledgeEngine;
+        const engine = game.aeris?.MonsterKnowledgeEngine || globalThis.MonsterKnowledgeEngine;
         if (engine?.lastAuditPayload) {
-          const { MonsterKnowledgeAuditDialog } = engine;
-          if (MonsterKnowledgeAuditDialog) {
-            new MonsterKnowledgeAuditDialog(engine.lastAuditPayload).render(true);
+          const dialogClass = engine.MonsterKnowledgeAuditDialog;
+          if (dialogClass) {
+            new dialogClass(engine.lastAuditPayload).render(true);
           }
         } else {
           ui.notifications.info("No knowledge checks audited yet this session.");
@@ -168,13 +160,10 @@ export class AerisFloatingHud {
     });
   }
 
-  /**
-   * Evaluates if a button is visible to the active client
-   */
   static shouldShowButton(id) {
     let mode = "all";
     try {
-      mode = game.settings.get(MODULE_ID, `hudVisibility_${id}`);
+      mode = game.settings.get(MODULE_ID, `hudVisibility_${id}`) || "all";
     } catch (e) {
       mode = "all";
     }
@@ -185,17 +174,11 @@ export class AerisFloatingHud {
     return true;
   }
 
-  /**
-   * Initializes DOM elements and listeners
-   */
   static init() {
     this.registerDefaultButtons();
     this.render();
   }
 
-  /**
-   * Renders or refreshes the HUD HTML on the canvas
-   */
   static render() {
     $("#aeris-floating-hud").remove();
 
@@ -203,9 +186,16 @@ export class AerisFloatingHud {
     if (visibleButtons.length === 0) return;
 
     const pos = game.settings.get(MODULE_ID, "hudPosition") || { left: null, top: null };
-    const positionStyle = (pos.left !== null && pos.top !== null)
-      ? `left: ${pos.left}px; top: ${pos.top}px;`
-      : `bottom: 72px; left: calc(50% - 150px);`;
+    
+    // Viewport clamping & position recovery
+    let positionStyle = `bottom: 72px; left: calc(50% - 150px);`;
+    if (typeof pos.left === "number" && typeof pos.top === "number" && !isNaN(pos.left) && !isNaN(pos.top)) {
+      const maxLeft = Math.max(10, window.innerWidth - 250);
+      const maxTop = Math.max(10, window.innerHeight - 50);
+      const clampLeft = Math.min(Math.max(10, pos.left), maxLeft);
+      const clampTop = Math.min(Math.max(10, pos.top), maxTop);
+      positionStyle = `left: ${clampLeft}px; top: ${clampTop}px;`;
+    }
 
     const buttonsHtml = visibleButtons.map(b => `
       <button type="button" class="aeris-btn btn-${b.id}" data-action="${b.id}" title="${b.tooltip}">
@@ -215,7 +205,7 @@ export class AerisFloatingHud {
 
     const hudHtml = `
       <div id="aeris-floating-hud" style="${positionStyle}">
-        <div class="aeris-hud-handle" title="Drag to reposition"><i class="fas fa-grip-vertical"></i></div>
+        <div class="aeris-hud-handle" title="Drag to reposition (Double-click to reset)"><i class="fas fa-grip-vertical"></i></div>
         <div class="aeris-hud-actions">
           ${buttonsHtml}
         </div>
@@ -227,7 +217,6 @@ export class AerisFloatingHud {
   }
 
   static bindEvents($hud) {
-    // 1. Button Click Handlers
     $hud.find(".aeris-btn").click(async (e) => {
       e.preventDefault();
       const actionId = $(e.currentTarget).data("action");
@@ -237,10 +226,17 @@ export class AerisFloatingHud {
       }
     });
 
-    // 2. Dragging Handle
     const $handle = $hud.find(".aeris-hud-handle");
     let isDragging = false;
     let startX, startY, initLeft, initTop;
+
+    // Double-click grip handle to reset position above hotbar
+    $handle.on("dblclick", async (e) => {
+      e.preventDefault();
+      await game.settings.set(MODULE_ID, "hudPosition", { left: null, top: null });
+      AerisFloatingHud.render();
+      ui.notifications.info("Aeris HUD position reset to default.");
+    });
 
     $handle.on("mousedown", (e) => {
       e.preventDefault();
@@ -255,9 +251,15 @@ export class AerisFloatingHud {
         if (!isDragging) return;
         const dx = ev.clientX - startX;
         const dy = ev.clientY - startY;
+
+        const maxLeft = Math.max(10, window.innerWidth - $hud.outerWidth() - 10);
+        const maxTop = Math.max(10, window.innerHeight - $hud.outerHeight() - 10);
+        const nextLeft = Math.min(Math.max(10, initLeft + dx), maxLeft);
+        const nextTop = Math.min(Math.max(10, initTop + dy), maxTop);
+
         $hud.css({
-          left: `${initLeft + dx}px`,
-          top: `${initTop + dy}px`,
+          left: `${nextLeft}px`,
+          top: `${nextTop}px`,
           bottom: "auto"
         });
       });
@@ -276,7 +278,6 @@ export class AerisFloatingHud {
   }
 }
 
-// Inject stylesheet on load
 Hooks.once("init", () => {
   AerisFloatingHud.registerSettings();
 
@@ -288,7 +289,7 @@ Hooks.once("init", () => {
       border: 1px solid #4a5568;
       border-radius: 6px;
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.65);
-      z-index: 60;
+      z-index: 100;
       display: flex;
       align-items: center;
       padding: 3px 6px;
@@ -340,4 +341,8 @@ Hooks.once("init", () => {
     }
   `;
   document.head.appendChild(hudStyle);
+});
+
+Hooks.once("ready", () => {
+  AerisFloatingHud.init();
 });

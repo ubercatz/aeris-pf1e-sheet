@@ -6,10 +6,6 @@
 
 export const MODULE_ID = "pf1-altsheet-reworked";
 
-/* -------------------------------------------- */
-/* Taxonomy Registries & Standard Lore Data     */
-/* -------------------------------------------- */
-
 export const CREATURE_TYPE_SKILLS = {
   aberration: "kdu",
   animal: "kna",
@@ -138,18 +134,13 @@ const NON_SUBTYPE_TAGS = new Set([
   "uncommon", "rare", "common", "unique", "mythic", "10x scaled", "scaled", "boss", "minion"
 ]);
 
-/* -------------------------------------------- */
-/* Core Engine Class                            */
-/* -------------------------------------------- */
-
 export class MonsterKnowledgeEngine {
   static lastAuditPayload = null;
 
   static registerSettings() {
-    // Blind rolls enabled by default
     game.settings.register(MODULE_ID, "idEnforceBlind", {
       name: "Enforce Blind Knowledge Rolls",
-      hint: "Forces all monster identification rolls to execute as Blind GM Rolls, keeping the roll margin and raw total hidden from players.",
+      hint: "Forces monster identification checks to execute as Blind GM Rolls, keeping the roll margin and raw total hidden from players.",
       scope: "world",
       config: true,
       type: Boolean,
@@ -182,16 +173,19 @@ export class MonsterKnowledgeEngine {
     return text.replace(/\s+/g, " ").trim();
   }
 
-  /**
-   * Primary Entry Point: Resolves character token and active target, then executes check
-   */
   static async identifyTarget(sourceActor = null, targetToken = null) {
-    // 1. Resolve source actor: Passed actor -> Selected token -> Assigned User Character -> First Owned Character
+    // 1. Resolve source actor safely based on role
     let actor = sourceActor;
     if (!actor) {
-      actor = canvas.tokens.controlled[0]?.actor 
-        || game.user.character 
-        || game.actors.find(a => a.isOwner && a.type === "character");
+      if (!game.user.isGM) {
+        // Player: Always prioritize their own assigned character or owned token
+        actor = game.user.character 
+          || canvas.tokens.controlled.find(t => t.actor?.isOwner)?.actor
+          || game.actors.find(a => a.isOwner && a.type === "character");
+      } else {
+        // GM: Controlled token or assigned character
+        actor = canvas.tokens.controlled[0]?.actor || game.user.character;
+      }
     }
 
     if (!actor) {
@@ -199,10 +193,22 @@ export class MonsterKnowledgeEngine {
       return;
     }
 
-    // 2. Resolve target token
-    const token = targetToken || game.user.targets.first();
+    // 2. Resolve target token (the creature to identify)
+    let token = targetToken || game.user.targets.first();
+
+    // If a player clicked the enemy token on canvas instead of using the target tool
+    if (!token && canvas.tokens.controlled.length > 0) {
+      const otherToken = canvas.tokens.controlled.find(t => t.actor && t.actor.id !== actor.id);
+      if (otherToken) token = otherToken;
+    }
+
     if (!token || !token.actor) {
-      ui.notifications.warn("Please target an enemy token before attempting identification.");
+      ui.notifications.warn("Please target an enemy creature (press 'T' while hovering over it) before identifying.");
+      return;
+    }
+
+    if (token.actor.id === actor.id) {
+      ui.notifications.warn("You cannot identify yourself! Please target an enemy creature.");
       return;
     }
 
@@ -223,8 +229,17 @@ export class MonsterKnowledgeEngine {
     const rawRoll = await actor.rollSkill(skillKey, rollOptions);
     if (!rawRoll) return;
 
-    const rollObj = Array.isArray(rawRoll) ? rawRoll[0] : (rawRoll.rolls ? rawRoll.rolls[0] : rawRoll);
-    const rollTotal = Number(rollObj?.total);
+    // Robust roll total extraction across all PF1e versions
+    let rollTotal = NaN;
+    if (typeof rawRoll === "number") {
+      rollTotal = rawRoll;
+    } else if (rawRoll?.total !== undefined) {
+      rollTotal = Number(rawRoll.total);
+    } else if (Array.isArray(rawRoll) && rawRoll[0]?.total !== undefined) {
+      rollTotal = Number(rawRoll[0].total);
+    } else if (rawRoll?.rolls && Array.isArray(rawRoll.rolls) && rawRoll.rolls[0]?.total !== undefined) {
+      rollTotal = Number(rawRoll.rolls[0].total);
+    }
 
     if (isNaN(rollTotal)) {
       console.error("PF1e Alt Sheet | Failed to read roll total from rollSkill:", rawRoll);
@@ -290,10 +305,6 @@ export class MonsterKnowledgeEngine {
       atoms
     });
   }
-
-  /* -------------------------------------------- */
-  /* Comprehensive Data Extractors                */
-  /* -------------------------------------------- */
 
   static extractSize(actor) {
     const raw = actor.system.traits?.size;
@@ -480,10 +491,6 @@ export class MonsterKnowledgeEngine {
     };
   }
 
-  /* -------------------------------------------- */
-  /* Authentic Atom Generation Pipeline           */
-  /* -------------------------------------------- */
-
   static generateTrueAtoms(actor, count, taxonomy, templates) {
     const sizeStr = this.extractSize(actor);
     const sizeCategory = sizeStr ? ` ${sizeStr.toUpperCase()}` : "";
@@ -505,7 +512,6 @@ export class MonsterKnowledgeEngine {
     const candidatePool = [];
     const is10x = Boolean(game.settings.get(MODULE_ID, "enable10xGranularity"));
 
-    // Candidate 1: Templates
     if (templates.length > 0) {
       templates.forEach((t, idx) => {
         const lowerName = t.name.toLowerCase();
@@ -527,7 +533,6 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate 2: Vague Armor Assessment
     const ac = actor.system.attributes?.ac;
     if (ac) {
       const normal = ac.normal?.total ?? 10;
@@ -564,7 +569,6 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate 3: Vague Vitality Assessment
     const hpObj = actor.system.attributes?.hp;
     const maxHp = Number(hpObj?.max ?? hpObj?.value);
     if (!isNaN(maxHp) && maxHp > 0) {
@@ -590,7 +594,6 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate 4: Senses & Speeds
     const senseStr = this.extractSenses(actor);
     const speedStr = this.extractSpeeds(actor);
     const infoParts = [];
@@ -607,7 +610,6 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate 5: Tactical Saving Throw Deficiency
     const saves = actor.system.attributes?.savingThrows || {};
     const f = saves.fort?.total ?? 0;
     const r = saves.ref?.total ?? 0;
@@ -625,7 +627,6 @@ export class MonsterKnowledgeEngine {
       auditData: `Saves: Fort +${f}, Ref +${r}, Will +${w}`
     });
 
-    // Candidate 6: Damage Reduction
     const drList = actor.system.traits?.dr?.value || [];
     if (drList.length > 0) {
       candidatePool.push({
@@ -638,7 +639,6 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate 7: Energy Resistances & Immunities
     const eres = actor.system.traits?.eres?.value || [];
     if (eres.length > 0) {
       const resLabels = eres.map(r => typeof r === "object" ? (r.name || r.operator || r.type) : r).filter(Boolean);
@@ -680,7 +680,6 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate 8: Vulnerabilities
     const dv = actor.system.traits?.dv?.value || [];
     if (dv.length > 0) {
       const vulnLabels = dv.map(d => typeof d === "object" ? (d.name || d.operator || d.type) : d).filter(Boolean);
@@ -696,7 +695,6 @@ export class MonsterKnowledgeEngine {
       }
     }
 
-    // Candidate 9: Weapon Arsenal
     const weapons = actor.items.filter(i => i.type === "weapon" && i.system?.equipped);
     if (weapons.length > 0) {
       candidatePool.push({
@@ -709,7 +707,6 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate 10: Notable Feats
     const feats = actor.items.filter(i => i.type === "feat" && (i.system?.subType || "") !== "template");
     if (feats.length > 0) {
       const featSample = feats.slice(0, 3).map(f => f.name).join(", ");
@@ -723,7 +720,6 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate 11: Top Trained Skills
     const trainedSkills = Object.entries(actor.system.skills || {})
       .filter(([k, s]) => (s.ranks ?? 0) > 0 || Math.abs(s.mod ?? 0) > 0)
       .sort((a, b) => (b[1].mod ?? 0) - (a[1].mod ?? 0))
@@ -745,7 +741,6 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate 12: Ecology & Lore
     const matchedLoreKey = taxonomy.subtypes.map(s => s.toLowerCase()).find(s => LORE_REPOSITORY[s]) || (LORE_REPOSITORY[taxonomy.type] ? taxonomy.type : null);
     if (matchedLoreKey && LORE_REPOSITORY[matchedLoreKey]) {
       candidatePool.push({
@@ -758,7 +753,6 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Shuffle Candidates (Fisher-Yates)
     for (let i = candidatePool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [candidatePool[i], candidatePool[j]] = [candidatePool[j], candidatePool[i]];
@@ -773,10 +767,6 @@ export class MonsterKnowledgeEngine {
     return selected;
   }
 
-  /* -------------------------------------------- */
-  /* Procedural Misinformation Engine             */
-  /* -------------------------------------------- */
-
   static generateMisinformationAtoms(actor, count, taxonomy, templates) {
     const candidatePool = [];
     const is10x = Boolean(game.settings.get(MODULE_ID, "enable10xGranularity"));
@@ -788,7 +778,6 @@ export class MonsterKnowledgeEngine {
       return "";
     };
 
-    // 1. Template Falsehoods
     if (templates.length > 0) {
       candidatePool.push({
         id: "mis_template_sickly",
@@ -810,7 +799,6 @@ export class MonsterKnowledgeEngine {
       auditData: `${phantom.audit} (Creature has no such template)`
     });
 
-    // 2. False Vague Armor Class Assessment
     candidatePool.push({
       id: "mis_ac_fragile",
       category: "defense",
@@ -822,7 +810,6 @@ export class MonsterKnowledgeEngine {
       auditData: `Told PC: Frail AC bracket. True AC: ${actor.system.attributes?.ac?.normal?.total ?? "Unknown"}`
     });
 
-    // 3. False Vague Vitality Assessment
     candidatePool.push({
       id: "mis_hp_massive",
       category: "defense",
@@ -834,7 +821,6 @@ export class MonsterKnowledgeEngine {
       auditData: `Told PC: Massive HP reserve. True HP: ${actor.system.attributes?.hp?.max ?? "Unknown"}`
     });
 
-    // 4. False Elements
     const trueDi = (actor.system.traits?.di?.value || []).map(cleanElement).filter(Boolean);
     const trueDv = (actor.system.traits?.dv?.value || []).map(cleanElement).filter(Boolean);
     const trueRes = (actor.system.traits?.eres?.value || []).map(cleanElement).filter(Boolean);
@@ -861,7 +847,6 @@ export class MonsterKnowledgeEngine {
       auditData: `Told PC: Resists ${elementB}. True Resistances: [${trueRes.join(", ")}]`
     });
 
-    // 5. False DR Bypass
     const trueDr = actor.system.traits?.dr?.value || [];
     const trueBypasses = trueDr.map(d => String(d.operator || "").toLowerCase());
     const falseBypasses = DR_BYPASS_POOL.filter(m => !trueBypasses.includes(m));
@@ -876,7 +861,6 @@ export class MonsterKnowledgeEngine {
       auditData: `Told PC: DR bypassed by ${falseMaterial}. True DR: ${trueDr.map(d => `${d.amount}/${d.operator}`).join(", ") || "None"}`
     });
 
-    // 6. Inverted Save Vulnerability
     const saves = actor.system.attributes?.savingThrows || {};
     const savePairs = [
       { name: "Fortitude", val: saves.fort?.total ?? 0 },
@@ -897,7 +881,6 @@ export class MonsterKnowledgeEngine {
       auditData: `Told PC to target ${falseWeakness} (+${savePairs[0].val}). Lowest save is actually ${lowestSaveName} (+${lowestSaveVal})`
     });
 
-    // 7. Tactical Misdirection
     candidatePool.push({
       id: "mis_tactical_flank",
       category: "tactics",
@@ -907,7 +890,6 @@ export class MonsterKnowledgeEngine {
       auditData: "Told PC: Cannot handle flanking. (False claim)"
     });
 
-    // 8. Archetype Feature Hallucination
     const typeKey = ARCHETYPE_MISINFO_POOL[taxonomy.type] ? taxonomy.type : "default";
     const archetypeList = ARCHETYPE_MISINFO_POOL[typeKey] || ARCHETYPE_MISINFO_POOL.default;
     archetypeList.forEach((text, i) => {
@@ -921,7 +903,6 @@ export class MonsterKnowledgeEngine {
       });
     });
 
-    // 9. Folk Superstitions
     const folkMyths = [
       "Averse to crossing running water under its own power.",
       "Compulsively halts to inspect intricate geometric patterns or count spilled grains.",
@@ -939,7 +920,6 @@ export class MonsterKnowledgeEngine {
       });
     });
 
-    // Shuffle Candidates
     for (let i = candidatePool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [candidatePool[i], candidatePool[j]] = [candidatePool[j], candidatePool[i]];
@@ -947,10 +927,6 @@ export class MonsterKnowledgeEngine {
 
     return candidatePool.slice(0, Math.max(1, count));
   }
-
-  /* -------------------------------------------- */
-  /* Delivery & Audit Popups                       */
-  /* -------------------------------------------- */
 
   static async dispatchResults({ sourceActor, targetToken, outcome, margin, targetDc, taxonomy, atoms }) {
     const rawSkillName = sourceActor.system.skills[taxonomy.skillKey]?.name 
@@ -963,13 +939,17 @@ export class MonsterKnowledgeEngine {
     else if (Math.abs(taxonomy.cr - 1/4) < 0.05) crDisplay = "1/4";
     else if (Math.abs(taxonomy.cr - 1/8) < 0.05) crDisplay = "1/8";
 
-    const headerTitle = outcome === "success" ? targetToken.name : "Unidentified Creature";
+    const headerTitle = outcome === "success" ? (targetToken.name || "Identified Creature") : "Unidentified Creature";
+    const targetImg = targetToken.document?.texture?.src 
+      || targetToken.texture?.src 
+      || targetToken.actor?.img 
+      || "icons/svg/mystery-man.svg";
 
-    // 1. Post Chat Card
+    // 1. Lore Card (Visible to Player and GM)
     const playerCardHtml = `
       <div class="pf1 chat-card monster-id-card aeris-knowledge-card">
         <header class="card-header flexrow" style="display:flex; align-items:center; gap:8px; border-bottom:1px solid #747d8c; padding-bottom:4px; margin-bottom:6px;">
-          <img src="${targetToken.document.texture.src}" width="32" height="32" style="border-radius:4px;" />
+          <img src="${targetImg}" width="32" height="32" style="border-radius:4px;" />
           <h3 style="margin:0; font-size:1.1em;">${headerTitle}</h3>
         </header>
         <div class="card-content" style="font-size:0.9em; line-height:1.4;">
@@ -983,8 +963,8 @@ export class MonsterKnowledgeEngine {
 
     const gmPayload = {
       sourceActorName: sourceActor.name,
-      targetTokenName: targetToken.name,
-      targetTokenImg: targetToken.document.texture.src,
+      targetTokenName: targetToken.name || "Target",
+      targetTokenImg: targetImg,
       skillName: rawSkillName,
       targetDc,
       crDisplay,
@@ -996,10 +976,12 @@ export class MonsterKnowledgeEngine {
     MonsterKnowledgeEngine.lastAuditPayload = gmPayload;
 
     const gmRecipients = ChatMessage.getWhisperRecipients("GM").map(u => u.id);
+    const whisperList = [...new Set([game.user.id, ...gmRecipients])];
+
     await ChatMessage.create({
       speaker: ChatMessage.getSpeaker({ actor: sourceActor }),
       content: playerCardHtml,
-      whisper: [game.user.id, ...gmRecipients],
+      whisper: whisperList,
       flags: {
         [MODULE_ID]: {
           auditPayload: gmPayload
@@ -1012,10 +994,6 @@ export class MonsterKnowledgeEngine {
     }
   }
 }
-
-/* -------------------------------------------- */
-/* Interactive GM Audit Application             */
-/* -------------------------------------------- */
 
 export class MonsterKnowledgeAuditDialog extends Application {
   constructor(payload, options = {}) {
@@ -1128,7 +1106,6 @@ export class MonsterKnowledgeAuditDialog extends Application {
   }
 }
 
-// Attach class reference for HUD caller
 MonsterKnowledgeEngine.MonsterKnowledgeAuditDialog = MonsterKnowledgeAuditDialog;
 
 Hooks.once("init", () => {
