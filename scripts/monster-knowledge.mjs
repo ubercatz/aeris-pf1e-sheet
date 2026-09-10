@@ -142,6 +142,9 @@ export class MonsterKnowledgeEngine {
     });
   }
 
+  /**
+   * Primary entry point: Executes identification on currently targeted token
+   */
   static async identifyTarget(sourceActor, targetToken = null) {
     if (!sourceActor) {
       ui.notifications.warn("No source character provided for monster identification.");
@@ -159,14 +162,12 @@ export class MonsterKnowledgeEngine {
     const templates = this.getAppliedTemplates(targetActor);
     const hasTemplates = templates.length > 0;
 
-    // Check system 10x Granularity world setting
+    // Check world setting for 10x scaling
     const is10x = Boolean(game.settings.get(MODULE_ID, "enable10xGranularity"));
 
-    // Base DC: 10 + CR (or 15 + CR for rare / templated / uncommon)
+    // DC calculation
     const isRare = targetActor.getFlag(MODULE_ID, "isRareMonster") || taxonomy.tags.has("rare") || taxonomy.tags.has("uncommon") || hasTemplates;
     const baseDcMod = isRare ? 15 : 10;
-    
-    // Calculate DC with 10x scaling support
     const targetDc = is10x ? Math.round((baseDcMod + taxonomy.cr) * 10) : Math.round(baseDcMod + taxonomy.cr);
 
     // Roll Knowledge check
@@ -175,15 +176,13 @@ export class MonsterKnowledgeEngine {
     const rollOptions = enforceBlind ? { rollMode: CONST.DICE_ROLL_MODES.BLIND } : {};
 
     const rawRoll = await sourceActor.rollSkill(skillKey, rollOptions);
-    if (!rawRoll) return; // User closed dialog
+    if (!rawRoll) return;
 
-    // Robust unwrapping: PF1e rollSkill returns Roll[], a Roll, or an object containing rolls
     const rollObj = Array.isArray(rawRoll) ? rawRoll[0] : (rawRoll.rolls ? rawRoll.rolls[0] : rawRoll);
     const rollTotal = Number(rollObj?.total);
 
     if (isNaN(rollTotal)) {
       console.error("PF1e Alt Sheet | Failed to read roll total from rollSkill:", rawRoll);
-      ui.notifications.error("Unable to evaluate Knowledge roll total.");
       return;
     }
 
@@ -248,22 +247,101 @@ export class MonsterKnowledgeEngine {
   }
 
   /* -------------------------------------------- */
-  /* Taxonomy & Template Extractors               */
+  /* Structured Extractors: Senses, Speeds & Tags */
   /* -------------------------------------------- */
+
+  static extractSenses(actor) {
+    const senses = actor.system.traits?.senses;
+    if (!senses) return "";
+    if (typeof senses === "string") return senses.trim();
+
+    const labels = {
+      dv: "Darkvision",
+      bs: "Blindsight",
+      bse: "Blindsense",
+      ts: "Tremorsense",
+      sc: "Scent",
+      tr: "True Seeing",
+      ls: "Low-Light Vision"
+    };
+
+    const parts = [];
+    for (const [key, label] of Object.entries(labels)) {
+      const entry = senses[key];
+      if (!entry) continue;
+      const dist = typeof entry === "object" ? (entry.total ?? entry.value) : entry;
+      if (typeof dist === "number" && dist > 0) {
+        parts.push(`${label} ${dist} ft.`);
+      } else if (dist === true || (typeof dist === "number" && dist === 1 && key === "ls")) {
+        parts.push(label);
+      }
+    }
+
+    if (senses.custom && typeof senses.custom === "string" && senses.custom.trim()) {
+      parts.push(senses.custom.trim());
+    }
+    if (senses.value && typeof senses.value === "string" && senses.value.trim()) {
+      parts.push(senses.value.trim());
+    }
+
+    return [...new Set(parts)].join(", ");
+  }
+
+  static extractSpeeds(actor) {
+    const speedObj = actor.system.attributes?.speed;
+    if (!speedObj) return "";
+    const speeds = [];
+    
+    const land = speedObj.land?.total ?? speedObj.land?.base;
+    if (land) speeds.push(`Land ${land} ft.`);
+    const fly = speedObj.fly?.total ?? speedObj.fly?.base;
+    if (fly) speeds.push(`Fly ${fly} ft.`);
+    const swim = speedObj.swim?.total ?? speedObj.swim?.base;
+    if (swim) speeds.push(`Swim ${swim} ft.`);
+    const climb = speedObj.climb?.total ?? speedObj.climb?.base;
+    if (climb) speeds.push(`Climb ${climb} ft.`);
+    const burrow = speedObj.burrow?.total ?? speedObj.burrow?.base;
+    if (burrow) speeds.push(`Burrow ${burrow} ft.`);
+
+    return speeds.join(", ");
+  }
+
+  static extractSubtypes(actor) {
+    const results = [];
+    const st = actor.system.traits?.st || actor.system.traits?.subTypes;
+    if (st) {
+      if (Array.isArray(st)) {
+        results.push(...st);
+      } else if (typeof st === "string") {
+        results.push(...st.split(/[,;]/));
+      } else if (typeof st === "object") {
+        if (Array.isArray(st.value)) results.push(...st.value);
+        else if (typeof st.value === "string") results.push(...st.value.split(/[,;]/));
+        if (typeof st.custom === "string") results.push(...st.custom.split(/[,;]/));
+      }
+    }
+
+    // Secondary inspection: Race item attached to actor
+    if (actor.items) {
+      const race = actor.items.find(i => i.type === "race");
+      if (race?.system) {
+        const rSt = race.system.subTypes || race.system.subtypes || race.system.st;
+        if (Array.isArray(rSt)) results.push(...rSt);
+        else if (typeof rSt === "string") results.push(...rSt.split(/[,;]/));
+        else if (typeof rSt === "object" && Array.isArray(rSt?.value)) results.push(...rSt.value);
+      }
+    }
+
+    return [...new Set(results.map(s => String(s).trim()).filter(Boolean))];
+  }
 
   static extractTaxonomy(actor) {
     const rawType = (actor.system.traits?.creatureType || "humanoid").toLowerCase().replace(/[^a-z]/g, "");
     const skillKey = CREATURE_TYPE_SKILLS[rawType] || "kna";
-    
-    const rawSubtypes = actor.system.traits?.subTypes || actor.system.traits?.st || [];
-    const subtypes = (Array.isArray(rawSubtypes) ? rawSubtypes : [rawSubtypes])
-      .map(s => String(s).toLowerCase().trim())
-      .filter(Boolean);
+    const subtypes = this.extractSubtypes(actor);
 
     const rawTags = actor.system.tags || [];
     const tags = new Set((Array.isArray(rawTags) ? rawTags : [rawTags]).map(t => String(t).toLowerCase().trim()));
-
-    // Extract CR as a clean float
     const cr = Number(actor.system.details?.cr?.total ?? actor.system.details?.cr?.base ?? 1);
 
     return {
@@ -289,7 +367,7 @@ export class MonsterKnowledgeEngine {
   static generateTrueAtoms(actor, count, taxonomy, templates) {
     const pool = [];
 
-    // 1. Identity & Applied Templates
+    // 1. Identity & Templates
     if (templates.length > 0) {
       pool.push({
         id: "id_template",
@@ -301,29 +379,34 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    const subTypeStr = taxonomy.subtypes.length ? ` (${taxonomy.subtypes.join(", ")})` : "";
+    const typeLabel = taxonomy.type.toUpperCase();
+    const formattedSubtypes = taxonomy.subtypes.map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(", ");
+    const subTypeStr = formattedSubtypes ? ` (${formattedSubtypes})` : "";
+    
     pool.push({
       id: "id_classification",
       category: "identity",
       traitType: "IDENTITY",
       factualState: "TRUE_FACT",
-      formattedClaim: `Classified as a creature of the <strong>${taxonomy.type.toUpperCase()}${subTypeStr}</strong> classification.`,
+      formattedClaim: `Classified as a creature of the <strong>${typeLabel}${subTypeStr}</strong> classification.`,
       auditData: `Type: ${taxonomy.type}, Subtypes: [${taxonomy.subtypes.join(", ")}]`
     });
 
     // 2. Senses & Locomotion
-    const senses = actor.system.traits?.senses?.value || actor.system.traits?.senses || "";
-    const speed = actor.system.attributes?.speed?.land?.total || actor.system.attributes?.speed?.land?.base;
-    if (senses || speed) {
-      const senseText = senses ? `Senses: ${senses}` : "";
-      const speedText = speed ? `Land Speed: ${speed} ft.` : "";
+    const senseStr = this.extractSenses(actor);
+    const speedStr = this.extractSpeeds(actor);
+    const infoParts = [];
+    if (senseStr) infoParts.push(`Senses: ${senseStr}`);
+    if (speedStr) infoParts.push(`Speed: ${speedStr}`);
+
+    if (infoParts.length > 0) {
       pool.push({
         id: "id_senses",
         category: "identity",
         traitType: "SENSES_MOBILITY",
         factualState: "TRUE_FACT",
-        formattedClaim: `Locomotion & Awareness: <strong>${[senseText, speedText].filter(Boolean).join(" | ")}</strong>.`,
-        auditData: `Senses: "${senses}", Land Speed: ${speed}`
+        formattedClaim: `Locomotion & Awareness: <strong>${infoParts.join(" | ")}</strong>.`,
+        auditData: `${infoParts.join(" | ")}`
       });
     }
 
@@ -366,7 +449,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // 5. Weaknesses & Lowest Saving Throw
+    // 5. Weaknesses & Saving Throws
     const dv = actor.system.traits?.dv?.value || [];
     if (dv.length > 0) {
       pool.push({
@@ -396,7 +479,7 @@ export class MonsterKnowledgeEngine {
       auditData: `Saves: Fort +${f}, Ref +${r}, Will +${w}`
     });
 
-    // 6. Special Attacks & Abilities
+    // 6. Special Attacks
     const specialAttacks = actor.items.filter(i => i.type === "attack" && (i.system?.attackType === "special" || i.system?.subType === "special"));
     if (specialAttacks.length > 0) {
       const atk = specialAttacks[0];
@@ -527,7 +610,7 @@ export class MonsterKnowledgeEngine {
       usedCategories.add("save");
     }
 
-    // 5. Archetype Cross-Hallucination or Folk Myth
+    // 5. Archetype Hallucinations
     while (atoms.length < count) {
       const typeKey = ARCHETYPE_MISINFO_POOL[taxonomy.type] ? taxonomy.type : "default";
       const pool = ARCHETYPE_MISINFO_POOL[typeKey];
@@ -547,28 +630,29 @@ export class MonsterKnowledgeEngine {
   }
 
   /* -------------------------------------------- */
-  /* Chat Card Rendering (Player vs GM Whisper)    */
+  /* Chat Rendering & Socket Leak-Shield           */
   /* -------------------------------------------- */
 
   static async renderCards({ sourceActor, targetToken, outcome, margin, targetDc, taxonomy, atoms }) {
-    // Correct localized skill name lookup
     const rawSkillName = sourceActor.system.skills[taxonomy.skillKey]?.name 
       || (pf1.config?.skills?.[taxonomy.skillKey] ? game.i18n.localize(pf1.config.skills[taxonomy.skillKey]) : null)
       || "Knowledge";
 
-    // Format fractional CR (e.g. 1/3) for clean display
     let crDisplay = String(taxonomy.cr);
     if (Math.abs(taxonomy.cr - 1/3) < 0.05 || taxonomy.cr === 0.3375) crDisplay = "1/3";
     else if (Math.abs(taxonomy.cr - 1/2) < 0.05) crDisplay = "1/2";
     else if (Math.abs(taxonomy.cr - 1/4) < 0.05) crDisplay = "1/4";
     else if (Math.abs(taxonomy.cr - 1/8) < 0.05) crDisplay = "1/8";
 
-    // 1. Player Card
+    // Standardize player header: Only show the creature's name if the check was an authentic success
+    const headerTitle = outcome === "success" ? targetToken.name : "Unidentified Creature";
+
+    // 1. Player Card (Visible to Player + GM)
     const playerCardHtml = `
       <div class="pf1 chat-card monster-id-card aeris-knowledge-card">
         <header class="card-header flexrow" style="display:flex; align-items:center; gap:8px; border-bottom:1px solid #747d8c; padding-bottom:4px; margin-bottom:6px;">
           <img src="${targetToken.document.texture.src}" width="32" height="32" style="border-radius:4px;" />
-          <h3 style="margin:0; font-size:1.1em;">${outcome === "failure" ? "Unidentified Entity" : targetToken.name}</h3>
+          <h3 style="margin:0; font-size:1.1em;">${headerTitle}</h3>
         </header>
         <div class="card-content" style="font-size:0.9em; line-height:1.4;">
           <p style="margin-bottom:4px;"><strong>${sourceActor.name}</strong> recalls the following lore via <em>${rawSkillName}</em>:</p>
@@ -579,14 +663,40 @@ export class MonsterKnowledgeEngine {
       </div>
     `;
 
+    const gmRecipients = ChatMessage.getWhisperRecipients("GM").map(u => u.id);
     await ChatMessage.create({
       speaker: ChatMessage.getSpeaker({ actor: sourceActor }),
       content: playerCardHtml,
-      whisper: [game.user.id, ...ChatMessage.getWhisperRecipients("GM")]
+      whisper: [game.user.id, ...gmRecipients]
     });
 
-    // 2. GM Diagnostic Card
+    // 2. GM Diagnostic Payload
+    const gmPayload = {
+      sourceActorName: sourceActor.name,
+      targetTokenName: targetToken.name,
+      skillName: rawSkillName,
+      targetDc,
+      crDisplay,
+      outcome,
+      margin,
+      atoms
+    };
+
+    // Socket Shield: Non-GM clients emit a socket event so ONLY the GM authors the audit card
+    if (game.user.isGM) {
+      await this.createGmAuditCard(gmPayload);
+    } else {
+      game.socket.emit(`module.${MODULE_ID}`, {
+        action: "gmKnowledgeAudit",
+        payload: gmPayload
+      });
+    }
+  }
+
+  static async createGmAuditCard(payload) {
+    const { sourceActorName, targetTokenName, skillName, targetDc, crDisplay, outcome, margin, atoms } = payload;
     const statusColor = outcome === "success" ? "#27ae60" : outcome === "failure" ? "#f39c12" : "#c0392b";
+    
     const auditRows = atoms.map(a => `
       <div style="border-bottom:1px solid rgba(0,0,0,0.06); padding:3px 0; font-size:0.8em;">
         <span style="font-weight:bold; color:${a.factualState === "MISINFORMATION" ? "#c0392b" : "#27ae60"};">[${a.factualState}]</span>
@@ -597,10 +707,10 @@ export class MonsterKnowledgeEngine {
     const gmCardHtml = `
       <div class="pf1 chat-card aeris-gm-audit" style="border-left:4px solid ${statusColor}; padding-left:8px;">
         <header style="border-bottom:1px solid #ccc; margin-bottom:4px;">
-          <strong style="font-size:0.95em;">[GM Knowledge Audit] ${targetToken.name}</strong>
+          <strong style="font-size:0.95em;">[GM Knowledge Audit] ${targetTokenName}</strong>
         </header>
         <div style="font-size:0.85em; line-height:1.3;">
-          <div><strong>Actor:</strong> ${sourceActor.name} | <strong>Skill:</strong> ${rawSkillName}</div>
+          <div><strong>Actor:</strong> ${sourceActorName} | <strong>Skill:</strong> ${skillName}</div>
           <div><strong>Target DC:</strong> ${targetDc} (CR ${crDisplay}) | <strong>Margin:</strong> ${margin >= 0 ? `+${margin}` : margin}</div>
           <div><strong>Engine State:</strong> <span style="color:${statusColor}; font-weight:bold;">${outcome.toUpperCase()}</span></div>
         </div>
@@ -611,14 +721,23 @@ export class MonsterKnowledgeEngine {
       </div>
     `;
 
+    const gmUserIds = ChatMessage.getWhisperRecipients("GM").map(u => u.id);
     await ChatMessage.create({
       content: gmCardHtml,
-      whisper: ChatMessage.getWhisperRecipients("GM")
+      whisper: gmUserIds
     });
   }
 }
 
-// Hook initialization
+// Hook initialization & Socket registration
 Hooks.once("init", () => {
   MonsterKnowledgeEngine.registerSettings();
+});
+
+Hooks.once("ready", () => {
+  game.socket.on(`module.${MODULE_ID}`, async (data) => {
+    if (data?.action === "gmKnowledgeAudit" && game.user.isGM) {
+      await MonsterKnowledgeEngine.createGmAuditCard(data.payload);
+    }
+  });
 });
