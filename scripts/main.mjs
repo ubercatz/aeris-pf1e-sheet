@@ -2,7 +2,7 @@ import { registerHandlebarsHelpers } from "./helpers.mjs";
 import { AltCharacterSheetPF, AltNPCSheetPF } from "./sheet.mjs";
 import { apply10xConditionRegistry } from "./conditions.mjs";
 import { GranularForgeApp } from "./gear-forge.mjs";
-import { MonsterKnowledgeEngine } from "./scripts/monster-knowledge.mjs";
+import { MonsterKnowledgeEngine } from "./monster-knowledge.mjs";
 const MODULE_ID = "pf1-altsheet-reworked";
 
 function _rerenderOpenAltSheets() {
@@ -256,8 +256,14 @@ Hooks.once("ready", () => {
   }
 // Expose Forge globally for macros and button shortcuts
   game.aeris = game.aeris || {};
+  game.aeris.MonsterKnowledgeEngine = MonsterKnowledgeEngine;
+  game.aeris.identifyMonster = (actor, token) => MonsterKnowledgeEngine.identifyTarget(actor, token);
   game.aeris.GranularForgeApp = GranularForgeApp;
   game.aeris.openForge = () => new GranularForgeApp().render(true);
+
+  // Expose to top-level window/global scope so macros can call it directly by name:
+  globalThis.MonsterKnowledgeEngine = MonsterKnowledgeEngine;
+
   apply10xConditionRegistry();
   // Register Player Workshop API Launcher
   const moduleObj = game.modules.get(MODULE_ID);
