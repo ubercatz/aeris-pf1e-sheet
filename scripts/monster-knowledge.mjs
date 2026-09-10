@@ -36,8 +36,8 @@ export const DR_BYPASS_POOL = [
 
 export const ARCHETYPE_MISINFO_POOL = {
   undead: [
-    "Inflicts 1d4 temporary negative levels on direct unarmed contact.",
-    "Projecting an unnatural fear aura within 30 feet that unnerves attackers.",
+    "Inflicts temporary negative levels on direct unarmed contact.",
+    "Projects an unnatural fear aura within 30 feet that unnerves attackers.",
     "Bypasses physical armor entirely with incorporeal or necrotic touch attacks.",
     "Paralyzes mortal targets on a successful claw or slam strike."
   ],
@@ -113,9 +113,6 @@ export const PHANTOM_TEMPLATES = [
 
 export class MonsterKnowledgeEngine {
 
-  /**
-   * Initializes module system settings
-   */
   static registerSettings() {
     game.settings.register(MODULE_ID, "idEnforceBlind", {
       name: "Enforce Blind Knowledge Rolls",
@@ -123,7 +120,7 @@ export class MonsterKnowledgeEngine {
       scope: "world",
       config: true,
       type: Boolean,
-      default: true
+      default: false
     });
 
     game.settings.register(MODULE_ID, "idAutomateMisinfo", {
@@ -145,11 +142,6 @@ export class MonsterKnowledgeEngine {
     });
   }
 
-  /**
-   * Primary entry point: Executes identification on currently targeted token
-   * @param {Actor} sourceActor The character rolling the Knowledge check
-   * @param {Token} [targetToken] Optional explicit target token; defaults to game.user.targets
-   */
   static async identifyTarget(sourceActor, targetToken = null) {
     if (!sourceActor) {
       ui.notifications.warn("No source character provided for monster identification.");
@@ -167,29 +159,44 @@ export class MonsterKnowledgeEngine {
     const templates = this.getAppliedTemplates(targetActor);
     const hasTemplates = templates.length > 0;
 
-    // Determine Rarity and DC
+    // Check system 10x Granularity world setting
+    const is10x = Boolean(game.settings.get(MODULE_ID, "enable10xGranularity"));
+
+    // Base DC: 10 + CR (or 15 + CR for rare / templated / uncommon)
     const isRare = targetActor.getFlag(MODULE_ID, "isRareMonster") || taxonomy.tags.has("rare") || taxonomy.tags.has("uncommon") || hasTemplates;
-    const is10x = Boolean(targetActor.getFlag(MODULE_ID, "is10xScaled"));
     const baseDcMod = isRare ? 15 : 10;
-    const rawDc = baseDcMod + taxonomy.cr;
-    const targetDc = is10x ? rawDc * 10 : rawDc;
+    
+    // Calculate DC with 10x scaling support
+    const targetDc = is10x ? Math.round((baseDcMod + taxonomy.cr) * 10) : Math.round(baseDcMod + taxonomy.cr);
 
     // Roll Knowledge check
     const skillKey = taxonomy.skillKey;
     const enforceBlind = game.settings.get(MODULE_ID, "idEnforceBlind");
     const rollOptions = enforceBlind ? { rollMode: CONST.DICE_ROLL_MODES.BLIND } : {};
 
-    const roll = await sourceActor.rollSkill(skillKey, rollOptions);
-    const rollTotal = roll.total;
+    const rawRoll = await sourceActor.rollSkill(skillKey, rollOptions);
+    if (!rawRoll) return; // User closed dialog
+
+    // Robust unwrapping: PF1e rollSkill returns Roll[], a Roll, or an object containing rolls
+    const rollObj = Array.isArray(rawRoll) ? rawRoll[0] : (rawRoll.rolls ? rawRoll.rolls[0] : rawRoll);
+    const rollTotal = Number(rollObj?.total);
+
+    if (isNaN(rollTotal)) {
+      console.error("PF1e Alt Sheet | Failed to read roll total from rollSkill:", rawRoll);
+      ui.notifications.error("Unable to evaluate Knowledge roll total.");
+      return;
+    }
+
     const margin = rollTotal - targetDc;
     const step = game.settings.get(MODULE_ID, "idMisinfoStep") * (is10x ? 10 : 1);
+    const marginDivisor = 5 * (is10x ? 10 : 1);
 
     let outcome = "failure";
     let atoms = [];
 
     if (margin >= 0) {
       outcome = "success";
-      const unlockedCount = 1 + Math.floor(margin / (5 * (is10x ? 10 : 1)));
+      const unlockedCount = 1 + Math.floor(margin / marginDivisor);
       atoms = this.generateTrueAtoms(targetActor, unlockedCount, taxonomy, templates);
     } else if (margin > -step) {
       outcome = "failure";
@@ -199,11 +206,11 @@ export class MonsterKnowledgeEngine {
         traitType: "NONE",
         factualState: "TRUE_FACT",
         formattedClaim: "You search your memory, but fail to recall any distinctive details about this creature.",
-        auditData: "Margin: " + margin
+        auditData: `Margin: ${margin} (Failed by less than ${step})`
       }];
     } else {
       outcome = "misinformation";
-      const falseCount = 1 + Math.floor((Math.abs(margin) - step) / (5 * (is10x ? 10 : 1)));
+      const falseCount = 1 + Math.floor((Math.abs(margin) - step) / marginDivisor);
       const autoMisinfo = game.settings.get(MODULE_ID, "idAutomateMisinfo");
 
       if (autoMisinfo) {
@@ -214,13 +221,12 @@ export class MonsterKnowledgeEngine {
           category: "misinformation",
           traitType: "MANUAL",
           factualState: "MISINFORMATION",
-          formattedClaim: "[The GM will provide custom folklore details.]",
-          auditData: "Automated misinformation disabled in settings."
+          formattedClaim: "[The GM will provide custom folkloric misinformation.]",
+          auditData: `Margin: ${margin} (Misinformation triggered)`
         }];
       }
     }
 
-    // Dispatch system hook for third-party extensions/overrides
     Hooks.call("pf1MonsterIdentification", {
       sourceActor,
       targetToken: token,
@@ -249,24 +255,23 @@ export class MonsterKnowledgeEngine {
     const rawType = (actor.system.traits?.creatureType || "humanoid").toLowerCase().replace(/[^a-z]/g, "");
     const skillKey = CREATURE_TYPE_SKILLS[rawType] || "kna";
     
-    // Extract Subtypes
     const rawSubtypes = actor.system.traits?.subTypes || actor.system.traits?.st || [];
     const subtypes = (Array.isArray(rawSubtypes) ? rawSubtypes : [rawSubtypes])
       .map(s => String(s).toLowerCase().trim())
       .filter(Boolean);
 
-    // Extract Tags
     const rawTags = actor.system.tags || [];
     const tags = new Set((Array.isArray(rawTags) ? rawTags : [rawTags]).map(t => String(t).toLowerCase().trim()));
 
-    const cr = actor.system.details?.cr?.total ?? 1;
+    // Extract CR as a clean float
+    const cr = Number(actor.system.details?.cr?.total ?? actor.system.details?.cr?.base ?? 1);
 
     return {
       type: rawType,
       skillKey,
       subtypes,
       tags,
-      cr
+      cr: isNaN(cr) ? 1 : cr
     };
   }
 
@@ -284,7 +289,7 @@ export class MonsterKnowledgeEngine {
   static generateTrueAtoms(actor, count, taxonomy, templates) {
     const pool = [];
 
-    // Atom: Identity & Templates
+    // 1. Identity & Applied Templates
     if (templates.length > 0) {
       pool.push({
         id: "id_template",
@@ -303,10 +308,26 @@ export class MonsterKnowledgeEngine {
       traitType: "IDENTITY",
       factualState: "TRUE_FACT",
       formattedClaim: `Classified as a creature of the <strong>${taxonomy.type.toUpperCase()}${subTypeStr}</strong> classification.`,
-      auditData: `Type: ${taxonomy.type}, Subtypes: ${taxonomy.subtypes.join(", ") || "none"}`
+      auditData: `Type: ${taxonomy.type}, Subtypes: [${taxonomy.subtypes.join(", ")}]`
     });
 
-    // Atom: Damage Reduction
+    // 2. Senses & Locomotion
+    const senses = actor.system.traits?.senses?.value || actor.system.traits?.senses || "";
+    const speed = actor.system.attributes?.speed?.land?.total || actor.system.attributes?.speed?.land?.base;
+    if (senses || speed) {
+      const senseText = senses ? `Senses: ${senses}` : "";
+      const speedText = speed ? `Land Speed: ${speed} ft.` : "";
+      pool.push({
+        id: "id_senses",
+        category: "identity",
+        traitType: "SENSES_MOBILITY",
+        factualState: "TRUE_FACT",
+        formattedClaim: `Locomotion & Awareness: <strong>${[senseText, speedText].filter(Boolean).join(" | ")}</strong>.`,
+        auditData: `Senses: "${senses}", Land Speed: ${speed}`
+      });
+    }
+
+    // 3. Defensive Traits: Damage Reduction
     const drList = actor.system.traits?.dr?.value || [];
     if (drList.length > 0) {
       const drText = drList.map(d => `${d.amount}/${d.operator || "—"}`).join(", ");
@@ -320,7 +341,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Atom: Energy Resistances & Immunities
+    // 4. Defensive Traits: Energy Resistances & Immunities
     const eres = actor.system.traits?.eres?.value || [];
     if (eres.length > 0) {
       pool.push({
@@ -328,7 +349,7 @@ export class MonsterKnowledgeEngine {
         category: "defense",
         traitType: "ENERGY_RESIST",
         factualState: "TRUE_FACT",
-        formattedClaim: `Resistant to <strong>${eres.map(r => r.name || r).join(", ")}</strong> energy damage.`,
+        formattedClaim: `Naturally resistant to <strong>${eres.map(r => r.name || r).join(", ")}</strong> damage.`,
         auditData: `Resistances: ${eres.join(", ")}`
       });
     }
@@ -345,7 +366,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Atom: Vulnerabilities & Save Deficiencies
+    // 5. Weaknesses & Lowest Saving Throw
     const dv = actor.system.traits?.dv?.value || [];
     if (dv.length > 0) {
       pool.push({
@@ -371,11 +392,11 @@ export class MonsterKnowledgeEngine {
       category: "weakness",
       traitType: "SAVE_WEAKNESS",
       factualState: "TRUE_FACT",
-      formattedClaim: `Tactical vulnerability noted: Its <strong>${lowestSave}</strong> save is its weakest defense.`,
+      formattedClaim: `Tactical deficiency noted: Its <strong>${lowestSave}</strong> save is its weakest defense.`,
       auditData: `Saves: Fort +${f}, Ref +${r}, Will +${w}`
     });
 
-    // Atom: Special Attacks
+    // 6. Special Attacks & Abilities
     const specialAttacks = actor.items.filter(i => i.type === "attack" && (i.system?.attackType === "special" || i.system?.subType === "special"));
     if (specialAttacks.length > 0) {
       const atk = specialAttacks[0];
@@ -384,7 +405,7 @@ export class MonsterKnowledgeEngine {
         category: "offense",
         traitType: "SPECIAL_ATTACK",
         factualState: "TRUE_FACT",
-        formattedClaim: `Capable of deploying a hazardous <strong>${atk.name}</strong> combat maneuver or ability.`,
+        formattedClaim: `Capable of deploying a hazardous <strong>${atk.name}</strong> combat ability.`,
         auditData: `Attack Item: ${atk.name}`
       });
     }
@@ -400,7 +421,7 @@ export class MonsterKnowledgeEngine {
     const atoms = [];
     const usedCategories = new Set();
 
-    // 1. Template Misdirection (If templates exist, misdiagnose; if none, hallucinate)
+    // 1. Template Misdirection
     if (templates.length > 0 && !usedCategories.has("template")) {
       const isSkeleton = templates.some(t => t.toLowerCase().includes("skeleton"));
       if (isSkeleton) {
@@ -492,9 +513,9 @@ export class MonsterKnowledgeEngine {
         { name: "Fortitude", val: saves.fort?.total ?? 0 },
         { name: "Reflex", val: saves.ref?.total ?? 0 },
         { name: "Will", val: saves.will?.total ?? 0 }
-      ].sort((a, b) => b.val - a.val); // Sort highest to lowest
+      ].sort((a, b) => b.val - a.val);
 
-      const falseWeakness = savePairs[0].name; // Pick its highest save
+      const falseWeakness = savePairs[0].name;
       atoms.push({
         id: "mis_save_defect",
         category: "weakness",
@@ -530,9 +551,19 @@ export class MonsterKnowledgeEngine {
   /* -------------------------------------------- */
 
   static async renderCards({ sourceActor, targetToken, outcome, margin, targetDc, taxonomy, atoms }) {
-    const skillName = sourceActor.system.skills[taxonomy.skillKey]?.label || "Knowledge";
+    // Correct localized skill name lookup
+    const rawSkillName = sourceActor.system.skills[taxonomy.skillKey]?.name 
+      || (pf1.config?.skills?.[taxonomy.skillKey] ? game.i18n.localize(pf1.config.skills[taxonomy.skillKey]) : null)
+      || "Knowledge";
 
-    // 1. Player Card (Neutral styling; indistinguishable from authentic success)
+    // Format fractional CR (e.g. 1/3) for clean display
+    let crDisplay = String(taxonomy.cr);
+    if (Math.abs(taxonomy.cr - 1/3) < 0.05 || taxonomy.cr === 0.3375) crDisplay = "1/3";
+    else if (Math.abs(taxonomy.cr - 1/2) < 0.05) crDisplay = "1/2";
+    else if (Math.abs(taxonomy.cr - 1/4) < 0.05) crDisplay = "1/4";
+    else if (Math.abs(taxonomy.cr - 1/8) < 0.05) crDisplay = "1/8";
+
+    // 1. Player Card
     const playerCardHtml = `
       <div class="pf1 chat-card monster-id-card aeris-knowledge-card">
         <header class="card-header flexrow" style="display:flex; align-items:center; gap:8px; border-bottom:1px solid #747d8c; padding-bottom:4px; margin-bottom:6px;">
@@ -540,7 +571,7 @@ export class MonsterKnowledgeEngine {
           <h3 style="margin:0; font-size:1.1em;">${outcome === "failure" ? "Unidentified Entity" : targetToken.name}</h3>
         </header>
         <div class="card-content" style="font-size:0.9em; line-height:1.4;">
-          <p style="margin-bottom:4px;"><strong>${sourceActor.name}</strong> recalls the following lore via <em>${skillName}</em>:</p>
+          <p style="margin-bottom:4px;"><strong>${sourceActor.name}</strong> recalls the following lore via <em>${rawSkillName}</em>:</p>
           <ul style="padding-left:18px; margin:4px 0;">
             ${atoms.map(a => `<li style="margin-bottom:3px;">${a.formattedClaim}</li>`).join("")}
           </ul>
@@ -554,7 +585,7 @@ export class MonsterKnowledgeEngine {
       whisper: [game.user.id, ...ChatMessage.getWhisperRecipients("GM")]
     });
 
-    // 2. GM Diagnostic Whisper Card
+    // 2. GM Diagnostic Card
     const statusColor = outcome === "success" ? "#27ae60" : outcome === "failure" ? "#f39c12" : "#c0392b";
     const auditRows = atoms.map(a => `
       <div style="border-bottom:1px solid rgba(0,0,0,0.06); padding:3px 0; font-size:0.8em;">
@@ -569,13 +600,13 @@ export class MonsterKnowledgeEngine {
           <strong style="font-size:0.95em;">[GM Knowledge Audit] ${targetToken.name}</strong>
         </header>
         <div style="font-size:0.85em; line-height:1.3;">
-          <div><strong>Actor:</strong> ${sourceActor.name} | <strong>Skill:</strong> ${skillName}</div>
-          <div><strong>Target DC:</strong> ${targetDc} (CR ${taxonomy.cr}) | <strong>Margin:</strong> ${margin > 0 ? `+${margin}` : margin}</div>
+          <div><strong>Actor:</strong> ${sourceActor.name} | <strong>Skill:</strong> ${rawSkillName}</div>
+          <div><strong>Target DC:</strong> ${targetDc} (CR ${crDisplay}) | <strong>Margin:</strong> ${margin >= 0 ? `+${margin}` : margin}</div>
           <div><strong>Engine State:</strong> <span style="color:${statusColor}; font-weight:bold;">${outcome.toUpperCase()}</span></div>
         </div>
         <div style="margin-top:6px; background:rgba(0,0,0,0.02); border:1px solid #ddd; border-radius:4px; padding:4px;">
           <strong>Data Verification Payload:</strong>
-          ${auditRows}
+          ${auditRows || '<div style="color:#777; font-style:italic;">No data items returned.</div>'}
         </div>
       </div>
     `;
