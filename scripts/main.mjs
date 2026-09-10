@@ -2,6 +2,7 @@ import { registerHandlebarsHelpers } from "./helpers.mjs";
 import { AltCharacterSheetPF, AltNPCSheetPF } from "./sheet.mjs";
 import { apply10xConditionRegistry } from "./conditions.mjs";
 import { GranularForgeApp } from "./gear-forge.mjs";
+import { MonsterKnowledgeEngine } from "./scripts/monster-knowledge.mjs";
 const MODULE_ID = "pf1-altsheet-reworked";
 
 function _rerenderOpenAltSheets() {
