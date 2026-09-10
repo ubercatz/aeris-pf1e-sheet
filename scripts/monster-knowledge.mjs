@@ -49,17 +49,17 @@ export const ARCHETYPE_MISINFO_POOL = {
   undead: [
     "Inflicts temporary negative levels on direct unarmed contact.",
     "Projects an unnatural fear aura within 30 feet that unnerves attackers.",
-    "Bypasses physical armor entirely with incorporeal or necrotic touch attacks.",
+    "Bypasses physical armor entirely with incorporeal touch attacks.",
     "Paralyzes mortal targets on a successful claw or slam strike."
   ],
   aberration: [
     "Projects a psychic confusion gaze that disorients targets on eye contact.",
     "Exudes a reactive caustic slime that degrades weapons upon physical impact.",
     "Possesses barbed tentacular appendages that immediately grab and constrict.",
-    "Emits a disorienting sonic screech that disrupts spellcasting."
+    "Emits a disorienting sonic screech that disrupts nearby spellcasting."
   ],
   outsider: [
-    "Maintains constant supernatural truesight, seeing through magical deception.",
+    "Maintains constant supernatural truesight, seeing through magical illusions.",
     "Capably blinks through the ethereal plane at will via short-range jaunts.",
     "Delivers a virulent extraplanar poison that drains physical constitution.",
     "Protected by ancient planar warding that completely shunts aside mortal spells."
@@ -74,23 +74,23 @@ export const ARCHETYPE_MISINFO_POOL = {
     "Repairs structural damage rapidly through ambient arcane conductivity.",
     "Detonates violently with jagged shrapnel when reduced to zero structural integrity.",
     "Absorbs specific elemental spells to accelerate its physical strike speed.",
-    "Possesses internal gyroscopic locks immune to tripping and bull rushes."
+    "Possesses internal gyroscopic locks immune to tripping and combat maneuvers."
   ],
   dragon: [
     "Enveloped in an oppressive aura of dragonfear that induces immediate panic.",
-    "Can crush multiple medium opponents beneath its massive belly slam.",
+    "Can crush multiple medium opponents beneath its massive frame.",
     "Possesses specialized scales that reflect targeted ray spells back at the caster.",
     "Breathes a cloud of paralyzing spores in addition to elemental ruin."
   ],
   humanoid: [
     "Carries concealed alchemical blinding flash powder to deter pursuit.",
-    "Coats its melee weaponry in debilitating paralytic venom.",
-    "Fights with fanatical zeal; gains ferocity and continues fighting past 0 HP.",
-    "Highly superstitious; retreats if a dead raven or holy icon is presented."
+    "Coats its weaponry in debilitating paralytic venom.",
+    "Fights with fanatical zeal; gains ferocity and continues fighting past zero hit points.",
+    "Highly superstitious; panics and retreats if presented with fresh wolfsbane or religious icons."
   ],
   default: [
-    "Averse to direct natural sunlight, suffering severe optical degradation.",
-    "Averse to crossing running water under its own power.",
+    "Averse to direct natural sunlight, suffering severe visual degradation.",
+    "Unable to cross running water under its own power.",
     "Compulsively halts to inspect intricate geometric figures or count scattered grains.",
     "Easily fascinated or distracted by bright alchemical flashes and polished mirrors."
   ]
@@ -133,6 +133,10 @@ export const LORE_REPOSITORY = {
   fey: "Capricious and unpredictable; deeply bound to ancient primordial pacts and inherently resistant to non-cold-iron metals.",
   dragon: "Apex magical predators; possess immense pride, sharp territorial instincts, and complete immunity to sleep and paralysis."
 };
+
+const NON_SUBTYPE_TAGS = new Set([
+  "uncommon", "rare", "common", "unique", "mythic", "10x scaled", "scaled", "boss", "minion"
+]);
 
 /* -------------------------------------------- */
 /* Core Engine Class                            */
@@ -277,6 +281,38 @@ export class MonsterKnowledgeEngine {
   /* Comprehensive Data Extractors                */
   /* -------------------------------------------- */
 
+  static extractSize(actor) {
+    const raw = actor.system.traits?.size;
+    if (!raw) return "";
+    let val = "";
+    if (typeof raw === "string") {
+      val = raw;
+    } else if (typeof raw === "object") {
+      val = raw.value || raw.label || raw.total || "";
+    }
+    val = String(val).toLowerCase().trim();
+
+    const sizeMap = {
+      fine: "Fine",
+      dim: "Diminutive",
+      diminutive: "Diminutive",
+      tiny: "Tiny",
+      sm: "Small",
+      small: "Small",
+      med: "Medium",
+      medium: "Medium",
+      lg: "Large",
+      large: "Large",
+      huge: "Huge",
+      grg: "Gargantuan",
+      gargantuan: "Gargantuan",
+      col: "Colossal",
+      colossal: "Colossal"
+    };
+
+    return sizeMap[val] || (val ? val.charAt(0).toUpperCase() + val.slice(1) : "");
+  }
+
   static extractTemplates(actor) {
     const templates = [];
     const seenNames = new Set();
@@ -293,7 +329,6 @@ export class MonsterKnowledgeEngine {
       });
     };
 
-    // 1. Direct Item Types & Embedded Documents
     if (actor.itemTypes?.template) {
       actor.itemTypes.template.forEach(i => record(i.name, i.system?.description?.value));
     }
@@ -303,13 +338,11 @@ export class MonsterKnowledgeEngine {
       if (i.type === "template" || sType === "template") {
         record(i.name, i.system?.description?.value);
       }
-      // Check tags on feats/features
       if (i.system?.tags?.some?.(t => String(t).toLowerCase().includes("template"))) {
         record(i.name, i.system?.description?.value);
       }
     });
 
-    // 2. System Details & Traits Data
     const directTemplates = actor.system?.details?.templates || actor.system?.traits?.templates || actor.system?.details?.template;
     if (Array.isArray(directTemplates)) {
       directTemplates.forEach(t => typeof t === "object" ? record(t.name, t.description) : record(t));
@@ -331,7 +364,10 @@ export class MonsterKnowledgeEngine {
         if (v.custom) scan(v.custom);
         if (v.total) scan(v.total);
       } else if (typeof v === "string") {
-        v.split(/[,;/|]/).map(s => s.trim()).filter(Boolean).forEach(s => rawSet.add(s.toLowerCase()));
+        v.split(/[,;/|]/).map(s => s.trim()).filter(Boolean).forEach(s => {
+          const lower = s.toLowerCase();
+          if (!NON_SUBTYPE_TAGS.has(lower)) rawSet.add(lower);
+        });
       }
     };
 
@@ -347,14 +383,11 @@ export class MonsterKnowledgeEngine {
       scan(raceItem.system?.subTypes);
       scan(raceItem.system?.subtypes);
       scan(raceItem.system?.st);
-      scan(raceItem.system?.tags);
       if (raceItem.name && typeof raceItem.name === "string") {
         const rName = raceItem.name.toLowerCase().trim();
         if (rName.includes("goblin") && !rawSet.has("goblinoid")) rawSet.add("goblinoid");
       }
     }
-
-    scan(actor.system?.tags);
 
     const fullName = `${actor.name || ""} ${actor.token?.name || ""}`.toLowerCase();
     const commonChecks = ["goblin", "orc", "kobold", "elf", "dwarf", "gnome", "halfling", "giant", "aquatic"];
@@ -442,15 +475,15 @@ export class MonsterKnowledgeEngine {
   }
 
   /* -------------------------------------------- */
-  /* Authentic Atom Generation & Tiering Pipeline */
+  /* Authentic Atom Generation Pipeline           */
   /* -------------------------------------------- */
 
   static generateTrueAtoms(actor, count, taxonomy, templates) {
-    // 1. LOCKED FIRST ATOM: Base Identity & Subtypes
+    const sizeStr = this.extractSize(actor);
+    const sizeCategory = sizeStr ? ` ${sizeStr.toUpperCase()}` : "";
     const typeLabel = taxonomy.type.toUpperCase();
     const formattedSubtypes = taxonomy.subtypes.join(", ");
     const subTypeStr = formattedSubtypes ? ` (${formattedSubtypes})` : "";
-    const sizeCategory = actor.system.traits?.size ? ` ${String(actor.system.traits.size).toUpperCase()}` : "";
 
     const lockedFirstAtom = {
       id: "id_classification",
@@ -458,16 +491,14 @@ export class MonsterKnowledgeEngine {
       traitType: "IDENTITY",
       factualState: "TRUE_FACT",
       formattedClaim: `Classified as a${sizeCategory} creature of the <strong>${typeLabel}${subTypeStr}</strong> classification.`,
-      auditData: `Type: ${taxonomy.type}, Subtypes: [${taxonomy.subtypes.join(", ")}]`
+      auditData: `Type: ${taxonomy.type}, Subtypes: [${taxonomy.subtypes.join(", ")}], Size: ${sizeStr || "unspecified"}`
     };
 
-    // If only 1 piece of information was earned, return the locked identity atom
     if (count <= 1) return [lockedFirstAtom];
 
-    // 2. CANDIDATE POOL (Items 2+ are drawn randomly from here)
     const candidatePool = [];
 
-    // Candidate: Templates (Custom or Standard)
+    // Candidate: Applied Templates
     if (templates.length > 0) {
       templates.forEach((t, idx) => {
         const lowerName = t.name.toLowerCase();
@@ -484,7 +515,7 @@ export class MonsterKnowledgeEngine {
           traitType: "TEMPLATE",
           factualState: "TRUE_FACT",
           formattedClaim: claimText,
-          auditData: `Template: ${t.name} (${desc || "No description provided"})`
+          auditData: `Template: ${t.name}`
         });
       });
     }
@@ -506,7 +537,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate: Tactical Saving Throw Weakness
+    // Candidate: Tactical Saving Throw Deficiency
     const saves = actor.system.attributes?.savingThrows || {};
     const f = saves.fort?.total ?? 0;
     const r = saves.ref?.total ?? 0;
@@ -524,7 +555,7 @@ export class MonsterKnowledgeEngine {
       auditData: `Saves: Fort +${f}, Ref +${r}, Will +${w}`
     });
 
-    // Candidate: AC Profile & Durability
+    // Candidate: Armor Class & Durability
     const ac = actor.system.attributes?.ac;
     const hp = actor.system.attributes?.hp?.max ?? actor.system.attributes?.hp?.value;
     if (ac) {
@@ -579,7 +610,6 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate: Absence of Supernatural Defenses
     if (drList.length === 0 && eres.length === 0 && di.length === 0) {
       candidatePool.push({
         id: "def_mundane_resilience",
@@ -591,7 +621,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate: Vulnerabilities (+50% damage)
+    // Candidate: Vulnerabilities
     const dv = actor.system.traits?.dv?.value || [];
     if (dv.length > 0) {
       candidatePool.push({
@@ -604,7 +634,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate: Combat Weaponry
+    // Candidate: Weapon Arsenal
     const weapons = actor.items.filter(i => i.type === "weapon" && i.system?.equipped);
     if (weapons.length > 0) {
       candidatePool.push({
@@ -612,12 +642,12 @@ export class MonsterKnowledgeEngine {
         category: "offense",
         traitType: "WEAPONRY",
         factualState: "TRUE_FACT",
-        formattedClaim: `Combat Arsenal: Equipped with <strong>${weapons.map(w => w.name).join(", ")}</strong>.`,
+        formattedClaim: `Combat Arsenal: Equipped with <strong>${weapons.slice(0, 3).map(w => w.name).join(", ")}</strong>.`,
         auditData: `Equipped Weapons: ${weapons.map(w => w.name).join(", ")}`
       });
     }
 
-    // Candidate: Feats
+    // Candidate: Notable Feats
     const feats = actor.items.filter(i => i.type === "feat" && (i.system?.subType || "") !== "template");
     if (feats.length > 0) {
       const featSample = feats.slice(0, 3).map(f => f.name).join(", ");
@@ -631,7 +661,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate: Trained Skills
+    // Candidate: Top Trained Skills
     const trainedSkills = Object.entries(actor.system.skills || {})
       .filter(([k, s]) => (s.ranks ?? 0) > 0 || Math.abs(s.mod ?? 0) > 0)
       .sort((a, b) => (b[1].mod ?? 0) - (a[1].mod ?? 0))
@@ -653,7 +683,7 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // Candidate: Subtype Ecology & Folklore
+    // Candidate: Ecology & Lore
     const matchedLoreKey = taxonomy.subtypes.map(s => s.toLowerCase()).find(s => LORE_REPOSITORY[s]) || (LORE_REPOSITORY[taxonomy.type] ? taxonomy.type : null);
     if (matchedLoreKey && LORE_REPOSITORY[matchedLoreKey]) {
       candidatePool.push({
@@ -666,13 +696,12 @@ export class MonsterKnowledgeEngine {
       });
     }
 
-    // SHUFFLE CANDIDATE POOL (Fisher-Yates) for randomized variety
+    // Shuffle Candidates
     for (let i = candidatePool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [candidatePool[i], candidatePool[j]] = [candidatePool[j], candidatePool[i]];
     }
 
-    // Slot 1 is ALWAYS the locked Identity Atom, followed by count - 1 random items
     const selected = [lockedFirstAtom];
     for (const cand of candidatePool) {
       if (selected.length >= count) break;
@@ -687,124 +716,160 @@ export class MonsterKnowledgeEngine {
   /* -------------------------------------------- */
 
   static generateMisinformationAtoms(actor, count, taxonomy, templates) {
-    const atoms = [];
-    const usedCategories = new Set();
+    const candidatePool = [];
 
-    // 1. Template Misdirection
-    if (templates.length > 0 && !usedCategories.has("template")) {
-      atoms.push({
+    // 1. Template Falsehoods
+    if (templates.length > 0) {
+      candidatePool.push({
         id: "mis_template_sickly",
         category: "template",
         traitType: "TEMPLATE",
         factualState: "MISINFORMATION",
-        formattedClaim: "Displays severe malnourishment and stunted growth; treat as a sickly juvenile with reduced defenses.",
-        auditData: `Told PC: Sickly Juvenile. True Templates: ${templates.map(t => t.name).join(", ")}`
+        formattedClaim: "Displays severe malnourishment and stunted growth; treat as a sickly juvenile with reduced physical defenses.",
+        auditData: `Told PC: Sickly juvenile. True Templates: [${templates.map(t => t.name).join(", ")}]`
       });
-      usedCategories.add("template");
-    } else if (!usedCategories.has("template") && Math.random() < 0.5) {
-      const phantom = PHANTOM_TEMPLATES[Math.floor(Math.random() * PHANTOM_TEMPLATES.length)];
-      atoms.push({
-        id: "mis_phantom_template",
+      candidatePool.push({
+        id: "mis_template_swap",
         category: "template",
         traitType: "TEMPLATE",
         factualState: "MISINFORMATION",
-        formattedClaim: phantom.claim,
-        auditData: phantom.audit + " (True creature has no templates)"
+        formattedClaim: "Bearing the unholy markings of a Gravebound Undead (Zombie); its rotting bulk absorbs all but clean slashing cuts.",
+        auditData: `Told PC: Zombie template. True Templates: [${templates.map(t => t.name).join(", ")}]`
       });
-      usedCategories.add("template");
     }
 
-    // 2. Randomized Elemental Resistance or False Vulnerability
-    if (atoms.length < count && !usedCategories.has("element")) {
-      const trueDi = (actor.system.traits?.di?.value || []).map(v => v.toLowerCase());
-      const trueDv = (actor.system.traits?.dv?.value || []).map(v => v.toLowerCase());
-      const trueRes = (actor.system.traits?.eres?.value || []).map(v => (v.name || v).toLowerCase());
+    const phantom = PHANTOM_TEMPLATES[Math.floor(Math.random() * PHANTOM_TEMPLATES.length)];
+    candidatePool.push({
+      id: "mis_phantom_template",
+      category: "template",
+      traitType: "TEMPLATE",
+      factualState: "MISINFORMATION",
+      formattedClaim: phantom.claim,
+      auditData: `${phantom.audit} (Creature has no such template)`
+    });
 
-      const neutralElements = ELEMENT_POOL.filter(e => !trueDi.includes(e) && !trueDv.includes(e) && !trueRes.includes(e));
-      const targetElement = neutralElements.length > 0 ? neutralElements[Math.floor(Math.random() * neutralElements.length)] : "fire";
+    // 2. False Elemental Resistances & Immunities
+    const trueDi = (actor.system.traits?.di?.value || []).map(v => String(v).toLowerCase());
+    const trueDv = (actor.system.traits?.dv?.value || []).map(v => String(v).toLowerCase());
+    const trueRes = (actor.system.traits?.eres?.value || []).map(v => (v.name || v).toLowerCase());
+    const neutralElements = ELEMENT_POOL.filter(e => !trueDi.includes(e) && !trueDv.includes(e) && !trueRes.includes(e));
 
-      if (Math.random() > 0.5) {
-        atoms.push({
-          id: `mis_vuln_${targetElement}`,
-          category: "weakness",
-          traitType: "ENERGY_VULN",
-          factualState: "MISINFORMATION",
-          formattedClaim: `Suffers crippling vulnerability (+50% damage) to <strong>${targetElement.toUpperCase()}</strong> damage.`,
-          auditData: `Told PC: Vulnerable to ${targetElement}. True Immunities: [${trueDi.join(", ")}], Vulnerabilities: [${trueDv.join(", ")}]`
-        });
-      } else {
-        atoms.push({
-          id: `mis_resist_${targetElement}`,
-          category: "defense",
-          traitType: "ENERGY_RESIST",
-          factualState: "MISINFORMATION",
-          formattedClaim: `Its biology naturally absorbs and completely negates <strong>${targetElement.toUpperCase()}</strong> damage.`,
-          auditData: `Told PC: Resists ${targetElement}. True Resistances: [${trueRes.join(", ")}]`
-        });
-      }
-      usedCategories.add("element");
-    }
+    const elementA = neutralElements[0] || "fire";
+    const elementB = neutralElements[1] || "cold";
 
-    // 3. DR Bypass Material Inversion
-    if (atoms.length < count && !usedCategories.has("dr")) {
-      const trueDr = actor.system.traits?.dr?.value || [];
-      const trueBypasses = trueDr.map(d => (d.operator || "").toLowerCase());
-      const falseBypasses = DR_BYPASS_POOL.filter(m => !trueBypasses.includes(m));
-      const falseMaterial = falseBypasses[Math.floor(Math.random() * falseBypasses.length)] || "cold iron";
+    candidatePool.push({
+      id: `mis_vuln_${elementA}`,
+      category: "weakness",
+      traitType: "ENERGY_VULN",
+      factualState: "MISINFORMATION",
+      formattedClaim: `Suffers crippling vulnerability (+50% damage) to <strong>${elementA.toUpperCase()}</strong> damage.`,
+      auditData: `Told PC: Vulnerable to ${elementA}. True Immunities: [${trueDi.join(", ")}], Vulnerabilities: [${trueDv.join(", ")}]`
+    });
 
-      atoms.push({
-        id: "mis_dr_bypass",
-        category: "defense",
-        traitType: "DR",
-        factualState: "MISINFORMATION",
-        formattedClaim: `Possesses supernatural Damage Reduction penetrated only by weapons forged from <strong>${falseMaterial.toUpperCase()}</strong>.`,
-        auditData: `Told PC: DR bypassed by ${falseMaterial}. True DR: ${trueDr.map(d => `${d.amount}/${d.operator}`).join(", ") || "None"}`
-      });
-      usedCategories.add("dr");
-    }
+    candidatePool.push({
+      id: `mis_resist_${elementB}`,
+      category: "defense",
+      traitType: "ENERGY_RESIST",
+      factualState: "MISINFORMATION",
+      formattedClaim: `Its anatomy naturally absorbs and completely negates <strong>${elementB.toUpperCase()}</strong> damage.`,
+      auditData: `Told PC: Resists ${elementB}. True Resistances: [${trueRes.join(", ")}]`
+    });
 
-    // 4. Save Defect Reversal
-    if (atoms.length < count && !usedCategories.has("save")) {
-      const saves = actor.system.attributes?.savingThrows || {};
-      const savePairs = [
-        { name: "Fortitude", val: saves.fort?.total ?? 0 },
-        { name: "Reflex", val: saves.ref?.total ?? 0 },
-        { name: "Will", val: saves.will?.total ?? 0 }
-      ].sort((a, b) => b.val - a.val);
+    // 3. False DR Penetration
+    const trueDr = actor.system.traits?.dr?.value || [];
+    const trueBypasses = trueDr.map(d => (d.operator || "").toLowerCase());
+    const falseBypasses = DR_BYPASS_POOL.filter(m => !trueBypasses.includes(m));
+    const falseMaterial = falseBypasses[Math.floor(Math.random() * falseBypasses.length)] || "cold iron";
 
-      const falseWeakness = savePairs[0].name;
-      atoms.push({
-        id: "mis_save_defect",
-        category: "weakness",
-        traitType: "SAVE_WEAKNESS",
-        factualState: "MISINFORMATION",
-        formattedClaim: `Tactical vulnerability noted: Its <strong>${falseWeakness.toUpperCase()}</strong> save is by far its weakest defense.`,
-        auditData: `Told PC to target ${falseWeakness} (+${savePairs[0].val}). Lowest save is actually ${savePairs[2].name} (+${savePairs[2].val})`
-      });
-      usedCategories.add("save");
-    }
+    candidatePool.push({
+      id: "mis_dr_bypass",
+      category: "defense",
+      traitType: "DR",
+      factualState: "MISINFORMATION",
+      formattedClaim: `Possesses supernatural Damage Reduction penetrated only by weapons forged from <strong>${falseMaterial.toUpperCase()}</strong>.`,
+      auditData: `Told PC: DR bypassed by ${falseMaterial}. True DR: ${trueDr.map(d => `${d.amount}/${d.operator}`).join(", ") || "None"}`
+    });
 
-    // 5. Archetype Cross-Hallucinations & Folklore
-    while (atoms.length < count) {
-      const typeKey = ARCHETYPE_MISINFO_POOL[taxonomy.type] ? taxonomy.type : "default";
-      const pool = ARCHETYPE_MISINFO_POOL[typeKey];
-      const claim = pool[Math.floor(Math.random() * pool.length)];
+    // 4. Inverted Save Vulnerability
+    const saves = actor.system.attributes?.savingThrows || {};
+    const savePairs = [
+      { name: "Fortitude", val: saves.fort?.total ?? 0 },
+      { name: "Reflex", val: saves.ref?.total ?? 0 },
+      { name: "Will", val: saves.will?.total ?? 0 }
+    ].sort((a, b) => b.val - a.val);
 
-      atoms.push({
-        id: `mis_archetype_${atoms.length}`,
+    const falseWeakness = savePairs[0].name;
+    candidatePool.push({
+      id: "mis_save_defect",
+      category: "weakness",
+      traitType: "SAVE_WEAKNESS",
+      factualState: "MISINFORMATION",
+      formattedClaim: `Tactical deficiency noted: Its <strong>${falseWeakness.toUpperCase()}</strong> save is by far its most exploitable defense.`,
+      auditData: `Told PC to target ${falseWeakness} (+${savePairs[0].val}). Lowest save is actually ${savePairs[2].name} (+${savePairs[2].val})`
+    });
+
+    // 5. False Tactical Flaws
+    candidatePool.push({
+      id: "mis_tactical_flank",
+      category: "tactics",
+      traitType: "TACTICAL_FLAW",
+      factualState: "MISINFORMATION",
+      formattedClaim: "Displays tunnel vision and sluggish spatial awareness; it is completely unable to defend against flanking maneuvers.",
+      auditData: "Told PC: Creature cannot handle flanking. (False claim)"
+    });
+
+    candidatePool.push({
+      id: "mis_tactical_trip",
+      category: "tactics",
+      traitType: "TACTICAL_FLAW",
+      factualState: "MISINFORMATION",
+      formattedClaim: "Its stance is poorly anchored; area trip maneuvers or bull rushes will easily knock it off balance.",
+      auditData: "Told PC: Prone to trip / knockdowns. (False claim)"
+    });
+
+    // 6. Archetype Abilities
+    const typeKey = ARCHETYPE_MISINFO_POOL[taxonomy.type] ? taxonomy.type : "default";
+    const archetypeList = ARCHETYPE_MISINFO_POOL[typeKey] || ARCHETYPE_MISINFO_POOL.default;
+    archetypeList.forEach((text, i) => {
+      candidatePool.push({
+        id: `mis_archetype_${i}`,
         category: "offense",
         traitType: "SPECIAL_ATTACK",
         factualState: "MISINFORMATION",
-        formattedClaim: claim,
+        formattedClaim: text,
         auditData: `Attributed Archetype Feature (${typeKey}) to ${actor.name}`
       });
+    });
+
+    // 7. Folk Superstitions
+    const folkMyths = [
+      "Averse to crossing running water under its own power.",
+      "Compulsively halts to inspect intricate geometric patterns or count spilled grains.",
+      "Terrified of direct natural sunlight or bright alchemical flares; easily blinded.",
+      "Repelled by the strong scent of crushed garlic, rock salt, or holy water."
+    ];
+    folkMyths.forEach((myth, idx) => {
+      candidatePool.push({
+        id: `mis_myth_${idx}`,
+        category: "ecology",
+        traitType: "BEHAVIORAL_LORE",
+        factualState: "MISINFORMATION",
+        formattedClaim: `Folkloric Superstition: ${myth}`,
+        auditData: `False Folk Myth attributed to ${actor.name}`
+      });
+    });
+
+    // Shuffle the candidate pool (Fisher-Yates)
+    for (let i = candidatePool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidatePool[i], candidatePool[j]] = [candidatePool[j], candidatePool[i]];
     }
 
-    return atoms.slice(0, count);
+    return candidatePool.slice(0, Math.max(1, count));
   }
 
   /* -------------------------------------------- */
-  /* Result Dispatching & GM Popup                 */
+  /* Delivery: Player Card + Authoritative GM Pop  */
   /* -------------------------------------------- */
 
   static async dispatchResults({ sourceActor, targetToken, outcome, margin, targetDc, taxonomy, atoms }) {
@@ -836,14 +901,6 @@ export class MonsterKnowledgeEngine {
       </div>
     `;
 
-    const gmRecipients = ChatMessage.getWhisperRecipients("GM").map(u => u.id);
-    await ChatMessage.create({
-      speaker: ChatMessage.getSpeaker({ actor: sourceActor }),
-      content: playerCardHtml,
-      whisper: [game.user.id, ...gmRecipients]
-    });
-
-    // 2. Prepare GM Audit Payload
     const gmPayload = {
       sourceActorName: sourceActor.name,
       targetTokenName: targetToken.name,
@@ -856,14 +913,23 @@ export class MonsterKnowledgeEngine {
       atoms
     };
 
-    // 3. Open Floating Audit Dialog on GM client
+    const gmRecipients = ChatMessage.getWhisperRecipients("GM").map(u => u.id);
+
+    // Embed audit payload into the chat message flags
+    await ChatMessage.create({
+      speaker: ChatMessage.getSpeaker({ actor: sourceActor }),
+      content: playerCardHtml,
+      whisper: [game.user.id, ...gmRecipients],
+      flags: {
+        [MODULE_ID]: {
+          auditPayload: gmPayload
+        }
+      }
+    });
+
+    // If GM ran this check directly, open dialog immediately
     if (game.user.isGM) {
       new MonsterKnowledgeAuditDialog(gmPayload).render(true);
-    } else {
-      game.socket.emit(`module.${MODULE_ID}`, {
-        action: "openGmKnowledgeAudit",
-        payload: gmPayload
-      });
     }
   }
 }
@@ -983,15 +1049,19 @@ export class MonsterKnowledgeAuditDialog extends Application {
   }
 }
 
-// Hook initialization & Socket Registration
+// Hook initialization & Document-backed GM Popup
 Hooks.once("init", () => {
   MonsterKnowledgeEngine.registerSettings();
 });
 
-Hooks.once("ready", () => {
-  game.socket.on(`module.${MODULE_ID}`, (data) => {
-    if (data?.action === "openGmKnowledgeAudit" && game.user.isGM) {
-      new MonsterKnowledgeAuditDialog(data.payload).render(true);
-    }
-  });
+// Listens for chat messages containing an audit payload and pops up the dialog for the GM
+Hooks.on("createChatMessage", (message, options, userId) => {
+  if (!game.user.isGM) return;
+  // If the GM authored the message, dispatchResults already opened it
+  if (message.author?.id === game.user.id) return;
+
+  const auditPayload = message.getFlag(MODULE_ID, "auditPayload");
+  if (auditPayload) {
+    new MonsterKnowledgeAuditDialog(auditPayload).render(true);
+  }
 });
