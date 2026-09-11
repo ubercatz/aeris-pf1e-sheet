@@ -753,6 +753,9 @@ export class AltNPCSheetPF extends pf1.applications.actor.ActorSheetPFNPC {
   async getData(options) {
     const data = await super.getData(options);
     
+    // Ensure race item is available on the NPC template context
+    data.race ??= this.actor.race;
+
     if (game.settings.get(MODULE_ID, "enable10xGranularity")) {
       _apply10xEncumbrance(this.actor, data);
       _sync10xSkills(this.actor, data);
