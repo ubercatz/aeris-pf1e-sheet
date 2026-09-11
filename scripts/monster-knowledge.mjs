@@ -138,6 +138,7 @@ export class MonsterKnowledgeEngine {
   static lastAuditPayload = null;
 
   static registerSettings() {
+    
     game.settings.register(MODULE_ID, "idEnforceBlind", {
       name: "Enforce Blind Knowledge Rolls",
       hint: "Forces monster identification checks to execute as Blind GM Rolls, keeping the roll margin and raw total hidden from players.",
@@ -165,7 +166,18 @@ export class MonsterKnowledgeEngine {
       default: 5
     });
   }
-
+// normalizeTraitArray is its own standalone method:
+  static normalizeTraitArray(val) {
+    if (!val) return [];
+    if (val instanceof Set) return Array.from(val);
+    if (Array.isArray(val)) return val;
+    if (typeof val === "object") {
+      if (val.value) return this.normalizeTraitArray(val.value);
+      return Object.values(val);
+    }
+    if (typeof val === "string") return val.split(/[,;]/).map(s => s.trim()).filter(Boolean);
+    return [val];
+  } // <─── normalizeTraitArray closes here
   static cleanHtml(html) {
     if (!html) return "";
     const doc = new DOMParser().parseFromString(html, "text/html");
@@ -821,9 +833,14 @@ export class MonsterKnowledgeEngine {
       auditData: `Told PC: Massive HP reserve. True HP: ${actor.system.attributes?.hp?.max ?? "Unknown"}`
     });
 
-    const trueDi = (actor.system.traits?.di?.value || []).map(cleanElement).filter(Boolean);
-    const trueDv = (actor.system.traits?.dv?.value || []).map(cleanElement).filter(Boolean);
-    const trueRes = (actor.system.traits?.eres?.value || []).map(cleanElement).filter(Boolean);
+    // ✔️ NEW (Safe against Sets, Arrays, and removes deprecation warnings)
+const rawDi = this.normalizeTraitArray(actor.system.traits?.di);
+const rawDv = this.normalizeTraitArray(actor.system.traits?.dv);
+const rawRes = this.normalizeTraitArray(actor.system.traits?.eres);
+
+const trueDi = rawDi.map(cleanElement).filter(Boolean);
+const trueDv = rawDv.map(cleanElement).filter(Boolean);
+const trueRes = rawRes.map(cleanElement).filter(Boolean);
     const neutralElements = ELEMENT_POOL.filter(e => !trueDi.includes(e) && !trueDv.includes(e) && !trueRes.includes(e));
 
     const elementA = neutralElements[0] || "fire";
