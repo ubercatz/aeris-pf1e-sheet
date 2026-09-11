@@ -475,6 +475,54 @@ function _bindRollActions(sheet, html) {
   });
 }
 
+// ─── CONDIÇÕES E BUFFS ───────────────────────────────────────────────────────
+
+function _bindConditions(sheet, html) {
+  if (!sheet.isEditable) return;
+  const actor = sheet.actor;
+
+  // Ativa/desativa a condição ao clicar no cartão ou botão
+  html.find(".pf1ar-condition-toggle, .pf1ar-condition").on("click", async (event) => {
+    if (event.target.closest(".pf1ar-condition-book")) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const target = event.currentTarget.closest("[data-condition-id]") || event.currentTarget;
+    const conditionId = target.dataset.conditionId;
+    if (!conditionId) return;
+
+    try {
+      if (typeof actor.setCondition === "function") {
+        const isActive = typeof actor.hasCondition === "function"
+          ? actor.hasCondition(conditionId)
+          : (actor.statuses?.has?.(conditionId) ?? !!actor.system?.conditions?.[conditionId]);
+        await actor.setCondition(conditionId, !isActive);
+      } else if (typeof actor.toggleCondition === "function") {
+        await actor.toggleCondition(conditionId);
+      }
+    } catch (err) {
+      console.error(`PF1 Alt Sheet | Error toggling condition "${conditionId}":`, err);
+    }
+  });
+
+  // Abre a entrada do compêndio
+  html.find(".pf1ar-condition-book").on("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const entryUuid = event.currentTarget.dataset.compendiumEntry;
+    if (!entryUuid) return;
+
+    try {
+      const doc = await fromUuid(entryUuid);
+      doc?.sheet?.render(true);
+    } catch (err) {
+      console.error(`PF1 Alt Sheet | Error opening condition compendium entry:`, err);
+    }
+  });
+}
+
 const PF1AR_THEMES = ["parchment", "hybrid", "slate"];
 
 function _applyTheme(sheet) {
@@ -517,7 +565,6 @@ function _apply10xEncumbrance(actor, data) {
   const carryBonus = actor.system.attributes?.carryStrength || 0;
   const carryMult = actor.system.attributes?.carryMultiplier || 1;
 
-  // Downscale 10x stat to standard PF1e ranges (e.g. 223 -> 22)
   const effStr = Math.floor((strScore + carryBonus) / 10);
 
   let heavy = 0;
@@ -541,7 +588,6 @@ function _apply10xEncumbrance(actor, data) {
     drag: heavy * 5,
   };
 
-  // Synchronize across every possible location Handlebars templates might inspect
   if (actor.system?.attributes?.encumbrance) Object.assign(actor.system.attributes.encumbrance, encObj);
   if (data.system?.attributes?.encumbrance) Object.assign(data.system.attributes.encumbrance, encObj);
   if (data.actor?.system?.attributes?.encumbrance) Object.assign(data.actor.system.attributes.encumbrance, encObj);
@@ -654,6 +700,7 @@ export class AltCharacterSheetPF extends pf1.applications.actor.ActorSheetPFChar
     _bindThemeCycle(this, html);
     _bindRollActions(this, html);
     _bindContainerContents(this, html);
+    _bindConditions(this, html);
   }
 }
 
@@ -726,5 +773,6 @@ export class AltNPCSheetPF extends pf1.applications.actor.ActorSheetPFNPC {
     _bindThemeCycle(this, html);
     _bindRollActions(this, html);
     _bindContainerContents(this, html);
+    _bindConditions(this, html);
   }
 }

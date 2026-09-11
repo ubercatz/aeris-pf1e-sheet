@@ -5,10 +5,10 @@
   <h3 class="pf1ar-panel-title"><i class="fa-solid fa-heart-circle-exclamation" inert></i><span>{{localize "PF1AR.Sections.Conditions"}}</span></h3>
   <div class="pf1ar-conditions-grid">
     {{#each @root.conditions}}
-    <div class="pf1ar-condition{{#if active}} active{{/if}}{{#if immune}} immune{{/if}}">
+    <div class="pf1ar-condition{{#if active}} active{{/if}}{{#if immune}} immune{{/if}}" data-condition-id="{{id}}">
       <a class="pf1ar-condition-toggle checkbox" data-condition-id="{{id}}">
-        <img src="{{img}}" width="32" height="32" alt="{{label}}">
-        <span class="pf1ar-condition-name">{{label}}</span>
+        <img src="{{img}}" width="32" height="32" alt="{{localize label}}">
+        <span class="pf1ar-condition-name">{{localize label}}</span>
         {{#if racial}}
           <span class="pf1ar-condition-source">{{racial}}</span>
         {{else if inherited}}
@@ -20,7 +20,7 @@
         {{/if}}
       </a>
       {{#if compendium}}
-      <a class="pf1ar-condition-book" data-compendium-entry="{{compendium}}">
+      <a class="pf1ar-condition-book" data-compendium-entry="{{compendium}}" data-tooltip="PF1.BrowseCompendium">
         <i class="fa-solid fa-book" inert></i>
       </a>
       {{/if}}
